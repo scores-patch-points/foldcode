@@ -215,6 +215,16 @@ const layer = Layer.effect(
     })
 
     const populate = Effect.gen(function* () {
+      // The Fold fork: only the Fold's own session-local providers exist. The
+      // opencode-fold brand patch (packages/opencode/.opencode/config.json)
+      // sets OPENCODE_MODELS_PATH to a local catalog holding just `heimdall`;
+      // when it is set, never consult the public models.dev snapshot or the
+      // network — the fork must not advertise providers a person can reach
+      // outside the bridge. Upstream (flag unset) is unchanged.
+      if (Flag.OPENCODE_MODELS_PATH !== undefined) {
+        const local = yield* loadFromDisk
+        return local ?? {}
+      }
       const fromDisk = yield* loadFromDisk
       if (fromDisk) return fromDisk
       const snapshot = yield* loadSnapshot

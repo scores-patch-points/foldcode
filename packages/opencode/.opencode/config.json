@@ -1,0 +1,57 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "heimdall": {
+      "name": "The Fold · heimdall",
+      "npm": "@ai-sdk/openai-compatible",
+      "options": {
+        "baseURL": "http://localhost:8790/v1",
+        "apiKey": "heimdall"
+      },
+      "models": {
+        "qwen2.5-coder:1.5b": { "name": "qwen2.5-coder:1.5b (local)" },
+        "deepseek-coder-v2": { "name": "deepseek-coder-v2 (local)" }
+      }
+    }
+  },
+  "disabled_providers": [
+    "anthropic",
+    "openai",
+    "google",
+    "google-vertex",
+    "google-vertex-anthropic",
+    "amazon-bedrock",
+    "azure",
+    "openrouter",
+    "github-copilot",
+    "xai",
+    "groq",
+    "mistral",
+    "deepseek",
+    "cerebras",
+    "togetherai",
+    "perplexity",
+    "fireworks-ai",
+    "cohere",
+    "baseten",
+    "openai-compatible",
+    "vercel",
+    "zhipuai",
+    "dashscope",
+    "moonshotai",
+    "alibaba",
+    "minimax",
+    "together",
+    "venice",
+    "lmstudio",
+    "ollama",
+    "v0",
+    "sap-ai-core",
+    "cloudflare-workers-ai",
+    "cloudflare-ai-gateway",
+    "scaleway",
+    "nebius",
+    "ovhcloud",
+    "helicone"
+  ]
+}

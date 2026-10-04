@@ -1,0 +1,37 @@
+{
+  "heimdall": {
+    "id": "heimdall",
+    "name": "The Fold · heimdall",
+    "api": "http://localhost:8790/v1",
+    "npm": "@ai-sdk/openai-compatible",
+    "env": [],
+    "models": {
+      "qwen2.5-coder:1.5b": {
+        "id": "qwen2.5-coder:1.5b",
+        "name": "qwen2.5-coder:1.5b (local)",
+        "family": "qwen",
+        "release_date": "2024-01-01",
+        "attachment": false,
+        "reasoning": false,
+        "temperature": true,
+        "tool_call": true,
+        "cost": { "input": 0, "output": 0 },
+        "limit": { "context": 32768, "output": 8192 },
+        "modalities": { "input": ["text"], "output": ["text"] }
+      },
+      "deepseek-coder-v2": {
+        "id": "deepseek-coder-v2",
+        "name": "deepseek-coder-v2 (local)",
+        "family": "deepseek",
+        "release_date": "2024-01-01",
+        "attachment": false,
+        "reasoning": false,
+        "temperature": true,
+        "tool_call": true,
+        "cost": { "input": 0, "output": 0 },
+        "limit": { "context": 32768, "output": 8192 },
+        "modalities": { "input": ["text"], "output": ["text"] }
+      }
+    }
+  }
+}

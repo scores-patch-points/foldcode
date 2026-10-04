@@ -43,6 +43,17 @@ function run(target) {
   })
 }
 
+// The Fold fork: the only models this build may advertise are the ones the
+// heimdall bridge serves. Pin the models.dev catalog to the local, heimdall-only
+// catalog shipped beside this launcher, and make it authoritative (see
+// packages/core/src/models-dev.ts). A person who deliberately overrides the env
+// keeps their choice; upstream opencode is unaffected because this file is a
+// brand-patch file (see UPSTREAM.md).
+if (!process.env.OPENCODE_MODELS_PATH) {
+  const brandPath = fs.realpathSync(__filename)
+  process.env.OPENCODE_MODELS_PATH = path.join(path.dirname(brandPath), "models.dev.json")
+}
+
 const envPath = process.env.OPENCODE_BIN_PATH
 
 const scriptPath = fs.realpathSync(__filename)

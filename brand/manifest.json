@@ -16,6 +16,9 @@
     "brand/manifest.json",
     "packages/opencode/package.json",
     "packages/opencode/bin/opencode-fold",
+    "packages/opencode/bin/models.dev.json",
+    "packages/opencode/.opencode/config.json",
+    "packages/core/src/models-dev.ts",
     "packages/opencode/src/index.ts",
     "packages/web/package.json",
     "packages/web/src/pages/s/[id].astro",
@@ -23,6 +26,7 @@
     "packages/web/src/components/Share.tsx"
   ],
   "rule": "the brand patch is confined to these files; upstream merges must never accept brand-file conflicts from upstream content",
+  "foldModelSurface": "the only providers/models opencode-fold advertises are the Fold's: the `heimdall` provider at localhost:8790/v1 (the launcher pins OPENCODE_MODELS_PATH to bin/models.dev.json and .opencode/config.json disables every other provider)",
   "verify": "bun run --cwd packages/opencode src/index.ts --version",
   "update": [
     "git fetch upstream dev",

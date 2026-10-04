@@ -26,7 +26,10 @@ from upstream stay mechanical.
 | `package.json` (root) | name → `opencode-fold` |
 | `bun.lock` | workspace entries renamed (`opencode@workspace:` → `opencode-fold@workspace:`); a fresh clone needs this to resolve the renamed workspace. Dependency versions unchanged. |
 | `packages/opencode/package.json` | name → `opencode-fold`; `bin.opencode-fold` → `./bin/opencode-fold` |
-| `packages/opencode/bin/opencode-fold` | launcher (renamed from `bin/opencode`); error string says `opencode-fold CLI` |
+| `packages/opencode/bin/opencode-fold` | launcher (renamed from `bin/opencode`); error string says `opencode-fold CLI`; pins `OPENCODE_MODELS_PATH` to the local heimdall catalog so the fork advertises only the Fold's models |
+| `packages/opencode/bin/models.dev.json` | the local, heimdall-only models.dev catalog the launcher pins (the only providers a Fold build may list) |
+| `packages/opencode/.opencode/config.json` | project config seeding the single `heimdall` provider (OpenAI-compatible, `localhost:8790/v1`) and disabling opencode's built-in providers |
+| `packages/core/src/models-dev.ts` | one guarded branch: when `OPENCODE_MODELS_PATH` is set, load only that catalog and never the public snapshot or the network (`OPENCODE_MODELS_PATH !== undefined`) |
 | `packages/opencode/src/index.ts` | CLI self-identification: `scriptName("opencode-fold")` + help-output prefix check |
 | `packages/web/package.json` | workspace dep `opencode` → `opencode-fold` (web imports CLI types) |
 | `packages/web/src/pages/s/[id].astro`, `.../share/part.tsx`, `.../Share.tsx` | import sites `opencode/session/...` → `opencode-fold/session/...` |
