@@ -10,6 +10,7 @@
   },
   "brandPatch": [
     "package.json",
+    "bun.lock",
     "README.md",
     "UPSTREAM.md",
     "brand/manifest.json",

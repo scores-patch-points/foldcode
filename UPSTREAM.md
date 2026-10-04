@@ -24,6 +24,7 @@ from upstream stay mechanical.
 | File | What it changes |
 |---|---|
 | `package.json` (root) | name → `opencode-fold` |
+| `bun.lock` | workspace entries renamed (`opencode@workspace:` → `opencode-fold@workspace:`); a fresh clone needs this to resolve the renamed workspace. Dependency versions unchanged. |
 | `packages/opencode/package.json` | name → `opencode-fold`; `bin.opencode-fold` → `./bin/opencode-fold` |
 | `packages/opencode/bin/opencode-fold` | launcher (renamed from `bin/opencode`); error string says `opencode-fold CLI` |
 | `packages/opencode/src/index.ts` | CLI self-identification: `scriptName("opencode-fold")` + help-output prefix check |
