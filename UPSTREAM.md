@@ -26,6 +26,9 @@ from upstream stay mechanical.
 | `package.json` (root) | name → `opencode-fold` |
 | `packages/opencode/package.json` | name → `opencode-fold`; `bin.opencode-fold` → `./bin/opencode-fold` |
 | `packages/opencode/bin/opencode-fold` | launcher (renamed from `bin/opencode`); error string says `opencode-fold CLI` |
+| `packages/opencode/src/index.ts` | CLI self-identification: `scriptName("opencode-fold")` + help-output prefix check |
+| `packages/web/package.json` | workspace dep `opencode` → `opencode-fold` (web imports CLI types) |
+| `packages/web/src/pages/s/[id].astro`, `.../share/part.tsx`, `.../Share.tsx` | import sites `opencode/session/...` → `opencode-fold/session/...` |
 | `README.md` | attribution block at the top (this white-label, upstream credit, MIT) |
 | `UPSTREAM.md` | this contract |
 | `brand/manifest.json` | machine-checkable manifest (upstream pin, brand-patch file list, verify command) |

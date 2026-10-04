@@ -14,7 +14,12 @@
     "UPSTREAM.md",
     "brand/manifest.json",
     "packages/opencode/package.json",
-    "packages/opencode/bin/opencode-fold"
+    "packages/opencode/bin/opencode-fold",
+    "packages/opencode/src/index.ts",
+    "packages/web/package.json",
+    "packages/web/src/pages/s/[id].astro",
+    "packages/web/src/components/share/part.tsx",
+    "packages/web/src/components/Share.tsx"
   ],
   "rule": "the brand patch is confined to these files; upstream merges must never accept brand-file conflicts from upstream content",
   "verify": "bun run --cwd packages/opencode src/index.ts --version",
