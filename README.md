@@ -8,6 +8,13 @@
   </a>
 </p>
 <p align="center">The open source AI coding agent.</p>
+
+> **opencode-fold** is a white-label of **opencode** — the open-source AI coding agent
+> by the opencode team ([anomalyco/opencode](https://github.com/anomalyco/opencode)),
+> MIT licensed. All code, design, and credit belong to opencode's authors; this fork
+> renames the packaging and nothing else. The upstream LICENSE is preserved verbatim.
+> See [UPSTREAM.md](UPSTREAM.md) for the vendor contract: what the brand patch touches,
+> and how upstream updates flow in.
 <p align="center">
   <a href="https://opencode.ai/discord"><img alt="Discord" src="https://img.shields.io/discord/1391832426048651334?style=flat-square&label=discord" /></a>
   <a href="https://www.npmjs.com/package/opencode-ai"><img alt="npm" src="https://img.shields.io/npm/v/opencode-ai?style=flat-square" /></a>

@@ -1,0 +1,29 @@
+{
+  "schema": "OpenCodeFoldBrand@1",
+  "product": "opencode-fold",
+  "upstream": {
+    "repo": "anomalyco/opencode",
+    "branch": "dev",
+    "pinnedCommit": "907b3bc518fa48e90e8ec24dd327d13eee71c36c",
+    "version": "1.18.34",
+    "license": "MIT"
+  },
+  "brandPatch": [
+    "package.json",
+    "README.md",
+    "UPSTREAM.md",
+    "brand/manifest.json",
+    "packages/opencode/package.json",
+    "packages/opencode/bin/opencode-fold"
+  ],
+  "rule": "the brand patch is confined to these files; upstream merges must never accept brand-file conflicts from upstream content",
+  "verify": "bun run --cwd packages/opencode src/index.ts --version",
+  "update": [
+    "git fetch upstream dev",
+    "git merge upstream/dev",
+    "re-apply brand files where conflicts occurred",
+    "bump pinnedCommit and version to upstream HEAD",
+    "run verify"
+  ],
+  "falsifyingControl": "git diff upstream/dev..HEAD touching any file outside brandPatch breaks the vendor discipline"
+}
