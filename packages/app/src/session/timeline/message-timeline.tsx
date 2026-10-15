@@ -396,7 +396,7 @@ function MessageTimelineView(
   const mindParts = () => {
     const active = projection.activeMessageID()
     const list = active ? projection.assistantMessagesByParent().get(active) : undefined
-    return list?.flatMap((item) => item.content) ?? []
+    return list?.flatMap((item) => item?.content ?? []) ?? []
   }
 
   // Undelivered input waits below the work the model has seen, so live status moves into the row above it.

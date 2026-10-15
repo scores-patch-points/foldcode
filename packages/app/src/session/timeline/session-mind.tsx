@@ -62,23 +62,24 @@ const mark = (part: Part) => (part.state?.status === "error" ? "✗" : part.stat
 const markWord = (part: Part) =>
   part.state?.status === "error" ? "failed" : part.state?.status === "completed" ? "done" : "in progress"
 
-export function SessionMind(props: { parts: ReadonlyArray<Part>; startedAt?: number }) {
+export function SessionMind(props: { parts?: ReadonlyArray<Part | undefined>; startedAt?: number }) {
   const [now, setNow] = createSignal(Date.now())
   const tick = setInterval(() => setNow(Date.now()), 1000)
   onCleanup(() => clearInterval(tick))
 
-  const last = createMemo(() => props.parts.at(-1))
+  const parts = createMemo((): ReadonlyArray<Part> => (props.parts ?? []).filter((part): part is Part => !!part))
+  const last = createMemo(() => parts().at(-1))
   const stage = createMemo(() => stageOf(last()))
-  const tools = createMemo(() => props.parts.filter((part) => part.type === "tool"))
+  const tools = createMemo(() => parts().filter((part) => part.type === "tool"))
   const visits = createMemo(() => {
     const counts = new Map<MindStage, number>()
-    for (const part of props.parts) counts.set(stageOf(part), (counts.get(stageOf(part)) ?? 0) + 1)
+    for (const part of parts()) counts.set(stageOf(part), (counts.get(stageOf(part)) ?? 0) + 1)
     return counts
   })
   const doing = createMemo(() => STAGES.find((item) => item.id === stage())?.doing ?? "Working")
   const target = createMemo(() => targetOf(last()))
   const seconds = (from?: number) => (from ? Math.max(0, Math.round((now() - from) / 1000)) : 0)
-  const total = createMemo(() => seconds(props.startedAt ?? props.parts[0]?.time?.created))
+  const total = createMemo(() => seconds(props.startedAt ?? parts()[0]?.time?.created))
   const recent = createMemo(() => tools().slice(-4).reverse())
   const unnamed = createMemo(() => (stage() === "thinking" && last()?.type === "tool" ? ` (${last()?.name})` : ""))
 
@@ -90,7 +91,7 @@ export function SessionMind(props: { parts: ReadonlyArray<Part>; startedAt?: num
         {target() ? `: ${target()}` : ""}
       </div>
       <div class="text-[12px] opacity-70" aria-hidden="true">
-        {tools().length > 0 ? `step ${tools().length}` : "starting"} · {total()}s elapsed
+        {(tools()?.length ?? 0) > 0 ? `step ${tools().length}` : "starting"} · {total()}s elapsed
         {last()?.type === "tool" && last()?.time?.created ? ` · this step ${seconds(last()?.time?.created)}s` : ""}
       </div>
       <ol class="m-0 flex list-none flex-wrap gap-x-3 gap-y-1 p-0 text-[12px]" aria-label="Stages of the work">
@@ -117,7 +118,7 @@ export function SessionMind(props: { parts: ReadonlyArray<Part>; startedAt?: num
           }}
         </For>
       </ol>
-      <Show when={recent().length > 0}>
+      <Show when={(recent()?.length ?? 0) > 0}>
         <ul class="m-0 flex list-none flex-col gap-0.5 p-0 text-[12px]" aria-label="Recent steps">
           <For each={recent()}>
             {(part) => (
