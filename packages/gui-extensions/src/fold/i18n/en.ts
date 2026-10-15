@@ -1,7 +1,7 @@
 export default {
   "tab.title": "Fold",
-  "panel.title": "Fold audit — how this turn was prompted",
-  "panel.subtitle": "verbatim · byte-addressed · no vectors, no RAG",
+  "panel.title": "The Fold",
+  "panel.subtitle": "it decides what the model is sent — verbatim, no embeddings, no guessing",
   "panel.refresh": "Refresh",
   "panel.loading": "Reading the fold…",
   "panel.offline": "The fold door is unreachable at 127.0.0.1:11436 — nothing was folded, nothing was recalled.",

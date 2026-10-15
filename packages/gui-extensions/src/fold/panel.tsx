@@ -1,13 +1,12 @@
-import { createMemo, createSignal, For, Match, Show, Switch } from "solid-js"
+import { createMemo, createSignal, For, Match, Show, Switch, type JSX } from "solid-js"
 import { Option, Schema } from "effect"
 import { Button } from "@opencode/ui/button"
 import { ScrollView } from "@opencode/ui/scroll-view"
 import { TextShimmer } from "@opencode/ui/text-shimmer"
 import { createLatest, useExtension, type MountedSession } from "../sdk"
 
-// The fold door's default address (FOLD_URL on the doorway side). CORS is open, so the window reads the audit
-// directly. This panel is a trust surface: it derives from the bytes the frontier received, never from the door's
-// claims, so injected (non-model) material and model-authored material can never be confused.
+// The fold door's default address. CORS is open, so the window reads the audit directly. This panel shows exactly
+// what the model was sent — built from the real request, not from the fold's own claims.
 const FOLD_URL = "http://127.0.0.1:11436"
 
 const Project = Schema.Struct({
@@ -54,7 +53,6 @@ const Count = Schema.Struct({ n: Schema.optional(Schema.Number), tokens: Schema.
 
 const Meter = Schema.Struct({
   turns: Schema.optional(Schema.Number),
-  classes: Schema.optional(Schema.Number),
   firstAsks: Schema.optional(Count),
   repeatAsks: Schema.optional(Count),
   titlesServedLocally: Schema.optional(Schema.Number),
@@ -63,13 +61,9 @@ const Meter = Schema.Struct({
     Schema.Struct({
       projectedChars: Schema.optional(Schema.Number),
       projectedTokensEst: Schema.optional(Schema.Number),
-      titleTokensEst: Schema.optional(Schema.Number),
       savedUSD: Schema.optional(Schema.Number),
-      folds: Schema.optional(Schema.Number),
-      note: Schema.optional(Schema.String),
     }),
   ),
-  unmeasured: Schema.optional(Schema.Array(Schema.String)),
 })
 
 type Meter = Schema.Schema.Type<typeof Meter>
@@ -96,7 +90,7 @@ const isArray = Schema.is(Schema.Array(Schema.Json))
 const isString = Schema.is(Schema.String)
 
 const textOf = (content: Schema.Json | undefined): string => {
-  if (content === undefined) return ""
+  if (content === undefined || content === null) return ""
 
   if (isString(content)) return content
 
@@ -111,16 +105,18 @@ const parseJson = (text: string) => Option.getOrUndefined(Schema.decodeUnknownOp
 
 const num = (value: number | undefined) => value ?? 0
 
+const isGap = (value: string) => /^(no-|nothing)/.test(value)
+
 type Origin = "fold" | "system" | "user" | "model" | "tool"
 
-type Part = { role: string; origin: Origin; text: string; reasoning?: string }
+type Part = { origin: Origin; text: string; reasoning?: string }
 
 const ORIGIN_LABEL: Record<Origin, string> = {
-  fold: "fold-injected — verbatim, non-model",
-  system: "system (harness)",
-  user: "user ask",
-  model: "model",
-  tool: "tool result",
+  fold: "added by the fold — verbatim, not the model",
+  system: "instructions (system)",
+  user: "you",
+  model: "the model",
+  tool: "a tool result",
 }
 
 const originOf = (role: string, text: string, turn: Turn): Origin => {
@@ -135,50 +131,50 @@ const originOf = (role: string, text: string, turn: Turn): Origin => {
   return "tool"
 }
 
-// Classify each prompt message by origin, from the bytes actually sent. A system note the door injected is
-// marked fold; the model's own words are marked model. This is the separation the model cannot forge.
 const classify = (message: PromptMessage, turn: Turn): Part => {
   const text = textOf(message.content)
 
-  const role = message.role ?? "?"
+  const origin = originOf(message.role ?? "?", text, turn)
 
-  const origin = originOf(role, text, turn)
-
-  return message.reasoning_content ? { role, origin, text, reasoning: message.reasoning_content } : { role, origin, text }
+  return message.reasoning_content ? { origin, text, reasoning: message.reasoning_content } : { origin, text }
 }
 
-const disposition = (turn: Turn) => {
+const statusOf = (turn: Turn) => {
   const bits: string[] = []
 
-  if (turn.recall) bits.push("recalled a settled ask")
+  if (turn.recall) bits.push("remembered a settled answer")
 
-  if (turn.look && !/^(no-|nothing)/.test(turn.look)) bits.push("looked addresses in the workspace")
+  if (turn.look && !isGap(turn.look)) bits.push("pointed the model at files in your workspace")
 
   const dropped = turn.project?.drop?.length ?? 0
 
-  if (dropped) bits.push(`withheld ${dropped} exchange(s)`)
+  if (dropped) bits.push(`left out ${dropped} earlier message(s)`)
 
-  if (bits.length === 0) return { engaged: false, text: "idle — nothing to recall, look up, or withhold; the request went through as upstream" }
+  if (bits.length === 0) return false
 
-  return { engaged: true, text: bits.join(" · ") }
+  return bits.join(" · ")
 }
 
-function Field(props: { label: string; value: string }) {
+function Section(props: { title: string; children: JSX.Element }) {
   return (
-    <div class="mt-1 flex flex-col gap-0.5">
-      <div class="text-12-regular text-text-weak">{props.label}</div>
-      <Show
-        when={props.value.length > 400}
-        fallback={<div class="whitespace-pre-wrap break-words text-13-regular text-text-base">{props.value}</div>}
-      >
-        <details class="min-w-0">
-          <summary class="cursor-pointer text-12-regular text-text-weak">
-            {props.value.slice(0, 200)}… ({props.value.length} chars)
-          </summary>
-          <div class="whitespace-pre-wrap break-words text-13-regular text-text-base">{props.value}</div>
-        </details>
-      </Show>
+    <div class="mt-1 flex flex-col gap-1">
+      <div class="text-12-regular text-text-weak">{props.title}</div>
+      {props.children}
     </div>
+  )
+}
+
+function Text(props: { value: string }) {
+  return (
+    <Show
+      when={props.value.length > 400}
+      fallback={<div class="whitespace-pre-wrap break-words text-13-regular text-text-base">{props.value}</div>}
+    >
+      <details class="min-w-0">
+        <summary class="cursor-pointer text-13-regular text-text-weak">show all ({props.value.length} characters)</summary>
+        <div class="whitespace-pre-wrap break-words text-13-regular text-text-base">{props.value}</div>
+      </details>
+    </Show>
   )
 }
 
@@ -189,29 +185,29 @@ function PromptReading(props: { turn: Turn }) {
     return parsed === undefined ? undefined : Option.getOrUndefined(Schema.decodeUnknownOption(PromptDoc)(parsed))
   })
 
-  const parts = createMemo(() => (doc()?.messages ?? []).map((message) => classify(message, props.turn)))
+  const parts = createMemo(() => (doc()?.messages ?? []).map((message) => classify(message, props.turn)).filter((part) => part.text.trim().length > 0))
 
   return (
-    <Show when={doc()} fallback={<Field label="prompt — verbatim" value={props.turn.prompt ?? ""} />}>
+    <Show when={doc()} fallback={<Text value={props.turn.prompt ?? ""} />}>
       {(value) => (
         <div class="mt-2 flex flex-col gap-3">
-          <div class="text-12-regular text-text-weak">model · {value().model}</div>
+          <div class="text-13-regular text-text-weak">model: {value().model}</div>
           <For each={parts()}>
             {(part) => (
               <div class="flex flex-col gap-1">
                 <div
                   classList={{
-                    "text-12-regular": true,
-                    "text-text-weak": part.origin !== "fold",
+                    "text-13-regular": true,
                     "text-v2-text-text-accent": part.origin === "fold",
+                    "text-text-weak": part.origin !== "fold",
                   }}
                 >
-                  {part.origin === "fold" ? "fold-injected — verbatim, non-model" : ORIGIN_LABEL[part.origin]}
+                  {ORIGIN_LABEL[part.origin]}
                 </div>
                 <div class="whitespace-pre-wrap break-words text-13-regular text-text-base">{part.text}</div>
                 <Show when={part.reasoning}>
                   <details>
-                    <summary class="cursor-pointer text-12-regular text-text-weak">reasoning</summary>
+                    <summary class="cursor-pointer text-13-regular text-text-weak">reasoning</summary>
                     <div class="whitespace-pre-wrap break-words text-13-regular text-text-base">{part.reasoning}</div>
                   </details>
                 </Show>
@@ -225,102 +221,93 @@ function PromptReading(props: { turn: Turn }) {
 }
 
 function Withheld(props: { project: Project | null | undefined }) {
+  const dropped = () => props.project?.drop ?? []
+  const kept = () => props.project?.keep ?? []
+
   return (
-    <Show when={props.project}>
-      {(project) => (
-        <div class="mt-1 flex flex-col gap-1">
-          <div class="text-12-regular text-text-weak">withheld — verbatim, address-based, no vectors</div>
-          <Show
-            when={(project().drop ?? []).length}
-            fallback={<div class="text-13-regular text-text-base">none withheld</div>}
-          >
-            <div class="text-13-regular text-text-base">
-              left out of the frontier: {(project().drop ?? []).join(", ")} · kept whole: {(project().keep ?? []).join(", ") || "none"}
-            </div>
-          </Show>
-          <Show when={project().record}>
-            <div class="mt-0.5 text-12-regular text-text-weak">the stand-in record</div>
-            <div class="whitespace-pre-wrap break-words text-13-regular text-text-base">{project().record}</div>
-          </Show>
-          <Show when={project().gap}>
-            <div class="text-13-regular text-text-base">no projection: {project().gap}</div>
-          </Show>
+    <Show when={props.project && dropped().length > 0}>
+      <Section title="What the fold left out of the model's view — verbatim">
+        <div class="text-13-regular text-text-base">
+          Left out earlier messages: {dropped().join(", ")} · kept whole: {kept().join(", ") || "none"}
         </div>
-      )}
+        <Show when={props.project?.record}>
+          <div class="mt-1 text-12-regular text-text-weak">What stood in for them</div>
+          <div class="whitespace-pre-wrap break-words text-13-regular text-text-base">{props.project?.record}</div>
+        </Show>
+      </Section>
     </Show>
   )
 }
 
 function TurnView(props: { turn: Turn; index: number; total: number }) {
-  const state = createMemo(() => disposition(props.turn))
+  const status = createMemo(() => statusOf(props.turn))
   const plan = createMemo(() => (props.turn.plan ?? []).map((step) => step.name).filter(Boolean).join(", "))
 
   return (
     <div class="flex flex-col gap-2 border-b border-v2-border-border-base py-4">
       <div class="text-13-regular font-[530] text-text-base">
-        {props.total - props.index}. {props.turn.ask || "(no ask)"}
+        {props.total - props.index}. {props.turn.ask || "(no question)"}
       </div>
-      <div classList={{ "text-12-regular": true, "text-text-base": state().engaged, "text-text-weak": !state().engaged }}>
-        {state().text}
+      <div classList={{ "text-13-regular": true, "text-text-base": !!status(), "text-text-weak": !status() }}>
+        {status() ? `The fold ${status()}` : "The fold did nothing here — the request went straight to the model."}
       </div>
 
       <Show when={props.turn.prompt}>
         <details class="mt-1">
-          <summary class="cursor-pointer text-12-regular text-text-weak">
-            the prompt the frontier received — reconstructed, by origin
-          </summary>
+          <summary class="cursor-pointer text-13-regular text-text-base">What the model was sent</summary>
           <PromptReading turn={props.turn} />
         </details>
       </Show>
 
       <Show when={props.turn.recall}>
-        <Field label="recall injected — verbatim" value={props.turn.recall ?? ""} />
+        <Section title="A note the fold added from memory — verbatim">
+          <Text value={props.turn.recall ?? ""} />
+        </Section>
       </Show>
 
-      <Show when={props.turn.look}>
-        <Field label="look — verbatim addresses" value={props.turn.look ?? ""} />
+      <Show when={props.turn.look && !isGap(props.turn.look)}>
+        <Section title="Places in your workspace the fold pointed at — verbatim">
+          <Text value={props.turn.look ?? ""} />
+        </Section>
       </Show>
 
       <Withheld project={props.turn.project} />
 
       <Show when={plan()}>
-        <div class="text-12-regular text-text-weak">the model ran: {plan()}</div>
+        <div class="text-13-regular text-text-weak">Tools the model ran here: {plan()}</div>
       </Show>
 
-      <div class="text-12-regular text-text-weak">
-        effect: not measured — whether the model used what was injected, or re-read what was withheld, needs the
-        tool arguments, which this turn did not record
+      <div class="text-13-regular text-text-weak">
+        Not checked yet: whether the model used what the fold gave it, or needed what the fold left out.
       </div>
 
-      <div class="text-12-regular text-text-weak">
-        this turn: in {num(props.turn.tokens?.input).toLocaleString()} · out {num(props.turn.tokens?.output).toLocaleString()} ·
-        $ {num(props.turn.cost).toFixed(4)}
+      <div class="text-13-regular text-text-weak">
+        This turn: {num(props.turn.tokens?.input).toLocaleString()} in · {num(props.turn.tokens?.output).toLocaleString()} out · $
+        {" "}
+        {num(props.turn.cost).toFixed(4)}
       </div>
     </div>
   )
 }
 
-function MeterHeader(props: { meter: Meter | undefined }) {
+function Summary(props: { meter: Meter | undefined; fallbackTurns: number }) {
+  const turns = () => props.meter?.turns ?? props.fallbackTurns
+  const repeats = () => num(props.meter?.repeatAsks?.n)
+  const recalls = () => num(props.meter?.recallsServed)
+  const chars = () => num(props.meter?.savings?.projectedChars)
+  const tokens = () => num(props.meter?.savings?.projectedTokensEst)
+
   return (
-    <div class="flex shrink-0 flex-col gap-0.5 border-b border-v2-border-border-base px-5 py-3 text-12-regular text-text-weak">
-      <div class="text-text-base">{props.meter ? "session meter" : "session meter — unavailable"}</div>
-      <Show when={props.meter}>
-        {(meter) => (
-          <>
-            <div>
-              kept out of the frontier: {num(meter().savings?.projectedChars).toLocaleString()} chars ≈{" "}
-              {num(meter().savings?.projectedTokensEst).toLocaleString()} tokens (estimated, chars/4)
-            </div>
-            <div>titles served by rule: {num(meter().titlesServedLocally)} · recalls served: {num(meter().recallsServed)}</div>
-            <div>
-              frontier bought: {num(meter().turns)} turns · first {num(meter().firstAsks?.n)} · repeats {num(meter().repeatAsks?.n)} (
-              {num(meter().repeatAsks?.recalled)} recalled)
-            </div>
-            <div>estimated saved: $ {num(meter().savings?.savedUSD).toFixed(4)}</div>
-            <div>unmeasured: {(meter().unmeasured ?? []).join(", ")}</div>
-          </>
-        )}
-      </Show>
+    <div class="flex shrink-0 flex-col gap-1 border-b border-v2-border-border-base px-5 py-3">
+      <div class="text-13-regular text-text-base">
+        {turns()} {turns() === 1 ? "turn" : "turns"} so far · {repeats()} repeated questions · {recalls()} answered from memory
+      </div>
+      <div class="text-13-regular text-text-base">
+        Kept out of the model's view: {chars().toLocaleString()} characters (~{tokens().toLocaleString()} tokens, an estimate)
+      </div>
+      <div class="text-12-regular text-text-weak">
+        Nothing here is measured against results yet — only what the fold did, not whether it helped.
+      </div>
     </div>
   )
 }
@@ -389,12 +376,14 @@ export default function SessionFoldPanel(props: { session: MountedSession }) {
           <Match when={data.latest}>
             {(value) => (
               <div class="flex h-full min-h-0 flex-col">
-                <MeterHeader meter={value().meter} />
-                <ScrollView class="absolute inset-x-0 bottom-0 top-[92px]">
-                  <div class="px-5">
-                    <For each={turns()}>{(turn, index) => <TurnView turn={turn} index={index()} total={turns().length} />}</For>
-                  </div>
-                </ScrollView>
+                <Summary meter={value().meter} fallbackTurns={value().audit.audited ?? 0} />
+                <div class="relative min-h-0 flex-1">
+                  <ScrollView class="absolute inset-0">
+                    <div class="px-5">
+                      <For each={turns()}>{(turn, index) => <TurnView turn={turn} index={index()} total={turns().length} />}</For>
+                    </div>
+                  </ScrollView>
+                </div>
               </div>
             )}
           </Match>
