@@ -1,15 +1,86 @@
+/* Reused from the fold's own reading animation (holodeck/vendor/fold-chat): edges draw in and flow,
+   nodes arrive in phase order, the fold node pulses, and a loop arc marks what the fold did. */
 @keyframes fold-arrive {
   from {
     opacity: 0;
-    transform: translateY(6px);
+    transform: translateY(10px) scale(0.995);
   }
 
   to {
     opacity: 1;
-    transform: translateY(0);
+    transform: translateY(0) scale(1);
   }
 }
 
 .fold-arrive {
-  animation: fold-arrive 300ms ease-out both;
+  animation: fold-arrive 480ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+@keyframes fold-draw {
+  from {
+    stroke-dashoffset: 400;
+  }
+
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes fold-flow {
+  to {
+    stroke-dashoffset: -22;
+  }
+}
+
+@keyframes fold-pulse {
+  from {
+    opacity: 0.3;
+  }
+
+  to {
+    opacity: 0.85;
+  }
+}
+
+@keyframes fold-arc {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes fold-phase {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+}
+
+.fw-edge {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-dasharray: 400;
+  animation: fold-draw 900ms ease-out both;
+}
+
+.fw-edge.flow {
+  stroke-dasharray: 6 5;
+  animation: fold-flow 1200ms linear infinite;
+}
+
+.fw-node {
+  animation: fold-phase 450ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+.fw-dot {
+  animation: fold-pulse 900ms ease-in-out infinite alternate;
+}
+
+.fw-arc {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.5;
+  stroke-dasharray: 100;
+  stroke-dashoffset: 100;
+  animation: fold-arc 800ms cubic-bezier(0.5, 0, 0.2, 1) both;
 }

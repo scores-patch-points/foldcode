@@ -282,18 +282,65 @@ function Withheld(props: { project: Project | null | undefined }) {
   )
 }
 
+// The fold's reading animation, reused: the turn as a drawn watch — you → fold → model, edges drawing in and
+// flowing, the fold node pulsing when it acted, a loop arc marking the fold's own move, withheld shown beside.
+function Watch(props: { turn: Turn }) {
+  const engaged = () => !!props.turn.recall || !!(props.turn.look && !isGap(props.turn.look)) || (props.turn.project?.drop?.length ?? 0) > 0
+  const withheld = () => props.turn.project?.drop?.length ?? 0
+
+  return (
+    <svg viewBox="0 0 300 52" class="mt-1 w-full text-text-weak" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+      <path class="fw-edge" d="M26 30 H112" />
+      <g classList={{ "text-v2-text-text-accent": engaged() }}>
+        <Show when={engaged()} fallback={<path class="fw-edge" d="M144 30 H232" />}>
+          <path class="fw-edge flow" d="M144 30 H232" />
+          <path class="fw-arc" d="M126 12 A 20 20 0 1 0 126 48" />
+        </Show>
+      </g>
+      <g class="fw-node" style={{ "animation-delay": "60ms" }}>
+        <circle cx="20" cy="30" r="5" fill="currentColor" />
+        <text x="20" y="50" text-anchor="middle" fill="currentColor" style={{ "font-size": "9px" }}>
+          you
+        </text>
+      </g>
+      <g class="fw-node" style={{ "animation-delay": "160ms" }}>
+        <circle cx="128" cy="30" r="5" fill="currentColor" classList={{ "fw-dot": engaged() }} />
+        <text x="128" y="50" text-anchor="middle" fill="currentColor" style={{ "font-size": "9px" }}>
+          fold
+        </text>
+      </g>
+      <g class="fw-node" style={{ "animation-delay": "260ms" }}>
+        <circle cx="248" cy="30" r="5" fill="currentColor" />
+        <text x="248" y="50" text-anchor="middle" fill="currentColor" style={{ "font-size": "9px" }}>
+          model
+        </text>
+      </g>
+      <Show when={withheld()}>
+        <text x="128" y="12" text-anchor="middle" fill="currentColor" style={{ "font-size": "9px" }}>
+          ⊘ {withheld()} withheld
+        </text>
+      </Show>
+    </svg>
+  )
+}
+
 function TurnView(props: { turn: Turn; index: number; total: number; session: MountedSession }) {
   const status = createMemo(() => statusOf(props.turn))
   const plan = createMemo(() => (props.turn.plan ?? []).map((step) => step.name).filter(Boolean).join(", "))
 
   return (
-    <div class="fold-arrive flex flex-col gap-2 border-b border-v2-border-border-base py-4">
+    <div
+      class="fold-arrive flex flex-col gap-2 border-b border-v2-border-border-base py-4"
+      style={{ "animation-delay": `${props.index * 45}ms` }}
+    >
       <div class="text-13-regular font-[530] text-text-base">
         {props.total - props.index}. {props.turn.ask || "(no question)"}
       </div>
       <div classList={{ "text-13-regular": true, "text-text-base": !!status(), "text-text-weak": !status() }}>
         {status() ? `The fold ${status()}` : "The fold did nothing here — the request went straight to the model."}
       </div>
+
+      <Watch turn={props.turn} />
 
       <Show when={props.turn.prompt}>
         <details class="mt-1">
@@ -363,6 +410,7 @@ export default function SessionFoldPanel(props: { session: MountedSession }) {
   const ctx = useExtension()
   const [nonce, setNonce] = createSignal(0)
   const [tick, setTick] = createSignal(0)
+  const [replay, setReplay] = createSignal(0)
 
   // Poll the door so the panel tracks turns as they land, without a manual Refresh. The audit is a local read.
   const timer = setInterval(() => setTick((value) => value + 1), 1000)
@@ -392,7 +440,7 @@ export default function SessionFoldPanel(props: { session: MountedSession }) {
 
   const turns = createMemo(() => {
     const next = (data.latest?.audit.turns ?? []).map((turn) => {
-      const key = `${turn.when ?? ""}#${turn.address ?? ""}`
+      const key = `${replay()}#${turn.when ?? ""}#${turn.address ?? ""}`
       const kept = cache.get(key) ?? turn
 
       cache.set(key, kept)
@@ -400,7 +448,7 @@ export default function SessionFoldPanel(props: { session: MountedSession }) {
       return kept
     })
 
-    const live = new Set(next.map((turn) => `${turn.when ?? ""}#${turn.address ?? ""}`))
+    const live = new Set(next.map((turn) => `${replay()}#${turn.when ?? ""}#${turn.address ?? ""}`))
 
     for (const key of cache.keys()) if (!live.has(key)) cache.delete(key)
 
@@ -414,7 +462,15 @@ export default function SessionFoldPanel(props: { session: MountedSession }) {
       <div class="flex shrink-0 items-start justify-between gap-3 border-b border-v2-border-border-base px-5 py-4">
         <div class="flex min-w-0 flex-col gap-0.5">
           <div class="flex min-w-0 items-center gap-2">
-            <span class="size-1.5 shrink-0 animate-pulse rounded-full bg-v2-icon-icon-accent" aria-hidden="true" />
+            <button
+              type="button"
+              class="flex shrink-0 cursor-pointer items-center"
+              aria-label={ctx.t("panel.replay")}
+              title={ctx.t("panel.replay")}
+              onClick={() => setReplay((value) => value + 1)}
+            >
+              <span class="size-1.5 animate-pulse rounded-full bg-v2-icon-icon-accent" aria-hidden="true" />
+            </button>
             <div class="min-w-0 truncate text-13-regular text-text-base">{ctx.t("panel.title")}</div>
           </div>
           <div class="min-w-0 truncate text-12-regular text-text-weak">{ctx.t("panel.subtitle")}</div>
