@@ -33,6 +33,15 @@ const debug = process.env.FOLD_DEBUG === "1"
 // frontier is sent them, so vision and transcription default to local
 // models, never a frontier call. FOLD_PERCEIVE=0 restores upstream behavior.
 const perceiveOff = process.env.FOLD_PERCEIVE === "0"
+// Shadow capture for the draft-lint trial (the-fold/docs/DRAFT-LINT-PREREG.md):
+// full draft text and full tool I/O ride to the door's observe-only shadow
+// event. Default off. Local-only rows the door never ships, scores, or
+// injects; a failed post is lost, never blocking.
+const shadowOn = process.env.FOLD_SHADOW === "1"
+// DRAFT-LINT (the-fold/docs/DRAFT-LINT.md): draft + act are the new door
+// events. FOLD_DRAFT=0 disables them; FOLD_OFF=1 still disables everything.
+// Rollout step 1 is observe-only — the door records verdicts it never
+// enforces — so these posts change no turn by default.
 
 let downUntil = 0
 
@@ -95,6 +104,26 @@ const forward = (event: Observed) => {
     case "session.execution.failed":
     case "session.execution.interrupted":
       return {}
+    default:
+      return undefined
+  }
+}
+
+// Full bytes for shadow capture — the opposite of forward(): no clipping,
+// because the lint trial scores drafts, not shapes. Only kinds the trial
+// reads; everything else rides nothing.
+const shadowOf = (event: Observed) => {
+  switch (event.type) {
+    case "session.text.ended":
+      return typeof event.data.text === "string" && event.data.text.length > 0
+        ? { kind: "draft-text", name: "", text: event.data.text }
+        : undefined
+    case "session.tool.called":
+      return { kind: "tool-io", name: `called:${String(event.data.id ?? "?")}`, text: JSON.stringify(event.data.input) ?? "" }
+    case "session.tool.success":
+      return { kind: "tool-io", name: `ok:${String(event.data.id ?? "?")}`, text: JSON.stringify(event.data.content) ?? "" }
+    case "session.tool.failed":
+      return { kind: "tool-io", name: `err:${String(event.data.id ?? "?")}`, text: JSON.stringify(event.data.error) ?? "" }
     default:
       return undefined
   }
@@ -521,7 +550,17 @@ export const Plugin = define({
         const data = forward(event)
         if (!data) return Effect.void
         const sessionID = "sessionID" in event.data ? event.data.sessionID : undefined
-        return post({ event: "event", type: event.type, sessionID, data }, askTimeout).pipe(Effect.asVoid)
+        const record = post({ event: "event", type: event.type, sessionID, data }, askTimeout).pipe(Effect.asVoid)
+        // Shadow capture rides alongside, never instead: concurrent, so
+        // the record path never waits on the trial path; failure-silent
+        // by post()'s own contract.
+        if (!shadowOn) return record
+        const shadow = shadowOf(event)
+        if (!shadow || !sessionID) return record
+        return Effect.all(
+          [record, post({ event: "shadow", sessionID, ...shadow }, askTimeout).pipe(Effect.asVoid)],
+          { concurrency: 2, discard: true },
+        )
       }),
       Effect.forkScoped({ startImmediately: true }),
     )
