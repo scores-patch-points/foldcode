@@ -97,3 +97,26 @@ describe("REC closes a settled target", () => {
     expect(targets.at(-1)!.after).toBe("bun test a")
   })
 })
+
+describe("conceptOf", () => {
+  const tool = (name: string, input: object, status = "completed") => ({ type: "tool", name, state: { status, input } })
+
+  test("the todo in progress wins", async () => {
+    const { targetsOf, conceptOf } = await import("./session-mind-stage")
+    const parts = [
+      tool("todowrite", { todos: [{ content: "Wire the work tree panel", status: "in_progress" }, { content: "Docs", status: "pending" }] }),
+      tool("read", { filePath: "src/a.ts" }),
+    ] as any
+    expect(conceptOf(targetsOf(parts).at(-1), parts)).toBe("Wire the work tree panel")
+  })
+
+  test("falls back to the step's description, then to the target read plainly", async () => {
+    const { targetsOf, conceptOf } = await import("./session-mind-stage")
+    const withDesc = [tool("bash", { command: "bun test", description: "Run the mind tests" })] as any
+    expect(conceptOf(targetsOf(withDesc)[0], withDesc)).toBe("Run the mind tests")
+    const plain = [tool("read", { filePath: "packages/app/src/session/timeline/session-mind-stage.ts" })] as any
+    expect(conceptOf(targetsOf(plain)[0], plain)).toBe("session mind stage (timeline)")
+    const grep = [tool("grep", { pattern: "useExtensionHost" })] as any
+    expect(conceptOf(targetsOf(grep)[0], grep)).toBe("searching for useExtensionHost")
+  })
+})

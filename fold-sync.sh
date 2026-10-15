@@ -41,7 +41,7 @@ base=$(git merge-base HEAD upstream/dev)
 leak=""
 while IFS= read -r file; do
   case "$file" in
-    packages/core/src/plugin/fold.ts | packages/core/src/plugin/internal.ts | packages/app/src/session/timeline/session-mind.tsx | packages/app/src/session/timeline/session-mind-stage.ts | packages/app/src/session/timeline/session-mind.test.ts | packages/app/src/session/timeline/message-timeline.tsx | UPSTREAM.md | fold-sync.sh | fold-install.sh) ;;
+    packages/core/src/plugin/fold.ts | packages/core/src/plugin/internal.ts | packages/app/src/session/timeline/session-mind.tsx | packages/gui-extensions/src/fold/mind-tree.tsx | packages/gui-extensions/src/fold/mind-tree-model.ts | packages/gui-extensions/src/fold/mind-tree-model.test.ts | packages/app/src/session/timeline/session-mind-stage.ts | packages/app/src/session/timeline/session-mind.test.ts | packages/app/src/session/timeline/message-timeline.tsx | UPSTREAM.md | fold-sync.sh | fold-install.sh) ;;
     *) leak="${leak}${file}"$'\n' ;;
   esac
 done < <(git diff --name-only "${base}"..HEAD)

@@ -158,3 +158,123 @@ export function inFlightOf(targets: ReadonlyArray<Target>): Target[] {
     item.steps.some((step) => step.part.state?.status === "running" || step.part.state?.status === "streaming"),
   )
 }
+
+/** A plain, serializable picture of the turn's work, published for the work-tree panel (which lives in the fold
+ *  extension and cannot read the timeline). Targets in order; each has its laps and the steps in them. */
+export type MindSnapshot = {
+  at: number
+  targets: Array<{
+    where: string
+    range: string
+    after?: string
+    lap: number
+    reached: number
+    settled: boolean
+    inFlight: boolean
+    laps: Array<{
+      lap: number
+      reached: number
+      steps: Array<{ name: string; kind: string; stage: MindStage; status: string; reframed: boolean; error?: string }>
+    }>
+  }>
+}
+
+export function snapshotOf(targets: ReadonlyArray<Target>, now = Date.now()): MindSnapshot {
+  const live = new Set(inFlightOf(targets))
+  return {
+    at: now,
+    targets: targets.map((item) => {
+      const lap = lapOf(item)
+      const laps: MindSnapshot["targets"][number]["laps"] = []
+      for (let n = 0; n <= lap; n++) {
+        const steps = item.steps.filter((step) => step.lap === n)
+        laps.push({
+          lap: n,
+          reached: steps.reduce((at, step) => Math.max(at, indexOf(step.stage)), -1),
+          steps: steps.map((step) => ({
+            name: step.part.name ?? step.part.type ?? "step",
+            kind: step.part.type ?? "",
+            stage: step.stage,
+            status: step.part.state?.status ?? "",
+            reframed: step.reframed,
+            error: step.part.state?.error ? String(step.part.state.error).slice(0, 200) : undefined,
+          })),
+        })
+      }
+      return {
+        where: item.where,
+        range: item.range,
+        after: item.after,
+        lap,
+        reached: reachedOf(item),
+        settled: !!settledBy(item),
+        inFlight: live.has(item),
+        laps,
+      }
+    }),
+  }
+}
+
+export const MIND_EVENT = "fold:mind"
+
+/** Hands the snapshot to whoever is drawing the work tree. Same renderer, so a window event is enough. */
+export function publishMind(snapshot: MindSnapshot) {
+  if (typeof window === "undefined") return
+  ;(window as unknown as { __foldMind?: MindSnapshot }).__foldMind = snapshot
+  window.dispatchEvent(new CustomEvent(MIND_EVENT, { detail: snapshot }))
+}
+
+const words = (value: string) =>
+  value
+    .replace(/\.[a-z0-9]+$/i, "")
+    .replace(/[-_.]+/g, " ")
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .trim()
+    .toLowerCase()
+
+const firstSentence = (value: string | undefined, max = 90) => {
+  const one = (value ?? "").trim().replace(/\s+/g, " ")
+  if (!one) return ""
+  const cut = one.split(/(?<=[.!?])\s/)[0] ?? one
+  return cut.length > max ? `${cut.slice(0, max - 1)}…` : cut
+}
+
+/** What the work is about, in words rather than paths. In order of trust: the todo in progress (the model said so),
+ *  the description the model gave the step, its own reasoning, and last a plain reading of the target itself. */
+export function conceptOf(target: Target | undefined, all: ReadonlyArray<Part> = []): string {
+  if (!target) return ""
+  for (let i = all.length - 1; i >= 0; i--) {
+    const part = all[i]!
+    if (part.type !== "tool" || (part.name ?? "").toLowerCase() !== "todowrite") continue
+    const todos = inputOf(part).todos
+    if (Array.isArray(todos)) {
+      const active = todos.find((item) => item && typeof item === "object" && (item as { status?: unknown }).status === "in_progress") as
+        | { content?: unknown }
+        | undefined
+      if (typeof active?.content === "string" && active.content.trim()) return active.content.trim()
+    }
+    break
+  }
+  for (let i = target.steps.length - 1; i >= 0; i--) {
+    const input = inputOf(target.steps[i]!.part)
+    if (typeof input.description === "string" && input.description.trim()) return input.description.trim()
+  }
+  for (let i = target.steps.length - 1; i >= 0; i--) {
+    const part = target.steps[i]!.part
+    if (part.type === "reasoning") {
+      const line = firstSentence(part.text)
+      if (line) return line
+    }
+  }
+  const where = target.where
+  if (!where) return "the task itself"
+  if (/^https?:/.test(where)) return `reading ${where.replace(/^https?:\/\//, "").split("/")[0]}`
+  if (VERIFY.test(where)) return "checking that it holds"
+  if (/[\\/]/.test(where) && !/\s/.test(where)) {
+    const parts = where.split(/[\\/]/).filter(Boolean)
+    const file = words(parts.at(-1) ?? where)
+    const dir = parts.length > 1 ? words(parts.at(-2) ?? "") : ""
+    return dir && dir !== file ? `${file} (${dir})` : file
+  }
+  return `searching for ${where.length > 40 ? `${where.slice(0, 39)}…` : where}`
+}

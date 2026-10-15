@@ -1,6 +1,7 @@
 import { createMemo, createSignal, For, onCleanup, Show } from "solid-js"
 import {
   indexOf,
+  conceptOf,
   inFlightOf,
   lapOf,
   settledBy,
@@ -55,6 +56,7 @@ export function SessionMind(props: {
   const total = createMemo(() => seconds(props.startedAt ?? parts()[0]?.time?.created))
   const toolCount = createMemo(() => parts().filter((part) => part.type === "tool").length)
   const lastPart = createMemo(() => parts().at(-1))
+  const concept = createMemo(() => conceptOf(shown(), parts()))
   const doing = createMemo(() => STAGES.find((item) => item.id === here())?.doing ?? "Working")
   const clip = (value: string | undefined, max = 240) => {
     const one = (value ?? "").trim().replace(/\s+/g, " ")
@@ -85,7 +87,10 @@ export function SessionMind(props: {
           {current().glyph}
         </span>
         <span class="flex min-w-0 flex-col">
-          <span class="text-[13px] font-[560]">
+          <span class="min-w-0 text-[14px] font-[600] leading-snug" title={concept()}>
+            {concept() || "Getting started"}
+          </span>
+          <span class="text-[12px] font-[500] opacity-85">
             {doing()}
             {settled() ? <span class="ms-2 text-[11px] font-[500] opacity-70">settled</span> : lap() > 0 ? <span class="ms-2 text-[11px] font-[500] opacity-70">lap {lap() + 1}</span> : null}
           </span>

@@ -28,6 +28,7 @@ import { SessionAncestorTrail, SessionProjectMenu, SessionTitleHeader } from "..
 import { SessionHeaderSpacer } from "@/session/header/session-header"
 import { SessionRunningMenu } from "@/session/header/session-running-menu"
 import { SessionMind } from "./session-mind"
+import { publishMind, snapshotOf, targetsOf } from "./session-mind-stage"
 import { useExtensionHost } from "@/runtime/extension/host"
 import { useExtensionAttachment } from "@/runtime/extension/host-apis"
 
@@ -395,6 +396,7 @@ function MessageTimelineView(
     })
   })
 
+  createEffect(() => publishMind(snapshotOf(targetsOf(mindParts()))))
   const mindLinks = useExtensionHost().links
   const mindAttachment = useExtensionAttachment()
   const openInPanel = (path: string) => mindLinks.open({ href: path, exact: true, session: mindAttachment.current() })
