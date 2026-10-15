@@ -27,7 +27,7 @@ import { useCommand } from "@/shell/commands/command"
 import { SessionAncestorTrail, SessionProjectMenu, SessionTitleHeader } from "../session-identity-header"
 import { SessionHeaderSpacer } from "@/session/header/session-header"
 import { SessionRunningMenu } from "@/session/header/session-running-menu"
-import { SessionMind } from "./session-mind"
+import { SessionMind, SessionMindLine } from "./session-mind"
 import { publishMind, snapshotOf, targetsOf } from "./session-mind-stage"
 import { followBottom } from "./follow-bottom"
 import { AssistantReasoningContent } from "@opencode/session-ui/message-content"
@@ -428,6 +428,8 @@ function MessageTimelineView(
     measure()
     onCleanup(() => observer.disconnect())
   }
+  // The fold extension owns the side-region tabs; it listens for this and opens its work tree.
+  const openTree = () => window.dispatchEvent(new CustomEvent("fold:open-tree"))
   const mindLinks = useExtensionHost().links
   const mindAttachment = useExtensionAttachment()
   const openInPanel = (path: string) => mindLinks.open({ href: path, exact: true, session: mindAttachment.current() })
@@ -454,6 +456,9 @@ function MessageTimelineView(
             <div data-component="session-working" role="status">
               <TextShimmer text={language.t("session.timeline.working")} active />
             </div>
+            <Show when={!mindRoomy()}>
+              <SessionMindLine parts={mindParts()} onOpenTree={openTree} />
+            </Show>
           </Show>
           <Show when={backgroundHintPresence.present()}>
             <div
@@ -470,11 +475,6 @@ function MessageTimelineView(
             </div>
           </Show>
         </div>
-        <Show when={showWorking()}>
-          <div class={`pb-2 ${turnPadding()}`} classList={{ hidden: mindRoomy() }}>
-            <SessionMind parts={mindParts()} onOpen={openInPanel} thinking={mindThinking()} />
-          </div>
-        </Show>
       </div>
     </Show>
   )

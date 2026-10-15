@@ -1,7 +1,9 @@
 import { createMemo, createSignal, For, onCleanup, Show } from "solid-js"
-import { useExtension, type MountedSession } from "../sdk"
+import { createLatest, useExtension, type MountedSession } from "../sdk"
 import { followBottom } from "./follow"
 import { buildTree, type Snapshot, type TreeNode } from "./mind-tree-model"
+import { FOLD_URL } from "./panel"
+import { spiralOf, type RecordView } from "./plans-model"
 
 // The stigmergic work tree: what the turn has touched, how far each thing has walked the nine operators, and
 // what grew from what. The app publishes snapshots on a window event; this draws the latest one.
@@ -82,6 +84,25 @@ export default function SessionMindTree(props: { session: MountedSession }) {
   onCleanup(() => window.removeEventListener(EVENT, listener))
 
   const tree = createMemo(() => buildTree(snapshot()))
+
+  // The verified record beside the tree: which referents were redefined (the spiral turning) and which stayed one pass.
+  const [tick, setTick] = createSignal(0)
+  const timer = setInterval(() => setTick((value) => value + 1), 4000)
+  onCleanup(() => clearInterval(timer))
+  const record = createLatest(
+    () => `${props.session.id}#${tick()}`,
+    async (_key, signal) => {
+      const response = await fetch(`${FOLD_URL}/v1/hooks/opencode`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ event: "record", task: props.session.id }),
+        signal,
+      })
+      if (!response.ok) throw new Error(`record ${response.status}`)
+      return (await response.json()) as RecordView
+    },
+  )
+  const rows = createMemo(() => spiralOf(record.latest))
   const open = (path: string) => ctx.links.open({ href: path, exact: true, session: props.session })
 
   return (
@@ -101,6 +122,22 @@ export default function SessionMindTree(props: { session: MountedSession }) {
           <ul role="tree" aria-label="Work tree" class="m-0 p-0">
             <For each={tree()}>{(node) => <Node node={node} depth={0} session={props.session} open={open} />}</For>
           </ul>
+        </Show>
+        <Show when={rows().length > 0}>
+          <section class="mt-3 border-t border-v2-border-border-base px-2 pt-2" aria-label="Record">
+            <div class="mb-1 text-[11px] font-semibold uppercase tracking-wide opacity-60">Record</div>
+            <For each={rows()}>
+              {(row) => (
+                <div class="flex min-w-0 gap-2 py-0.5 text-[12px]">
+                  <span class="min-w-0 truncate font-semibold" title={row.referent}>{row.referent}</span>
+                  <span class="ms-auto shrink-0 opacity-70">
+                    {row.reentries > 0 ? `re-entered ×${row.reentries}` : "one pass"}
+                    {row.answers > 1 ? ` · ${row.answers} ways` : ""}
+                  </span>
+                </div>
+              )}
+            </For>
+          </section>
         </Show>
       </div>
     </div>

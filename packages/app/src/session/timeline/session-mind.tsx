@@ -1,6 +1,7 @@
 import { createMemo, createSignal, For, onCleanup, Show, type JSX } from "solid-js"
 import { followBottom } from "./follow-bottom"
 import {
+  stageOf,
   indexOf,
   conceptOf,
   frameChange,
@@ -332,3 +333,38 @@ export function SessionMind(props: {
     </div>
   )
 }
+
+/** One line, for when there is no room beside the timeline: what the model is doing and on what, in the height of the
+ *  Working row, so it never grows the timeline. Clicking opens the work tree in the right-hand panel. */
+export function SessionMindLine(props: { parts?: ReadonlyArray<Part | undefined>; onOpenTree?: () => void }) {
+  const parts = createMemo((): ReadonlyArray<Part> => (props.parts ?? []).filter((part): part is Part => !!part))
+  const target = createMemo(() => targetsOf(parts()).at(-1))
+  const stage = createMemo(() => {
+    const all = parts()
+    return all.length ? stageOf2(all) : "NUL"
+  })
+  const glyph = () => STAGES.find((item) => item.id === stage())?.glyph ?? "∅"
+  const label = () => STAGES.find((item) => item.id === stage())?.label ?? "Hold"
+  const name = createMemo(() => (target() ? prettyNameOf(target()!) : ""))
+  const steps = createMemo(() => parts().filter((part) => part.type === "tool").length)
+  return (
+    <button
+      type="button"
+      data-component="session-mind-line"
+      class="flex min-w-0 max-w-full cursor-pointer items-center gap-1.5 rounded-md px-1.5 py-0.5 text-[12px] hover:bg-[color-mix(in_srgb,currentColor_8%,transparent)] focus-visible:outline-2 focus-visible:outline-offset-2"
+      title="Open the work tree in the side panel"
+      onClick={() => props.onOpenTree?.()}
+    >
+      <span aria-hidden="true">{glyph()}</span>
+      <span class="shrink-0 font-[560]">{label()}</span>
+      <Show when={name()}>
+        <span class="min-w-0 truncate opacity-75">{name()}</span>
+      </Show>
+      <Show when={steps() > 0}>
+        <span class="shrink-0 opacity-55">· step {steps()}</span>
+      </Show>
+    </button>
+  )
+}
+
+const stageOf2 = (parts: ReadonlyArray<Part>): MindStage => stageOf(parts.at(-1))
