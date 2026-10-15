@@ -114,7 +114,7 @@ export function SessionMind(props: {
           <Show
             when={canOpen(shown()?.where ?? "")}
             fallback={
-              <span class="min-w-0 truncate text-[12px] opacity-75" title={shown()?.where}>
+              <span class="min-w-0 truncate text-[12px] opacity-75" classList={{ hidden: !shown()?.where }} title={shown()?.where}>
                 {placeLabel(shown() ?? { key: "", where: "", range: "", steps: [] })}
                 {shown()?.range ? ` · ${shown()?.range}` : ""}
               </span>
