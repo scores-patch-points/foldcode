@@ -85,7 +85,8 @@ chmod +x "$dest/opencode.new"
 mv -f "$dest/opencode.new" "$dest/opencode"
 
 "$dest/opencode" --version
-echo "installed $dest/opencode from opencode-fold @ $(git rev-parse --short HEAD) on upstream $(git rev-parse --short upstream/dev)"
+base=$(git rev-parse --short upstream/dev 2>/dev/null || echo unknown)
+echo "installed $dest/opencode from opencode-fold @ $(git rev-parse --short HEAD) (upstream base: $base)"
 
 # The fold stack: report whether the live doorway answers, and whether it
 # speaks this fork's contract (the plugin also checks at startup, logs, and
