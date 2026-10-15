@@ -1,13 +1,15 @@
 export * as FoldPlugin from "./fold.js"
 
 // The Fold doorway client. Everything here is a thin forwarder: the fold stack
-// (khora's POST /v1/hooks/opencode) decides what a prompt becomes and what a
-// finished turn teaches. This file carries no fold logic, so it does not change
-// when the fold does, and it is the only fold-specific code in the fork.
+// (khora's POST /v1/hooks/opencode) decides what a prompt becomes, what a tool
+// output folds into, and what a finished turn teaches. This file carries no
+// fold logic, so it does not change when the fold does, and it is the only
+// fold-specific code in the fork.
 //
 // Fails open: with the door unreachable, slow, or answering nonsense, opencode
 // behaves exactly as upstream. FOLD_OFF=1 removes the plugin's effect entirely.
 
+import { Message } from "@opencode/ai"
 import { define, type Context } from "@opencode/plugin/effect/plugin"
 import type { SessionHooks } from "@opencode/plugin/effect/session"
 import { Effect, Stream } from "effect"
@@ -15,7 +17,10 @@ import { Effect, Stream } from "effect"
 const base = (process.env.FOLD_URL ?? "http://127.0.0.1:11436").replace(/\/+$/, "")
 const off = process.env.FOLD_OFF === "1"
 const askTimeout = Number(process.env.FOLD_TIMEOUT_MS ?? 1500)
+const foldTimeout = Number(process.env.FOLD_FOLD_TIMEOUT_MS ?? 20_000)
+const minChars = Number(process.env.FOLD_MIN_CHARS ?? 4000)
 const coolDown = 30_000
+const debug = process.env.FOLD_DEBUG === "1"
 
 let downUntil = 0
 
@@ -83,39 +88,191 @@ const forward = (event: Observed) => {
   }
 }
 
+// The text a tool result carries, when it is text. Structured JSON results and
+// errors are left alone: those are the shapes a model debugs.
+const foldable = (part: SessionHooks["context"]["messages"][number]["content"][number]) => {
+  if (part.type !== "tool-result") return undefined
+  const text =
+    part.result.type === "text"
+      ? typeof part.result.value === "string"
+        ? part.result.value
+        : undefined
+      : part.result.type === "content" &&
+          part.result.value.every((item) => item.type === "text") &&
+          part.result.value.length > 0
+        ? part.result.value.flatMap((item) => (item.type === "text" ? [item.text] : [])).join("\n")
+        : undefined
+  if (text === undefined) return undefined
+  return { text, id: part.id, name: part.name }
+}
+
+const formatMeter = (meter: Record<string, unknown>) => {
+  const savings = (meter.savings ?? {}) as Record<string, unknown>
+  const num = (value: unknown) => (typeof value === "number" ? value : 0)
+  const first = (meter.firstAsks ?? {}) as Record<string, unknown>
+  const repeats = (meter.repeatAsks ?? {}) as Record<string, unknown>
+  return [
+    `fold savings · since ${String(savings.since ?? "?")}`,
+    `kept out of the frontier: ${num(savings.foldedChars).toLocaleString()} chars ≈ ${num(savings.savedTokensEst).toLocaleString()} tokens (folds ${num(savings.folds)})`,
+    `titles served by rule: ${num(meter.titlesServedLocally)} ≈ ${num(savings.titleTokensEst).toLocaleString()} frontier tokens avoided`,
+    `estimated saved: $${num(savings.savedUSD).toFixed(4)} (${String(savings.note ?? "")})`,
+    `frontier bought: ${num(meter.turns)} turns · first ${num(first.n)} (${num(first.tokens).toLocaleString()} tok) · repeats ${num(repeats.n)}, ${num(repeats.recalled)} recalled`,
+    `meter: ${base}/v1/hooks/opencode/meter`,
+  ].join("\n")
+}
+
 export const Plugin = define({
   id: "fold.doorway",
   effect: Effect.fn(function* (ctx) {
     if (off) return
 
+    // The price of the model actually in use, from the operator's own catalog;
+    // sent with each fold so the door's dollars are the running model's dollars.
+    let prices = new Map<string, number>()
+    yield* ctx.model.transform((editor) => {
+      prices = new Map(
+        editor.list().flatMap((model) =>
+          model.cost.length > 0 ? [[`${model.providerID}/${model.id}`, model.cost[0].input] as const] : [],
+        ),
+      )
+    })
+    const priceIn = (model: { providerID: string; id: string }) => prices.get(`${model.providerID}/${model.id}`)
+
+    // The contract check: the fork speaks events the door's handshake lists.
+    // A drifted door logs; it never blocks (everything here fails open).
+    yield* Effect.tryPromise(async () => {
+      const response = await fetch(`${base}/v1/hooks/opencode`, { signal: AbortSignal.timeout(3000) })
+      return (await response.json()) as { door?: string; events?: string[] }
+    }).pipe(
+      Effect.tap((door) => {
+        const events = door?.events ?? []
+        const missing = ["context", "title", "fold"].filter((event) => !events.includes(event))
+        if (door?.door !== "opencode" || missing.length > 0)
+          return Effect.logWarning("fold doorway speaks an older contract", { door: door?.door, missing, events })
+        return Effect.void
+      }),
+      Effect.catch(() => Effect.void),
+      Effect.ignore,
+      Effect.forkScoped({ startImmediately: true }),
+    )
+
+    const seen = new Set<string>()
+
+    const foldMessages = (event: SessionHooks["context"]) =>
+      Effect.gen(function* () {
+        if (debug) yield* Effect.logWarning("fold.scan", { sessionID: event.sessionID, messages: event.messages.length })
+        for (const [index, message] of event.messages.entries()) {
+          for (const part of message.content) {
+            const target = foldable(part)
+            if (!target || target.text.length < minChars || seen.has(target.id)) continue
+            const answer = yield* post(
+              {
+                event: "fold",
+                sessionID: event.sessionID,
+                tool: target.name,
+                ask: lastUserText(event.messages),
+                text: target.text,
+                priceIn: priceIn(event.model),
+              },
+              foldTimeout,
+            )
+            const folded = answer?.folded
+            if (typeof folded !== "string" || folded.length === 0) {
+              if (debug) yield* Effect.logWarning("fold.skipped", { id: target.id, answer: Object.keys(answer ?? {}) })
+              continue
+            }
+            const saved =
+              typeof answer?.savedBytes === "number" ? answer.savedBytes : target.text.length - folded.length
+            seen.add(target.id)
+            if (debug) yield* Effect.logWarning("fold.applied", { id: target.id, chars: target.text.length, saved })
+            const next = message.content.map((item) =>
+              item === part
+                ? {
+                    ...item,
+                    result: {
+                      type: "text" as const,
+                      value: `${folded}\n\n[fold: ${saved} chars kept out of this context; the full output remains in the session]`,
+                    },
+                  }
+                : item,
+            )
+            event.messages[index] = Message.make({
+              id: message.id,
+              role: message.role,
+              content: next,
+              metadata: message.metadata,
+              providerMetadata: message.providerMetadata,
+              native: message.native,
+            })
+          }
+        }
+      })
+
     const context = (event: SessionHooks["context"]) =>
       Effect.gen(function* () {
-        if (!isNewAsk(event.messages)) return
-        const answer = yield* post(
-          {
-            event: "context",
-            sessionID: event.sessionID,
-            model: event.model,
-            agent: event.agent,
-            ask: lastUserText(event.messages),
-            messages: event.messages.length,
-            tools: Object.keys(event.tools),
-          },
-          askTimeout,
-        )
-        const note = answer?.system
-        if (typeof note === "string" && note.length > 0) event.system.push({ type: "text", text: note })
+        // The recall and the fold both knock on the door; the recall first, so
+        // the turn exists before any fold can be attributed to it.
+        if (isNewAsk(event.messages)) {
+          const answer = yield* post(
+            {
+              event: "context",
+              sessionID: event.sessionID,
+              model: event.model,
+              agent: event.agent,
+              ask: lastUserText(event.messages),
+              messages: event.messages.length,
+              tools: Object.keys(event.tools),
+            },
+            askTimeout,
+          )
+          const note = answer?.system
+          if (typeof note === "string" && note.length > 0) event.system.push({ type: "text", text: note })
+        }
+        yield* foldMessages(event)
       })
 
     const title = (event: SessionHooks["title"]) =>
       Effect.gen(function* () {
         const answer = yield* post(
-          { event: "title", sessionID: event.sessionID, model: event.model, ask: lastUserText(event.messages) },
+          {
+            event: "title",
+            sessionID: event.sessionID,
+            model: event.model,
+            ask: lastUserText(event.messages),
+            priceIn: priceIn(event.model),
+          },
           askTimeout * 4,
         )
         const result = answer?.title
         if (typeof result === "string" && result.trim().length > 0) event.result = result.trim()
       })
+
+    yield* ctx.command.transform((editor) => {
+      editor.add({
+        name: "fold",
+        description: "fold savings: frontier tokens and dollars the fold kept out",
+        execute: (input) =>
+          Effect.gen(function* () {
+            const meter = yield* Effect.tryPromise(async () => {
+              const response = await fetch(`${base}/v1/hooks/opencode/meter`, { signal: AbortSignal.timeout(3000) })
+              if (!response.ok) throw new Error(`meter ${response.status}`)
+              return (await response.json()) as Record<string, unknown>
+            })
+            yield* ctx.session.synthetic({ sessionID: input.sessionID, text: formatMeter(meter), resume: false })
+          }).pipe(
+            Effect.catch(() =>
+              ctx.session
+                .synthetic({
+                  sessionID: input.sessionID,
+                  text: `fold door unreachable at ${base} — nothing folded, nothing saved`,
+                  resume: false,
+                })
+                .pipe(Effect.ignore),
+            ),
+            Effect.ignore,
+          ),
+      })
+    })
 
     yield* ctx.session.hook("context", context)
     yield* ctx.session.hook("title", title)
