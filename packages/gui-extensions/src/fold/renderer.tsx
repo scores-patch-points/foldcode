@@ -6,9 +6,11 @@ import type Fold from "./index"
 const setup: Setup<typeof Fold> = (ctx) => {
   const SessionFoldPanel = lazy(() => import("./panel"))
   const SessionHolodeckPanel = lazy(() => import("./archive"))
+  const SessionPerceivePanel = lazy(() => import("./perceive"))
   // Compile the panels while the app idles, so the first open renders at once.
   onCleanup(onIdle(() => void SessionFoldPanel.preload()))
   onCleanup(onIdle(() => void SessionHolodeckPanel.preload()))
+  onCleanup(onIdle(() => void SessionPerceivePanel.preload()))
 
   ctx.add(Style, css)
 
@@ -53,6 +55,28 @@ const setup: Setup<typeof Fold> = (ctx) => {
     render: (props) => (
       <Suspense>
         <SessionHolodeckPanel session={props.session} browser={browser} />
+      </Suspense>
+    ),
+  })
+
+  // The Perceive tab: which eyes and ears attached files get, before the
+  // frontier is sent them. Local-first by default; the tab reads and writes
+  // the door's perceive config, and the doorway plugin enforces it.
+  const perceive: PanelTab = {
+    id: "perceive",
+    get title() {
+      return ctx.t("tab.perceive")
+    },
+    closable: "compact",
+  }
+
+  ctx.add(Panel, {
+    id: "perceive",
+    region: "side",
+    list: () => [perceive],
+    render: (props) => (
+      <Suspense>
+        <SessionPerceivePanel session={props.session} />
       </Suspense>
     ),
   })

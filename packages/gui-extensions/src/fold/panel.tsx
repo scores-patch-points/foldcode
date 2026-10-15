@@ -28,7 +28,7 @@ const PlanStep = Schema.Struct({ name: Schema.optional(Schema.String), ok: Schem
 export const Turn = Schema.Struct({
   when: Schema.optional(Schema.String),
   ask: Schema.optional(Schema.String),
-  address: Schema.optional(Schema.String),
+  address: Schema.optional(Schema.NullOr(Schema.String)),
   recall: Schema.optional(Schema.NullOr(Schema.String)),
   look: Schema.optional(Schema.NullOr(Schema.String)),
   project: Schema.optional(Schema.NullOr(Project)),
@@ -304,107 +304,29 @@ function Withheld(props: { project: Project | null | undefined }) {
   )
 }
 
-// The fold's reading animation, reused: the turn as a drawn watch — you → fold → model, tracks drawing in and
-// flowing, the fold's ring drawing and its dot pulsing when it acted, withheld shown beside.
-function AskChip(props: { ask: string }) {
-  const words = createMemo(() => props.ask.split(/\s+/).filter(Boolean).slice(0, 40))
-
-  return (
-    <div class="fw-askchip">
-      <span class="k">ask</span>
-      <For each={words()}>{(word) => <span class="w">{word}</span>}</For>
-    </div>
-  )
-}
-
-function Watch(props: { turn: Turn }) {
-  const engaged = () => !!props.turn.recall || !!(props.turn.look && !isGap(props.turn.look)) || (props.turn.project?.drop?.length ?? 0) > 0
-  const withheld = () => props.turn.project?.drop?.length ?? 0
-
-  return (
-    <div class="mt-2 flex flex-wrap items-center gap-2 text-12-regular text-text-weak">
-      <span class="flex items-center gap-1.5">
-        <span class="size-2 rounded-full bg-current" />
-        you
-      </span>
-      <span class="fw-askedge" />
-      <span class="flex items-center gap-1.5">
-        <span class="relative flex items-center justify-center">
-          <span
-            classList={{
-              "size-2 rounded-full": true,
-              "bg-current": !engaged(),
-              "bg-v2-icon-icon-accent": engaged(),
-              "fw-dot": engaged(),
-            }}
-          />
-          <Show when={engaged()}>
-            <svg class="pointer-events-none absolute -inset-1 size-4 text-v2-text-text-accent" viewBox="0 0 16 16" aria-hidden="true">
-              <circle class="fw-ring" cx="8" cy="8" r="6" />
-            </svg>
-          </Show>
-        </span>
-        fold
-      </span>
-      <span classList={{ "fw-track": true, flow: engaged() }} />
-      <span class="flex items-center gap-1.5">
-        <span class="size-2 rounded-full bg-current" />
-        model
-      </span>
-      <Show when={withheld()}>
-        <span class="ml-1">⊘ {withheld()} withheld</span>
-      </Show>
-    </div>
-  )
-}
-
-// The open turn, while the model streams: what the fold has injected so far and the stations it is lighting.
-// Reused fold idiom — a doing line with a running dot, station pills, drawn edges — so it reads as the fold's
-// own live view, not a status banner.
+// The open turn, while the model streams: a single quiet line, no motion.
 function LiveView(props: { live: LiveTurn }) {
   const tools = () => props.live.tools ?? []
 
-  const last = () => tools().length - 1
-
   const current = () => {
-    const tool = tools()[last()]
+    const tool = tools()[tools().length - 1]
 
     if (tool && (tool.ok === null || tool.ok === undefined)) return tool.name
 
     return `step ${(props.live.steps ?? 0) + 1}`
   }
 
-  const folded = () => ({ recall: props.live.system ?? null, look: props.live.look ?? null, project: props.live.project ?? null })
-
   return (
-    <div class="foldlive flex shrink-0 flex-col gap-2 border-b border-v2-border-border-base px-5 py-4">
-      <AskChip ask={props.live.ask || "(working)"} />
-      <Watch turn={folded()} />
+    <div class="foldlive flex shrink-0 flex-col gap-1 border-b border-v2-border-border-base px-5 py-4">
       <div class="fpv-do running">
         <span class="dot" />
-        <span class="t">working · {current()}</span>
+        <span class="t">the fold is working · {current()}</span>
         <span class="n">
-          {tools().length} tool(s) · {props.live.steps ?? 0} step(s)
+          {props.live.ask || "(no question)"} — {tools().length} tool(s) · {props.live.steps ?? 0} step(s)
         </span>
       </div>
-      <Show when={tools().length}>
-        <div class="fpv-stations">
-          <For each={tools()}>
-            {(tool, index) => (
-              <span
-                classList={{
-                  done: index() < last() || (tool.ok !== null && tool.ok !== undefined),
-                  on: index() === last() && (tool.ok === null || tool.ok === undefined),
-                }}
-              >
-                {tool.name}
-              </span>
-            )}
-          </For>
-        </div>
-      </Show>
       <Show when={props.live.system}>
-        <div class="mt-1 text-13-regular text-text-base">the fold injected memory — verbatim</div>
+        <div class="text-13-regular text-text-base">the fold injected memory — verbatim</div>
       </Show>
     </div>
   )
@@ -419,15 +341,12 @@ export function TurnView(props: { turn: Turn; index: number; total: number; sess
       class="fold-arrive flex flex-col gap-2 border-b border-v2-border-border-base py-4"
       style={{ "animation-delay": `${props.index * 45}ms` }}
     >
-      <div class="text-12-regular text-text-weak">
-        {props.total - props.index}.
+      <div class="text-13-regular font-[530] text-text-base">
+        {props.total - props.index}. {props.turn.ask || "(no question)"}
       </div>
-      <AskChip ask={props.turn.ask || "(no question)"} />
       <div classList={{ "text-13-regular": true, "text-text-base": !!status(), "text-text-weak": !status() }}>
         {status() ? `The fold ${status()}` : "The fold did nothing here — the request went straight to the model."}
       </div>
-
-      <Watch turn={props.turn} />
 
       <Show when={props.turn.prompt}>
         <details class="mt-1">

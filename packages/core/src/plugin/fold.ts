@@ -2,9 +2,16 @@ export * as FoldPlugin from "./fold.js"
 
 // The Fold doorway client. Everything here is a thin forwarder: the fold stack
 // (khora's POST /v1/hooks/opencode) decides what a prompt becomes, what a tool
-// output folds into, and what a finished turn teaches. This file carries no
-// fold logic, so it does not change when the fold does, and it is the only
-// fold-specific code in the fork.
+// output folds into, what a finished turn teaches, and — via the perceive
+// event — what attached media is transcribed into before the frontier sees
+// it. This file carries no fold logic, so it does not change when the fold
+// does, and it is the only fold-specific code in the fork.
+//
+// Perception defaults to local: images through the khora OCR/CV backends,
+// audio through the local whisper binary, PDFs through their text layer then
+// local OCR (khora/perceive/local.mjs on the door side, all on the box, no
+// frontier call). The Perceive tab selects the backends; FOLD_PERCEIVE=0
+// restores upstream behavior for media.
 //
 // Fails open: with the door unreachable, slow, or answering nonsense, opencode
 // behaves exactly as upstream. FOLD_OFF=1 removes the plugin's effect entirely.
@@ -21,6 +28,11 @@ const foldTimeout = Number(process.env.FOLD_FOLD_TIMEOUT_MS ?? 20_000)
 const minChars = Number(process.env.FOLD_MIN_CHARS ?? 4000)
 const coolDown = 30_000
 const debug = process.env.FOLD_DEBUG === "1"
+// Local-first perception: attachments are transcribed by the khora on the
+// box (tesseract, ffmpeg, poppler, whisper.cpp when installed) before the
+// frontier is sent them, so vision and transcription default to local
+// models, never a frontier call. FOLD_PERCEIVE=0 restores upstream behavior.
+const perceiveOff = process.env.FOLD_PERCEIVE === "0"
 
 let downUntil = 0
 
@@ -173,7 +185,7 @@ export const Plugin = define({
     }).pipe(
       Effect.tap((door) => {
         const events = door?.events ?? []
-        const missing = ["context", "title", "fold"].filter((event) => !events.includes(event))
+        const missing = ["context", "title", "fold", "perceive"].filter((event) => !events.includes(event))
         if (door?.door !== "opencode" || missing.length > 0)
           return Effect.logWarning("fold doorway speaks an older contract", { door: door?.door, missing, events })
         return Effect.void
@@ -246,8 +258,148 @@ export const Plugin = define({
         }
       })
 
+    // Local-first perception: user-attached and tool-returned media with a
+    // local payload (inline base64/bytes, data: URLs) is transcribed by the
+    // door's khora before the frontier sees it. Provider refs and remote URLs
+    // carry no local payload and ride upstream untouched. An empty
+    // transcription keeps the media (the frontier as fallback, never
+    // blindness); a passthrough answer leaves the bytes identical. Cached by
+    // content key for the session's plugin lifetime, like the fold cache.
+    type Perceived = { text: string; replace: boolean } | null
+    const perceived = new Map<string, Perceived>()
+
+    const perceivableMime = (mime: string) => {
+      const m = mime.toLowerCase()
+      return m.startsWith("image/") || m.startsWith("audio/") || m === "application/pdf"
+    }
+
+    const inlineB64 = (source: { type?: string; data?: unknown } | undefined): string | undefined => {
+      if (!source) return undefined
+      if (source.type === "base64" && typeof source.data === "string") return source.data
+      if (source.type === "bytes" && source.data instanceof Uint8Array)
+        return Buffer.from(source.data).toString("base64")
+      return undefined
+    }
+
+    const dataUrlB64 = (uri: string): string | undefined => {
+      const match = /^data:[^;,]+;base64,(.+)$/s.exec(uri)
+      return match ? match[1] : undefined
+    }
+
+    const perceiveKey = (mime: string, dataBase64: string) =>
+      `perceive:${mime}:${dataBase64.length}:${dataBase64.slice(0, 64)}`
+
+    const describeGaps = (gaps: Array<{ reason?: string }>) =>
+      gaps.length > 0 ? ` [perception gaps: ${gaps.map((g) => g.reason ?? "?").join(", ")}]` : ""
+
+    const perceiveOne = (key: string, mime: string, name: string, dataBase64: string, sessionID: string) =>
+      Effect.gen(function* () {
+        const hit = perceived.get(key)
+        if (hit !== undefined) return hit
+        const answer = yield* post({ event: "perceive", sessionID, mime, name, dataBase64 }, foldTimeout)
+        const out = (answer ?? {}) as {
+          passthrough?: boolean
+          text?: unknown
+          via?: unknown
+          gap?: unknown
+          gaps?: Array<{ reason?: string }>
+          replaceMedia?: boolean
+        }
+        if (out.passthrough || typeof out.text !== "string" || out.text.length === 0) {
+          if (debug) yield* Effect.logWarning("perceive.kept", { mime, name, via: out.via ?? out.gap ?? "passthrough" })
+          perceived.set(key, null)
+          return null
+        }
+        const via = typeof out.via === "string" ? out.via : "local"
+        const gaps = Array.isArray(out.gaps) ? out.gaps : []
+        const text = `[perceived locally via ${via} — ${name}]${describeGaps(gaps)}\n${out.text}`
+        if (debug) yield* Effect.logWarning("perceive.applied", { mime, name, via, chars: out.text.length })
+        const result = { text, replace: out.replaceMedia !== false }
+        perceived.set(key, result)
+        return result
+      })
+
+    const remake = (
+      message: SessionHooks["context"]["messages"][number],
+      content: SessionHooks["context"]["messages"][number]["content"],
+    ) =>
+      Message.make({
+        id: message.id,
+        role: message.role,
+        content: content as typeof message.content,
+        metadata: message.metadata,
+        providerMetadata: message.providerMetadata,
+        native: message.native,
+      })
+
+    const perceiveMessages = (event: SessionHooks["context"]) =>
+      Effect.gen(function* () {
+        if (off || perceiveOff || Date.now() < downUntil) return
+        for (const [index, message] of event.messages.entries()) {
+          let content = message.content
+          let changed = false
+          for (const [partIndex, part] of content.entries()) {
+            if (message.role === "user" && part.type === "media") {
+              const media = part.media as { mediaType?: string; source?: { type?: string; data?: unknown } }
+              const mime = media.mediaType ?? ""
+              if (!perceivableMime(mime)) continue
+              const dataBase64 = inlineB64(media.source)
+              if (!dataBase64) continue
+              const name = (part as { filename?: string }).filename ?? "attachment"
+              const result = yield* perceiveOne(perceiveKey(mime, dataBase64), mime, name, dataBase64, event.sessionID)
+              if (!result) continue
+              const next = content.slice()
+              next[partIndex] = result.replace
+                ? ({ type: "text", text: result.text } as typeof content[number])
+                : part
+              if (!result.replace) next.splice(partIndex + 1, 0, { type: "text", text: result.text } as typeof content[number])
+              content = next
+              changed = true
+            } else if (part.type === "tool-result" && part.result.type === "content") {
+              const value = part.result.value
+              let items = value
+              let itemsChanged = false
+              for (const [itemIndex, item] of value.entries()) {
+                if (item.type !== "file" || !perceivableMime(item.mime)) continue
+                const dataBase64 = dataUrlB64(item.uri)
+                if (!dataBase64) continue
+                const result = yield* perceiveOne(
+                  perceiveKey(item.mime, dataBase64),
+                  item.mime,
+                  item.name ?? "tool file",
+                  dataBase64,
+                  event.sessionID,
+                )
+                if (!result || !result.replace) {
+                  if (result && !result.replace) {
+                    const copy = items.slice()
+                    copy.splice(itemIndex + 1, 0, { type: "text", text: result.text })
+                    items = copy
+                    itemsChanged = true
+                  }
+                  continue
+                }
+                const copy = items.slice()
+                copy[itemIndex] = { type: "text", text: result.text }
+                items = copy
+                itemsChanged = true
+              }
+              if (!itemsChanged) continue
+              const next = content.slice()
+              next[partIndex] = { ...part, result: { ...part.result, value: items } }
+              content = next
+              changed = true
+            }
+          }
+          if (changed) event.messages[index] = remake(message, content)
+        }
+      })
+
     const context = (event: SessionHooks["context"]) =>
       Effect.gen(function* () {
+        // Perception first: media becomes local transcription before recall
+        // or folding reads the turn, so everything downstream sees text.
+        yield* perceiveMessages(event)
         // The recall and the fold both knock on the door; the recall first, so
         // the turn exists before any fold can be attributed to it.
         if (isNewAsk(event.messages)) {
@@ -265,6 +417,13 @@ export const Plugin = define({
           )
           const note = answer?.system
           if (typeof note === "string" && note.length > 0) event.system.push({ type: "text", text: note })
+          // Step 1 of the doorway plan: the archon ground note rides only
+          // when the door computed and injected it (FOLD_ARCHONS=1 on the
+          // door; default is shadow — recorded, never injected). The fork
+          // carries no archon logic; the note arrives credited or not at all.
+          const archons = answer?.archons as { note?: unknown } | undefined
+          if (archons && typeof archons.note === "string" && archons.note.length > 0)
+            event.system.push({ type: "text", text: archons.note })
         }
         yield* foldMessages(event)
       })

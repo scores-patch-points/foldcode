@@ -1,4 +1,4 @@
-import { type Accessor, onCleanup, onMount } from "solid-js"
+import { type Accessor } from "solid-js"
 import { Button } from "@opencode/ui/button"
 import { useExtension, type Live, type MountedSession } from "../sdk"
 import type { Browser } from "../browser/contract"
@@ -15,11 +15,6 @@ export default function SessionHolodeckPanel(props: { session: MountedSession; b
 
     if (live.status === "active") live.value.open(props.session, HOLODECK_URL)
   }
-
-  // Opening the tab opens the real holodeck in the session's workspace; re-opening focuses it.
-  onMount(open)
-
-  onCleanup(() => undefined)
 
   return (
     <div class="flex h-full min-h-0 flex-col bg-v2-background-bg-base" data-slot="session-holodeck-panel">
