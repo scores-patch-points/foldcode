@@ -1,5 +1,6 @@
 /* Reused from the fold's own reading animation (holodeck/vendor/fold-chat): tracks draw in and flow,
-   the fold's ring draws, the fold dot pulses. HTML, so it keeps its proportions at any width. */
+   the fold's ring draws, the fold dot pulses. HTML, so it keeps its proportions at any width. The ask chip
+   is the prompt moment from the fold: a dashed-green chip whose words are pills, plus a dashed edge drawing. */
 @keyframes fold-arrive {
   from {
     opacity: 0;
@@ -94,4 +95,65 @@
   stroke-dasharray: 40;
   stroke-dashoffset: 40;
   animation: fold-ring 800ms ease-out both;
+}
+
+@keyframes fw-ask-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes fw-ask-edge {
+  from {
+    opacity: 0;
+    transform: scaleX(0);
+  }
+
+  to {
+    opacity: 0.9;
+    transform: scaleX(1);
+  }
+}
+
+.fw-askchip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px;
+  border: 1.5px dashed #2da44e;
+  border-radius: 8px;
+  background: color-mix(in srgb, #2da44e 6%, transparent);
+  animation: fw-ask-in 500ms ease-out both;
+}
+
+.fw-askchip .k {
+  font-weight: 700;
+  font-size: 9.5px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: #2da44e;
+  margin-right: 4px;
+}
+
+.fw-askchip .w {
+  font-size: 13px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, #2da44e 40%, transparent);
+}
+
+.fw-askedge {
+  flex: 1;
+  height: 0;
+  border-top: 2px dashed #2da44e;
+  opacity: 0;
+  transform-origin: left;
+  animation: fw-ask-edge 800ms ease-out forwards;
 }

@@ -284,6 +284,17 @@ function Withheld(props: { project: Project | null | undefined }) {
 
 // The fold's reading animation, reused: the turn as a drawn watch — you → fold → model, tracks drawing in and
 // flowing, the fold's ring drawing and its dot pulsing when it acted, withheld shown beside.
+function AskChip(props: { ask: string }) {
+  const words = createMemo(() => props.ask.split(/\s+/).filter(Boolean).slice(0, 40))
+
+  return (
+    <div class="fw-askchip">
+      <span class="k">ask</span>
+      <For each={words()}>{(word) => <span class="w">{word}</span>}</For>
+    </div>
+  )
+}
+
 function Watch(props: { turn: Turn }) {
   const engaged = () => !!props.turn.recall || !!(props.turn.look && !isGap(props.turn.look)) || (props.turn.project?.drop?.length ?? 0) > 0
   const withheld = () => props.turn.project?.drop?.length ?? 0
@@ -294,7 +305,7 @@ function Watch(props: { turn: Turn }) {
         <span class="size-2 rounded-full bg-current" />
         you
       </span>
-      <span classList={{ "fw-track": true, flow: engaged() }} />
+      <span class="fw-askedge" />
       <span class="flex items-center gap-1.5">
         <span class="relative flex items-center justify-center">
           <span
@@ -334,9 +345,10 @@ function TurnView(props: { turn: Turn; index: number; total: number; session: Mo
       class="fold-arrive flex flex-col gap-2 border-b border-v2-border-border-base py-4"
       style={{ "animation-delay": `${props.index * 45}ms` }}
     >
-      <div class="text-13-regular font-[530] text-text-base">
-        {props.total - props.index}. {props.turn.ask || "(no question)"}
+      <div class="text-12-regular text-text-weak">
+        {props.total - props.index}.
       </div>
+      <AskChip ask={props.turn.ask || "(no question)"} />
       <div classList={{ "text-13-regular": true, "text-text-base": !!status(), "text-text-weak": !status() }}>
         {status() ? `The fold ${status()}` : "The fold did nothing here — the request went straight to the model."}
       </div>
