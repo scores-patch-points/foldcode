@@ -39,6 +39,13 @@ fi
 cd "$here"
 command -v bun >/dev/null || { echo "bun is required: https://bun.sh" >&2; exit 1; }
 
+# Dependencies must exist before the build (it runs with --skip-install). A
+# fresh clone has none, so install from the committed lockfile; --frozen-lockfile
+# keeps the tree clean for fold-sync's delta guard, with a plain install as a
+# fallback when the lock is out of date. Idempotent and cheap when already done.
+echo "installing dependencies (bun install)"
+bun install --frozen-lockfile || bun install
+
 case "$(uname -s)" in
   Darwin) os=darwin ;;
   Linux) os=linux ;;
