@@ -7,15 +7,40 @@ const setup: Setup<typeof Fold> = (ctx) => {
   const SessionFoldPanel = lazy(() => import("./panel"))
   const SessionHolodeckPanel = lazy(() => import("./archive"))
   const SessionPerceivePanel = lazy(() => import("./perceive"))
+  const SessionWorktreePanel = lazy(() => import("./worktree"))
   // Compile the panels while the app idles, so the first open renders at once.
   onCleanup(onIdle(() => void SessionFoldPanel.preload()))
   onCleanup(onIdle(() => void SessionHolodeckPanel.preload()))
   onCleanup(onIdle(() => void SessionPerceivePanel.preload()))
+  onCleanup(onIdle(() => void SessionWorktreePanel.preload()))
 
   ctx.add(Style, css)
 
   // The optional browser pane, handed to the panels so they can open the REAL fold/holodeck pages.
   const browser = ctx.uses.browser
+
+  // The worktree: the workspace itself as a file tree, opened with the session as the region's
+  // default content. It is how the left panel shows what you are working on — no tab, no button.
+  const worktree: PanelTab = {
+    id: "worktree",
+    get title() {
+      return ctx.t("tab.worktree")
+    },
+    pinned: true,
+    first: true,
+    fallback: true,
+  }
+
+  ctx.add(Panel, {
+    id: "worktree",
+    region: "side",
+    list: () => [worktree],
+    render: (props) => (
+      <Suspense>
+        <SessionWorktreePanel session={props.session} screen={props.screen} />
+      </Suspense>
+    ),
+  })
 
   // Pinned: always a trigger in the side strip. first + fallback: the region's default content.
   const tab: PanelTab = {
@@ -24,8 +49,6 @@ const setup: Setup<typeof Fold> = (ctx) => {
       return ctx.t("tab.title")
     },
     pinned: true,
-    first: true,
-    fallback: true,
   }
 
   ctx.add(Panel, {
@@ -81,14 +104,15 @@ const setup: Setup<typeof Fold> = (ctx) => {
     ),
   })
 
-  // Hijack the side region for the fold's way of prompting: every routed session brings the audit up, selected,
-  // and opens the region, so what the frontier was prompted with is always one glance away.
+  // Hijack the side region for the fold's way of prompting: every routed session brings the
+  // worktree up, selected, and opens the region, so the workspace you are working on is always
+  // one glance away.
   createKeyed(
     () => ctx.sessions.current()?.key,
     () => {
       const session = ctx.sessions.current()
 
-      if (session) ctx.layout.open(`${ctx.id}:main`, session, { tab: "select" })
+      if (session) ctx.layout.open(`${ctx.id}:worktree`, session, { tab: "select" })
     },
   )
 }

@@ -1,7 +1,11 @@
 export default {
   "tab.title": "Fold",
+  "tab.worktree": "Worktree",
   "tab.holodeck": "Holodeck",
   "tab.perceive": "Perceive",
+  "worktree.title": "Worktree",
+  "worktree.subtitle": "the workspace you are working on, as files",
+  "worktree.unavailable": "The file tree is unavailable right now.",
   "panel.archive": "Open the Holodeck",
   "holodeck.title": "Holodeck",
   "holodeck.subtitle": "the fold's reading surface, for this workspace",

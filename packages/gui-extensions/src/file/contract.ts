@@ -7,8 +7,11 @@ export interface FileTreeProps {
   /** The session screen that owns the rendered files. */
   readonly screen: SessionScreen
   readonly session: MountedSession
-  /** The files to show, as a tree of only these paths. */
-  readonly allowed: readonly string[]
+  /**
+   * The files to show, as a tree of only these paths. Omit it for the whole live workspace tree,
+   * loaded a directory at a time.
+   */
+  readonly allowed?: readonly string[]
   readonly kinds?: ReadonlyMap<string, ChangeKind>
   readonly active?: string
   onFileClick(path: string): void
