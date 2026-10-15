@@ -156,7 +156,12 @@ export const Plugin = define({
       Effect.forkScoped({ startImmediately: true }),
     )
 
-    const seen = new Set<string>()
+    // Durable history keeps the raw tool result, so this must replace it on
+    // every dispatch, not once: a part folds on its first appearance and the
+    // cache then re-serves the same fold for the rest of the turn, with no
+    // further door traffic. The cache is keyed by part id and scoped to the
+    // session's plugin lifetime.
+    const folded = new Map<string, string>()
 
     const foldMessages = (event: SessionHooks["context"]) =>
       Effect.gen(function* () {
@@ -164,8 +169,11 @@ export const Plugin = define({
         for (const [index, message] of event.messages.entries()) {
           for (const part of message.content) {
             const target = foldable(part)
-            if (!target || target.text.length < minChars || seen.has(target.id)) continue
-            const answer = yield* post(
+            if (!target) continue
+            if (debug) yield* Effect.logWarning("fold.part", { id: target.id, chars: target.text.length })
+            if (target.text.length < minChars) continue
+            const cached = folded.get(target.id)
+            const text = cached ?? (yield* post(
               {
                 event: "fold",
                 sessionID: event.sessionID,
@@ -175,23 +183,26 @@ export const Plugin = define({
                 priceIn: priceIn(event.model),
               },
               foldTimeout,
-            )
-            const folded = answer?.folded
-            if (typeof folded !== "string" || folded.length === 0) {
-              if (debug) yield* Effect.logWarning("fold.skipped", { id: target.id, answer: Object.keys(answer ?? {}) })
+            ))?.folded
+            if (typeof text !== "string" || text.length === 0) {
+              if (debug) yield* Effect.logWarning("fold.skipped", { id: target.id })
               continue
             }
-            const saved =
-              typeof answer?.savedBytes === "number" ? answer.savedBytes : target.text.length - folded.length
-            seen.add(target.id)
-            if (debug) yield* Effect.logWarning("fold.applied", { id: target.id, chars: target.text.length, saved })
+            if (cached === undefined) folded.set(target.id, text)
+            const saved = target.text.length - text.length
+            if (debug)
+              yield* Effect.logWarning(cached === undefined ? "fold.applied" : "fold.reuse", {
+                id: target.id,
+                chars: target.text.length,
+                saved,
+              })
             const next = message.content.map((item) =>
               item === part
                 ? {
                     ...item,
                     result: {
                       type: "text" as const,
-                      value: `${folded}\n\n[fold: ${saved} chars kept out of this context; the full output remains in the session]`,
+                      value: `${text}\n\n[fold: ${saved} chars kept out of this context; the full output remains in the session]`,
                     },
                   }
                 : item,
