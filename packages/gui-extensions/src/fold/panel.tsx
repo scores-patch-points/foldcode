@@ -1,9 +1,8 @@
-import { createMemo, createSignal, Match, Switch } from "solid-js"
+import { createMemo, createSignal, For, Match, Show, Switch } from "solid-js"
 import { Option, Schema } from "effect"
 import { Button } from "@opencode/ui/button"
 import { ScrollView } from "@opencode/ui/scroll-view"
 import { TextShimmer } from "@opencode/ui/text-shimmer"
-import { Markdown } from "@opencode/session-ui/markdown"
 import { createLatest, useExtension, type MountedSession } from "../sdk"
 
 // The fold door's default address (FOLD_URL on the doorway side). CORS is open, so the window reads the audit
@@ -19,6 +18,19 @@ const Project = Schema.Struct({
 })
 
 type Project = Schema.Schema.Type<typeof Project>
+
+const PromptMessage = Schema.Struct({
+  role: Schema.optional(Schema.String),
+  content: Schema.optional(Schema.Json),
+  reasoning_content: Schema.optional(Schema.String),
+})
+
+const PromptDoc = Schema.Struct({
+  model: Schema.optional(Schema.String),
+  messages: Schema.optional(Schema.Array(PromptMessage)),
+})
+
+type PromptDoc = Schema.Schema.Type<typeof PromptDoc>
 
 const Turn = Schema.Struct({
   when: Schema.optional(Schema.String),
@@ -44,57 +56,144 @@ const Audit = Schema.Struct({
 
 type Audit = Schema.Schema.Type<typeof Audit>
 
-const clip = (text: string, max = 600) => {
-  return text.length > max ? `${text.slice(0, max)}…[+${text.length - max}]` : text
+const isObject = Schema.is(Schema.Record(Schema.String, Schema.Json))
+
+const isArray = Schema.is(Schema.Array(Schema.Json))
+
+const isString = Schema.is(Schema.String)
+
+// The readable text of a message content: a string as-is, a parts array concatenated, an object's text field.
+const textOf = (content: Schema.Json | undefined): string => {
+  if (content === undefined) return ""
+
+  if (isString(content)) return content
+
+  if (isArray(content)) return content.map((part) => (isObject(part) && isString(part.text) ? part.text : "")).filter(Boolean).join("\n")
+
+  if (isObject(content) && isString(content.text)) return content.text
+
+  return JSON.stringify(content)
 }
 
-// The mechanical cut, verbatim: which earlier exchanges were left out, which ride whole, and the record that
-// stood in for the dropped ones. Address/line-based, never embedded or scored.
-const verbatimCut = (project: Project | null | undefined) => {
-  if (!project) return "**the mechanical cut** — none (no earlier exchanges to snip)"
+const parseJson = (text: string) => {
+  const decoded = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Json))(text)
 
-  if (project.gap) return `**the mechanical cut** — none (${project.gap})`
-
-  const drop = project.drop ?? []
-  const keep = project.keep ?? []
-
-  return [
-    "**the mechanical cut** — verbatim, no vectors, no RAG",
-    "```snip",
-    `cut (left out of the frontier): ${drop.length}${drop.length ? ` — ${drop.join(", ")}` : ""}`,
-    `kept (ride whole): ${keep.length ? keep.join(", ") : "none"}`,
-    "record (the verbatim stand-in):",
-    project.record || "(none)",
-    "```",
-  ].join("\n")
+  return Option.getOrUndefined(decoded)
 }
 
-// A turn becomes markdown. The exact prompt and the mechanical cut each ride their own fenced block, so bytes
-// from the door are physically separate from anything the model wrote.
-const toMarkdown = (audit: Audit) => {
-  const turns = audit.turns ?? []
+function Field(props: { label: string; value: string }) {
+  return (
+    <div class="mt-1 flex flex-col gap-0.5">
+      <div class="text-12-regular text-text-weak">{props.label}</div>
+      <Show
+        when={props.value.length > 400}
+        fallback={<div class="whitespace-pre-wrap break-words text-13-regular text-text-base">{props.value}</div>}
+      >
+        <details class="min-w-0">
+          <summary class="cursor-pointer text-12-regular text-text-weak">
+            {props.value.slice(0, 200)}… ({props.value.length} chars)
+          </summary>
+          <div class="whitespace-pre-wrap break-words text-13-regular text-text-base">{props.value}</div>
+        </details>
+      </Show>
+    </div>
+  )
+}
 
-  if (turns.length === 0) return ""
+function PromptView(props: { text: string }) {
+  const doc = createMemo(() => {
+    const parsed = parseJson(props.text)
 
-  const one = (turn: Turn, index: number) => {
-    const parts = [
-      `### ${turns.length - index}. ${clip(turn.ask ?? "", 160)}`,
-      `**address** \`${turn.address ?? "?"}\` · ${turn.repeat ? `repeat ×${turn.repeat}` : "first ask"} · ${turn.settled ? "settled" : "open"}`,
-      `**title by rule** ${turn.title ? clip(turn.title, 120) : "—"}`,
-    ]
+    return parsed === undefined ? undefined : Option.getOrUndefined(Schema.decodeUnknownOption(PromptDoc)(parsed))
+  })
 
-    if (turn.prompt) parts.push(["**the exact prompt the frontier received** — verbatim", "```prompt", turn.prompt, "```"].join("\n"))
+  return (
+    <Show when={doc()} fallback={<Field label="prompt — verbatim" value={props.text} />}>
+      {(value) => (
+        <div class="mt-2 flex flex-col gap-3">
+          <Show when={value().model}>
+            <div class="text-12-regular text-text-weak">model · {value().model}</div>
+          </Show>
+          <For each={value().messages ?? []}>
+            {(message) => (
+              <div class="flex flex-col gap-1">
+                <div class="text-12-regular text-text-weak">{message.role ?? "message"}</div>
+                <div class="whitespace-pre-wrap break-words text-13-regular text-text-base">{textOf(message.content)}</div>
+                <Show when={message.reasoning_content}>
+                  <details>
+                    <summary class="cursor-pointer text-12-regular text-text-weak">reasoning</summary>
+                    <div class="whitespace-pre-wrap break-words text-13-regular text-text-base">{message.reasoning_content}</div>
+                  </details>
+                </Show>
+              </div>
+            )}
+          </For>
+        </div>
+      )}
+    </Show>
+  )
+}
 
-    if (turn.recall) parts.push(`**recall injected** — verbatim\n\n${clip(turn.recall)}`)
+function Cut(props: { project: Project | null | undefined }) {
+  const summary = () => {
+    const project = props.project
 
-    if (turn.look) parts.push(`**look** — verbatim addresses\n\n${clip(turn.look)}`)
+    if (!project) return "none — no earlier exchanges to snip"
 
-    parts.push(verbatimCut(turn.project))
+    if (project.gap) return `none — ${project.gap}`
 
-    return parts.join("\n\n")
+    const drop = (project.drop ?? []).join(", ") || "none"
+    const keep = (project.keep ?? []).join(", ") || "none"
+
+    return `cut: ${drop} · kept: ${keep}`
   }
 
-  return turns.map(one).join("\n\n---\n\n")
+  return (
+    <div class="mt-1 flex flex-col gap-1">
+      <div class="text-12-regular text-text-weak">the mechanical cut — verbatim, no vectors, no RAG</div>
+      <div class="text-13-regular text-text-base">{summary()}</div>
+      <Show when={props.project?.record}>
+        <div class="whitespace-pre-wrap break-words text-13-regular text-text-base">{props.project?.record}</div>
+      </Show>
+    </div>
+  )
+}
+
+function TurnView(props: { turn: Turn; index: number; total: number }) {
+  return (
+    <div class="flex flex-col gap-2 border-b border-v2-border-border-base py-4">
+      <div class="text-13-regular font-[530] text-text-base">
+        {props.total - props.index}. {props.turn.ask || "(no ask)"}
+      </div>
+      <div class="flex flex-wrap gap-x-4 text-12-regular text-text-weak">
+        <span>address {props.turn.address ?? "?"}</span>
+        <span>{props.turn.repeat ? `repeat ×${props.turn.repeat}` : "first ask"}</span>
+        <span>{props.turn.settled ? "settled" : "open"}</span>
+      </div>
+      <Show when={props.turn.title}>
+        <div class="text-12-regular text-text-weak">title by rule: {props.turn.title}</div>
+      </Show>
+
+      <Show when={props.turn.prompt}>
+        <details class="mt-1">
+          <summary class="cursor-pointer text-12-regular text-text-weak">
+            the exact prompt the frontier received — verbatim
+          </summary>
+          <PromptView text={props.turn.prompt ?? ""} />
+        </details>
+      </Show>
+
+      <Show when={props.turn.recall}>
+        <Field label="recall injected — verbatim" value={props.turn.recall ?? ""} />
+      </Show>
+
+      <Show when={props.turn.look}>
+        <Field label="look — verbatim addresses" value={props.turn.look ?? ""} />
+      </Show>
+
+      <Cut project={props.turn.project} />
+    </div>
+  )
 }
 
 export default function SessionFoldPanel(props: { session: MountedSession }) {
@@ -116,15 +215,20 @@ export default function SessionFoldPanel(props: { session: MountedSession }) {
     },
   )
 
-  const markdown = createMemo(() => toMarkdown(audit.latest ?? {}))
+  const turns = createMemo(() => audit.latest?.turns ?? [])
 
   const refresh = () => setNonce((value) => value + 1)
 
   return (
     <div class="flex h-full min-h-0 flex-col bg-v2-background-bg-base" data-slot="session-fold-panel">
-      <div class="flex shrink-0 flex-col gap-0.5 border-b border-v2-border-border-base px-5 py-4">
-        <div class="min-w-0 truncate text-13-regular text-text-base">{ctx.t("panel.title")}</div>
-        <div class="min-w-0 truncate text-12-regular text-text-weak">{ctx.t("panel.subtitle")}</div>
+      <div class="flex shrink-0 items-start justify-between gap-3 border-b border-v2-border-border-base px-5 py-4">
+        <div class="flex min-w-0 flex-col gap-0.5">
+          <div class="min-w-0 truncate text-13-regular text-text-base">{ctx.t("panel.title")}</div>
+          <div class="min-w-0 truncate text-12-regular text-text-weak">{ctx.t("panel.subtitle")}</div>
+        </div>
+        <Button size="small" variant="outline" onClick={refresh}>
+          {ctx.t("panel.refresh")}
+        </Button>
       </div>
 
       <div class="relative min-h-0 flex-1">
@@ -146,10 +250,10 @@ export default function SessionFoldPanel(props: { session: MountedSession }) {
               </Button>
             </div>
           </Match>
-          <Match when={markdown()}>
+          <Match when={turns().length > 0}>
             <ScrollView class="absolute inset-0">
-              <div class="px-5 py-4 pb-8">
-                <Markdown text={markdown()} class="text-14-regular" />
+              <div class="px-5">
+                <For each={turns()}>{(turn, index) => <TurnView turn={turn} index={index()} total={turns().length} />}</For>
               </div>
             </ScrollView>
           </Match>
