@@ -277,7 +277,8 @@ export const settingsPersistence = Persistence.migrate(
 export const defaultSettings: Settings = {
   general: {
     showFileTree: false,
-    timelineDetail: { ...timelinePresets[2].value },
+    // The fold keeps reasoning and shows it in the feed: it is the working record the work plan is built from.
+    timelineDetail: { ...timelinePresets[2].value, thinking: { placement: "separate", details: "expanded" } },
     showCustomAgents: false,
     showTurnDiffs: false,
     mobileTitlebarPosition: "top",

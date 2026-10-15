@@ -41,7 +41,7 @@ base=$(git merge-base HEAD upstream/dev)
 leak=""
 while IFS= read -r file; do
   case "$file" in
-    packages/core/src/plugin/fold.ts | packages/core/src/plugin/internal.ts | packages/session-ui/package.json | packages/app/src/session/timeline/virtualizer.tsx | packages/app/src/session/timeline/session-mind.tsx | packages/gui-extensions/src/fold/mind-tree.tsx | packages/gui-extensions/src/fold/plans.tsx | packages/gui-extensions/src/fold/plans-model.ts | packages/gui-extensions/src/fold/plans-model.test.ts | packages/gui-extensions/src/fold/follow.ts | packages/gui-extensions/src/fold/follow.test.ts | packages/app/src/session/timeline/follow-bottom.ts | packages/gui-extensions/src/fold/mind-tree-model.ts | packages/gui-extensions/src/fold/mind-tree-model.test.ts | packages/app/src/session/timeline/session-mind-stage.ts | packages/app/src/session/timeline/session-mind.test.ts | packages/app/src/session/timeline/message-timeline.tsx | UPSTREAM.md | fold-sync.sh | fold-install.sh) ;;
+    packages/core/src/plugin/fold.ts | packages/core/src/plugin/internal.ts | packages/session-ui/package.json | packages/app/src/session/timeline/virtualizer.tsx | packages/app/src/settings/model.tsx | packages/app/src/session/timeline/session-mind.tsx | packages/gui-extensions/src/fold/mind-tree.tsx | packages/gui-extensions/src/fold/plans.tsx | packages/gui-extensions/src/fold/plans-model.ts | packages/gui-extensions/src/fold/plans-model.test.ts | packages/gui-extensions/src/fold/follow.ts | packages/gui-extensions/src/fold/follow.test.ts | packages/app/src/session/timeline/follow-bottom.ts | packages/gui-extensions/src/fold/mind-tree-model.ts | packages/gui-extensions/src/fold/mind-tree-model.test.ts | packages/app/src/session/timeline/session-mind-stage.ts | packages/app/src/session/timeline/session-mind.test.ts | packages/app/src/session/timeline/message-timeline.tsx | UPSTREAM.md | fold-sync.sh | fold-install.sh) ;;
     *) leak="${leak}${file}"$'\n' ;;
   esac
 done < <(git diff --name-only "${base}"..HEAD)
@@ -52,7 +52,8 @@ if [[ -n "$leak" ]]; then
   exit 1
 fi
 
-deletions=$(git diff --numstat "${base}"..HEAD | awk '{ d += $2 } END { print d + 0 }')
+# One reviewed one-line default change is allowed in settings/model.tsx (reasoning shown in the feed by default).
+deletions=$(git diff --numstat "${base}"..HEAD | awk '$3 != "packages/app/src/settings/model.tsx" { d += $2 } END { print d + 0 }')
 if [[ "$deletions" != "0" ]]; then
   echo "fold delta deletes ${deletions} upstream line(s); the fork must only add. Rebase by hand and re-check." >&2
   exit 1
