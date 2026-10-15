@@ -569,6 +569,8 @@ export interface SlotMap {
     /** The routed session; a new object when another session is routed. */
     readonly session: MountedSession
   }
+  /** The end of the titlebar's right corner, before the window controls. */
+  readonly "titlebar.end": Record<string, never>
 }
 
 /** Content for one of the host's slots, typed by `at`. */

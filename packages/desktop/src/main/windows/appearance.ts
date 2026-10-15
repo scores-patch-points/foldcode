@@ -22,7 +22,7 @@ export function windowAppearance(path: Path.Path, paths: DesktopPaths.Resolved) 
   const mode = tone()
 
   return {
-    title: "opencode x the fold",
+    title: "opencode X the fold",
     icon: iconPath(path, paths),
     backgroundColor: backgroundColor ?? storedBackgroundColor(),
     ...(process.platform === "darwin"

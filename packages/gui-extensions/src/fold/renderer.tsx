@@ -1,5 +1,5 @@
 import { lazy, onCleanup, Suspense } from "solid-js"
-import { createKeyed, Panel, onIdle, Style, type PanelTab, type Setup } from "../sdk"
+import { createKeyed, Panel, onIdle, Slot, Style, type PanelTab, type Setup } from "../sdk"
 import css from "./panel.css?inline"
 import type Fold from "./index"
 
@@ -15,6 +15,20 @@ const setup: Setup<typeof Fold> = (ctx) => {
   onCleanup(onIdle(() => void SessionWorktreePanel.preload()))
 
   ctx.add(Style, css)
+
+  // The savings tally in the titlebar's right corner: the tokens and money the
+  // fold kept out of the frontier, resettable and hideable from the corner itself.
+  const Tally = lazy(() => import("./tally"))
+  onCleanup(onIdle(() => void Tally.preload()))
+
+  ctx.add(Slot, {
+    at: "titlebar.end",
+    render: () => (
+      <Suspense>
+        <Tally />
+      </Suspense>
+    ),
+  })
 
   // The optional browser pane, handed to the panels so they can open the REAL fold/holodeck pages.
   const browser = ctx.uses.browser
