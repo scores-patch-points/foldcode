@@ -28,10 +28,15 @@ esac
 target="${os}-${arch}"
 
 echo "building opencode-fold for ${target} (this takes a few minutes)"
-bun run --cwd packages/cli script/build.ts --single --target="$target" --outdir dist-fold
+# Stamp a normal-looking version from this tree's own package.json, with the
+# fork's commit as provenance: release gates check semver (>= 1.18.0) and a
+# bare dev build reports 0.0.0-<branch>-<ts>, which fails them.
+tree_version=$(bun -e 'console.log((await Bun.file("package.json").json()).version)')
+OPENCODE_VERSION="${tree_version}-fold.$(git rev-parse --short HEAD)" \
+  bun run --cwd packages/cli script/build.ts --single --outdir=dist-fold
 
-built="packages/cli/dist-fold/cli-${target}/bin/opencode"
-[ -x "$built" ] || { echo "build did not produce $built" >&2; exit 1; }
+built=$(ls packages/cli/dist-fold/cli-*/bin/opencode 2>/dev/null | head -1 || true)
+[ -n "$built" ] && [ -x "$built" ] || { echo "build did not produce a binary under packages/cli/dist-fold" >&2; exit 1; }
 
 dest="${OPENCODE_BIN_DIR:-$HOME/.opencode/bin}"
 mkdir -p "$dest"
