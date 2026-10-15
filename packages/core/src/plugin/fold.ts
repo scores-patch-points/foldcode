@@ -326,8 +326,36 @@ export const Plugin = define({
       })
     })
 
+    // The EXACT assembled request, verbatim, so the audit discloses what the
+    // frontier was actually prompted with. A clone is read (never the live
+    // body) and the capture is detached, so it never delays the model request.
+    // Nothing here is vectorized or ranked: it is the bytes sent.
+    const capturePrompt = (event: SessionHooks["http.request"]) => {
+      if (off || Date.now() < downUntil || event.kind !== "primary") return
+      void event.request
+        .clone()
+        .text()
+        .then((body) => {
+          if (!body) return
+          return fetch(`${base}/v1/hooks/opencode`, {
+            method: "POST",
+            headers: { "content-type": "application/json", "x-er7-surface": "opencode" },
+            body: JSON.stringify({ event: "prompt", sessionID: event.sessionID, model: event.model, body }),
+            signal: AbortSignal.timeout(foldTimeout),
+          }).then(
+            () => undefined,
+            () => undefined,
+          )
+        })
+        .catch(() => undefined)
+    }
+
     yield* ctx.session.hook("context", context)
     yield* ctx.session.hook("title", title)
+    yield* ctx.session.hook("http.request", (event) => {
+      capturePrompt(event)
+      return Effect.void
+    })
 
     yield* ctx.event.subscribe().pipe(
       Stream.runForEach((event) => {
