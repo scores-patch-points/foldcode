@@ -178,7 +178,50 @@ function Text(props: { value: string }) {
   )
 }
 
-function PromptReading(props: { turn: Turn }) {
+const PATH_RE = /(~\/|\/Users\/|\/home\/)[^\s"'`):,\]]+/g
+
+// Text where an absolute path becomes a link that opens the file at its source (the desktop file panel).
+function LinkedText(props: { text: string; session: MountedSession }) {
+  const ctx = useExtension()
+
+  const segments = createMemo(() => {
+    const out: { path: boolean; value: string }[] = []
+    let last = 0
+
+    for (const match of props.text.matchAll(PATH_RE)) {
+      const index = match.index ?? 0
+
+      if (index > last) out.push({ path: false, value: props.text.slice(last, index) })
+
+      out.push({ path: true, value: match[0] })
+      last = index + match[0].length
+    }
+
+    if (last < props.text.length) out.push({ path: false, value: props.text.slice(last) })
+
+    return out
+  })
+
+  return (
+    <div class="whitespace-pre-wrap break-words text-13-regular text-text-base">
+      <For each={segments()}>
+        {(segment) => (
+          <Show when={segment.path} fallback={<span>{segment.value}</span>}>
+            <button
+              type="button"
+              class="cursor-pointer underline decoration-dotted"
+              onClick={() => ctx.links.open({ href: segment.value, session: props.session })}
+            >
+              {segment.value}
+            </button>
+          </Show>
+        )}
+      </For>
+    </div>
+  )
+}
+
+function PromptReading(props: { turn: Turn; session: MountedSession }) {
   const doc = createMemo(() => {
     const parsed = props.turn.prompt ? parseJson(props.turn.prompt) : undefined
 
@@ -204,7 +247,7 @@ function PromptReading(props: { turn: Turn }) {
                 >
                   {ORIGIN_LABEL[part.origin]}
                 </div>
-                <div class="whitespace-pre-wrap break-words text-13-regular text-text-base">{part.text}</div>
+                <LinkedText text={part.text} session={props.session} />
                 <Show when={part.reasoning}>
                   <details>
                     <summary class="cursor-pointer text-13-regular text-text-weak">reasoning</summary>
@@ -239,12 +282,12 @@ function Withheld(props: { project: Project | null | undefined }) {
   )
 }
 
-function TurnView(props: { turn: Turn; index: number; total: number }) {
+function TurnView(props: { turn: Turn; index: number; total: number; session: MountedSession }) {
   const status = createMemo(() => statusOf(props.turn))
   const plan = createMemo(() => (props.turn.plan ?? []).map((step) => step.name).filter(Boolean).join(", "))
 
   return (
-    <div class="flex flex-col gap-2 border-b border-v2-border-border-base py-4">
+    <div class="fold-arrive flex flex-col gap-2 border-b border-v2-border-border-base py-4">
       <div class="text-13-regular font-[530] text-text-base">
         {props.total - props.index}. {props.turn.ask || "(no question)"}
       </div>
@@ -255,7 +298,7 @@ function TurnView(props: { turn: Turn; index: number; total: number }) {
       <Show when={props.turn.prompt}>
         <details class="mt-1">
           <summary class="cursor-pointer text-13-regular text-text-base">What the model was sent</summary>
-          <PromptReading turn={props.turn} />
+          <PromptReading turn={props.turn} session={props.session} />
         </details>
       </Show>
 
@@ -322,7 +365,7 @@ export default function SessionFoldPanel(props: { session: MountedSession }) {
   const [tick, setTick] = createSignal(0)
 
   // Poll the door so the panel tracks turns as they land, without a manual Refresh. The audit is a local read.
-  const timer = setInterval(() => setTick((value) => value + 1), 2000)
+  const timer = setInterval(() => setTick((value) => value + 1), 1000)
 
   onCleanup(() => clearInterval(timer))
 
@@ -344,7 +387,25 @@ export default function SessionFoldPanel(props: { session: MountedSession }) {
     },
   )
 
-  const turns = createMemo(() => data.latest?.audit.turns ?? [])
+  // Keep turn objects stable across polls so only genuinely new turns remount (and animate in).
+  const cache = new Map<string, Turn>()
+
+  const turns = createMemo(() => {
+    const next = (data.latest?.audit.turns ?? []).map((turn) => {
+      const key = `${turn.when ?? ""}#${turn.address ?? ""}`
+      const kept = cache.get(key) ?? turn
+
+      cache.set(key, kept)
+
+      return kept
+    })
+
+    const live = new Set(next.map((turn) => `${turn.when ?? ""}#${turn.address ?? ""}`))
+
+    for (const key of cache.keys()) if (!live.has(key)) cache.delete(key)
+
+    return next
+  })
 
   const refresh = () => setNonce((value) => value + 1)
 
@@ -352,7 +413,10 @@ export default function SessionFoldPanel(props: { session: MountedSession }) {
     <div class="flex h-full min-h-0 flex-col bg-v2-background-bg-base" data-slot="session-fold-panel">
       <div class="flex shrink-0 items-start justify-between gap-3 border-b border-v2-border-border-base px-5 py-4">
         <div class="flex min-w-0 flex-col gap-0.5">
-          <div class="min-w-0 truncate text-13-regular text-text-base">{ctx.t("panel.title")}</div>
+          <div class="flex min-w-0 items-center gap-2">
+            <span class="size-1.5 shrink-0 animate-pulse rounded-full bg-v2-icon-icon-accent" aria-hidden="true" />
+            <div class="min-w-0 truncate text-13-regular text-text-base">{ctx.t("panel.title")}</div>
+          </div>
           <div class="min-w-0 truncate text-12-regular text-text-weak">{ctx.t("panel.subtitle")}</div>
         </div>
         <Button size="small" variant="outline" onClick={refresh}>
@@ -386,7 +450,7 @@ export default function SessionFoldPanel(props: { session: MountedSession }) {
                 <div class="relative min-h-0 flex-1">
                   <ScrollView class="absolute inset-0">
                     <div class="px-5">
-                      <For each={turns()}>{(turn, index) => <TurnView turn={turn} index={index()} total={turns().length} />}</For>
+                      <For each={turns()}>{(turn, index) => <TurnView turn={turn} index={index()} total={turns().length} session={props.session} />}</For>
                     </div>
                   </ScrollView>
                 </div>

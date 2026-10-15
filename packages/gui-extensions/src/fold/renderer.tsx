@@ -1,11 +1,14 @@
 import { lazy, onCleanup, Suspense } from "solid-js"
-import { createKeyed, Panel, onIdle, type PanelTab, type Setup } from "../sdk"
+import { createKeyed, Panel, onIdle, Style, type PanelTab, type Setup } from "../sdk"
+import css from "./panel.css?inline"
 import type Fold from "./index"
 
 const setup: Setup<typeof Fold> = (ctx) => {
   const SessionFoldPanel = lazy(() => import("./panel"))
   // Compile the panel while the app idles, so the first open renders at once.
   onCleanup(onIdle(() => void SessionFoldPanel.preload()))
+
+  ctx.add(Style, css)
 
   // Pinned: always a trigger in the side strip. first + fallback: the region's default content.
   const tab: PanelTab = {
