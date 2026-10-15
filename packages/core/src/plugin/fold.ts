@@ -16,10 +16,10 @@ export * as FoldPlugin from "./fold.js"
 // Fails open: with the door unreachable, slow, or answering nonsense, opencode
 // behaves exactly as upstream. FOLD_OFF=1 removes the plugin's effect entirely.
 
-import { Message } from "@opencode/ai"
+import { Message, ToolFailure } from "@opencode/ai"
 import { define, type Context } from "@opencode/plugin/effect/plugin"
 import type { SessionHooks } from "@opencode/plugin/effect/session"
-import { Effect, Stream } from "effect"
+import { Effect, Schema, Stream } from "effect"
 
 const base = (process.env.FOLD_URL ?? "http://127.0.0.1:11436").replace(/\/+$/, "")
 const off = process.env.FOLD_OFF === "1"
@@ -537,6 +537,86 @@ export const Plugin = define({
         })
         .catch(() => undefined)
     }
+
+    // ── the local senses, as tools any model can call ─────────────────────
+    // A model never hears an audio and never sees a pixel: it calls a sense, which runs on this box, and reads the
+    // text it returns as an EOT observation with a giver (provenance). No network for the sense itself.
+    const ASR = (process.env.FOLD_ASR_URL ?? "http://127.0.0.1:11460").replace(/\/+$/, "")
+    const observation = (text: string, giver: string, source: string) => ({
+      output: { text, giver },
+      content: text,
+      metadata: { schema: "EOTObservation@1", id: `$sense-${Date.now().toString(36)}`, role: "part", giver, source, supersedes: [] },
+    })
+
+    yield* ctx.tool.transform((editor) =>
+      editor.add({
+        name: "transcribe",
+        options: { codemode: false },
+        description:
+          "Transcribe an audio file locally (whisper on this machine, no network — the audio never leaves the box). Returns an EOT observation: the words the waveform carried, with a giver. Read the text; you never hear the audio, and you must not add what it does not say.",
+        input: Schema.Struct({
+          path: Schema.String.annotate({ description: "Path to the audio file on this machine" }),
+          language: Schema.optionalKey(Schema.String).annotate({ description: "ISO language code, or 'auto'" }),
+          task: Schema.optionalKey(Schema.Literals(["transcribe", "translate"])).annotate({
+            description: "transcribe (default) or translate the speech to English",
+          }),
+        }),
+        output: Schema.Struct({ text: Schema.String, giver: Schema.String }),
+        execute: (input) =>
+          Effect.gen(function* () {
+            const bytes = yield* Effect.tryPromise(() => Bun.file(input.path).arrayBuffer())
+            const q = new URLSearchParams()
+            if (input.language) q.set("language", input.language)
+            if (input.task) q.set("task", input.task)
+            const response = yield* Effect.tryPromise(() =>
+              fetch(`${ASR}/transcribe?${q.toString()}`, {
+                method: "POST",
+                headers: { "content-type": "application/octet-stream" },
+                body: bytes,
+                signal: AbortSignal.timeout(120_000),
+              }),
+            )
+            if (!response.ok)
+              return yield* Effect.fail(new ToolFailure({ message: `whisper answered ${response.status} at ${ASR}` }))
+            const data = (yield* Effect.tryPromise(() => response.json())) as { text?: unknown; model?: unknown }
+            const text = typeof data.text === "string" ? data.text : ""
+            return observation(text, `whisper ${typeof data.model === "string" ? data.model : "local"}`, input.path)
+          }).pipe(Effect.mapError((error) => new ToolFailure({ message: "transcribe failed", error }))),
+      }),
+    )
+
+    yield* ctx.tool.transform((editor) =>
+      editor.add({
+        name: "perceive",
+        options: { codemode: false },
+        description:
+          "Read an image locally through the local vision sense (image-khora OCR/pixel pipeline, or a local CV model — no frontier vision, no network). Returns an EOT observation: the measured card/fields with a giver. Read the text; you never receive a pixel, and you must not add a field the image does not show.",
+        input: Schema.Struct({
+          path: Schema.String.annotate({ description: "Path to the image on this machine" }),
+        }),
+        output: Schema.Struct({ text: Schema.String, giver: Schema.String }),
+        execute: (input) =>
+          Effect.gen(function* () {
+            const response = yield* Effect.tryPromise(() =>
+              fetch(`${base}/v1/perceive`, {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ path: input.path }),
+                signal: AbortSignal.timeout(60_000),
+              }),
+            )
+            if (!response.ok)
+              return yield* Effect.fail(
+                new ToolFailure({
+                  message: `perceive answered ${response.status} at ${base} — is the local vision sense running?`,
+                }),
+              )
+            const data = (yield* Effect.tryPromise(() => response.json())) as { text?: unknown; giver?: unknown }
+            const text = typeof data.text === "string" ? data.text : ""
+            return observation(text, typeof data.giver === "string" ? data.giver : "image-khora", input.path)
+          }).pipe(Effect.mapError((error) => new ToolFailure({ message: "perceive failed", error }))),
+      }),
+    )
 
     yield* ctx.session.hook("context", context)
     yield* ctx.session.hook("title", title)
