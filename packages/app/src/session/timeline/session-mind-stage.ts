@@ -303,3 +303,41 @@ export function murmurOf(parts: ReadonlyArray<Part>, now: number): string {
   }
   return `deciding what is next · ${since(last.time?.completed ?? last.time?.created)}s since ${name} ${status === "error" ? "failed" : "finished"}`
 }
+
+const GENERIC = new Set(["index", "main", "mod", "utils", "util", "helpers", "types", "type", "constants", "config"])
+const title = (value: string) => value.replace(/\b([a-z])/g, (m) => m.toUpperCase())
+const shortWords = (value: string, max: number) => value.split(/\s+/).filter(Boolean).slice(0, max).join(" ")
+
+/** A short, static, readable name for a target: what it is, not where it lives. Computed from the target alone, so it
+ *  does not drift as the model's thinking changes; the caller keeps the first one it gets. */
+export function prettyNameOf(target: Pick<Target, "where"> & { steps?: ReadonlyArray<{ part: Part }> }): string {
+  let where = target.where.trim()
+  if (!where) return "The Task"
+  const tool = (target.steps?.find((step) => step.part.type === "tool")?.part.name ?? "").toLowerCase()
+  if (/^https?:/.test(where)) return title(where.replace(/^https?:\/\/(www\.)?/, "").split("/")[0] ?? where)
+
+  if (SHELL.has(tool) || /\s/.test(where)) {
+    where = where.replace(/^cd\s+\S+\s*(&&|;)\s*/, "")
+    if (/\b(bun|npm|pnpm|yarn)\s+(run\s+)?(test|vitest)\b|\b(vitest|jest|pytest|go test|cargo test)\b/.test(where)) return "Test Run"
+    if (/\b(tsc|tsgo|typecheck)\b/.test(where)) return "Type Check"
+    if (/\b(lint|oxlint|eslint)\b/.test(where)) return "Lint"
+    if (/\bbuild\b/.test(where)) return "Build"
+    if (/\b(install|add)\b/.test(where) && /\b(bun|npm|pnpm|yarn|pip)\b/.test(where)) return "Dependencies"
+    const git = /^git\s+(\w+)/.exec(where)
+    if (git) return `Git ${title(git[1]!)}`
+    if (tool && !SHELL.has(tool) && !/[\\/]/.test(where)) return `Search: ${shortWords(where, 3)}`
+    return title(shortWords(where.replace(/[^\p{L}\p{N}\s-]+/gu, " "), 3)) || "Shell"
+  }
+
+  if (/[\\/]/.test(where) || /\.[a-z0-9]+$/i.test(where)) {
+    const parts = where.split(/[\\/]/).filter(Boolean)
+    let file = parts.at(-1) ?? where
+    const isTest = /\.(test|spec)\.[a-z0-9]+$/i.test(file)
+    file = file.replace(/\.(test|spec)(?=\.)/i, "")
+    let base = words(file)
+    if (GENERIC.has(base) && parts.length > 1) base = `${words(parts.at(-2)!)} ${base}`
+    const name = title(shortWords(base, 4))
+    return isTest ? `${name} Tests` : name
+  }
+  return `Search: ${shortWords(where, 3)}`
+}

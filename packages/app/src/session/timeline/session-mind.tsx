@@ -4,6 +4,7 @@ import {
   conceptOf,
   inFlightOf,
   murmurOf,
+  prettyNameOf,
   lapOf,
   settledBy,
   mark,
@@ -57,7 +58,19 @@ export function SessionMind(props: {
   const total = createMemo(() => seconds(props.startedAt ?? parts()[0]?.time?.created))
   const toolCount = createMemo(() => parts().filter((part) => part.type === "tool").length)
   const lastPart = createMemo(() => parts().at(-1))
-  const concept = createMemo(() => conceptOf(shown(), parts()))
+  // A name is given once per target and kept, so it reads as a thing and does not change as the thinking does.
+  const names = new Map<string, string>()
+  const concept = createMemo(() => {
+    const item = shown()
+    if (!item) return ""
+    const key = item.key || "(task)"
+    const known = names.get(key)
+    if (known) return known
+    const name = prettyNameOf(item)
+    names.set(key, name)
+    return name
+  })
+  const aim = createMemo(() => conceptOf(shown(), parts()))
   const murmur = createMemo(() => murmurOf(parts(), now()))
   const doing = createMemo(() => STAGES.find((item) => item.id === here())?.doing ?? "Working")
   const clip = (value: string | undefined, max = 240) => {
@@ -89,7 +102,7 @@ export function SessionMind(props: {
           {current().glyph}
         </span>
         <span class="flex min-w-0 flex-col">
-          <span class="min-w-0 text-[14px] font-[600] leading-snug" title={concept()}>
+          <span class="min-w-0 truncate text-[14px] font-[600] leading-snug" title={aim()}>
             {concept() || "Getting started"}
           </span>
           <span class="text-[12px] font-[500] opacity-85">

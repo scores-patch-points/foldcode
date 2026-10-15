@@ -135,3 +135,19 @@ describe("murmurOf", () => {
     ).toBe("deciding what is next · 3s since read finished")
   })
 })
+
+describe("prettyNameOf", () => {
+  const name = async (where: string, tool = "read") => {
+    const { prettyNameOf } = await import("./session-mind-stage")
+    return prettyNameOf({ where, steps: [{ part: { type: "tool", name: tool } }] })
+  }
+  test("names what a thing is, not where it lives", async () => {
+    expect(await name("packages/app/src/session/timeline/session-mind-stage.ts")).toBe("Session Mind Stage")
+    expect(await name("src/session/timeline/session-mind.test.ts")).toBe("Session Mind Tests")
+    expect(await name("src/runtime/index.ts")).toBe("Runtime Index")
+    expect(await name("cd /tmp/x && bun test src", "bash")).toBe("Test Run")
+    expect(await name("bunx tsc --noEmit -p .", "bash")).toBe("Type Check")
+    expect(await name("git push origin fold", "bash")).toBe("Git Push")
+    expect(await name("useExtensionHost", "grep")).toBe("Search: useExtensionHost")
+  })
+})
