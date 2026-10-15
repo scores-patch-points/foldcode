@@ -38,8 +38,9 @@ export function stageOf(content: { type?: string; name?: string } | undefined): 
 type Part = {
   type?: string
   name?: string
-  state?: { status?: string; input?: unknown }
-  time?: { created?: number }
+  text?: string
+  state?: { status?: string; input?: unknown; error?: unknown }
+  time?: { created?: number; completed?: number }
 }
 
 const TARGET_KEYS = ["filePath", "path", "pattern", "command", "url", "query", "description", "prompt"]
@@ -64,6 +65,7 @@ const markWord = (part: Part) =>
 
 export function SessionMind(props: { parts?: ReadonlyArray<Part | undefined>; startedAt?: number }) {
   const [now, setNow] = createSignal(Date.now())
+  const [open, setOpen] = createSignal<MindStage | undefined>()
   const tick = setInterval(() => setNow(Date.now()), 1000)
   onCleanup(() => clearInterval(tick))
 
@@ -81,6 +83,17 @@ export function SessionMind(props: { parts?: ReadonlyArray<Part | undefined>; st
   const seconds = (from?: number) => (from ? Math.max(0, Math.round((now() - from) / 1000)) : 0)
   const total = createMemo(() => seconds(props.startedAt ?? parts()[0]?.time?.created))
   const recent = createMemo(() => tools().slice(-4).reverse())
+  const inStage = (id: MindStage) => parts().filter((part) => stageOf(part) === id)
+  const clip = (value: string | undefined, max = 240) => {
+    const one = (value ?? "").trim().replace(/\s+/g, " ")
+    return one.length > max ? `${one.slice(0, max - 1)}…` : one
+  }
+  const took = (part: Part) => {
+    const from = part.time?.created
+    if (!from) return ""
+    const end = part.time?.completed ?? (part.state?.status === "running" || part.state?.status === "streaming" ? now() : undefined)
+    return end ? `${Math.max(0, Math.round((end - from) / 1000))}s` : ""
+  }
   const unnamed = createMemo(() => (stage() === "thinking" && last()?.type === "tool" ? ` (${last()?.name})` : ""))
 
   return (
@@ -101,23 +114,69 @@ export function SessionMind(props: { parts?: ReadonlyArray<Part | undefined>; st
             return (
               <li
                 aria-current={item.id === stage() ? "step" : undefined}
-                class="rounded-sm px-1"
+                class="rounded-sm"
                 classList={{
-                  "font-semibold underline underline-offset-4 decoration-2": item.id === stage(),
+                  "font-semibold": item.id === stage(),
                   "opacity-60": item.id !== stage() && n() === 0,
                 }}
               >
-                <span aria-hidden="true">{item.id === stage() ? "▸ " : n() > 0 ? "✓ " : ""}</span>
-                {item.label}
-                {n() > 1 ? <span class="opacity-70"> ×{n()}</span> : null}
-                <span class="sr-only">
-                  {item.id === stage() ? " (current)" : n() > 0 ? ` (done${n() > 1 ? `, ${n()} times` : ""})` : ""}
-                </span>
+                <button
+                  type="button"
+                  disabled={n() === 0}
+                  aria-expanded={open() === item.id}
+                  aria-controls={`mind-${item.id}`}
+                  class="cursor-pointer rounded-sm px-1 hover:bg-black/5 disabled:cursor-default disabled:hover:bg-transparent focus-visible:outline-2 focus-visible:outline-offset-2"
+                  classList={{
+                    "underline underline-offset-4 decoration-2": item.id === stage() || open() === item.id,
+                  }}
+                  onClick={() => setOpen(open() === item.id ? undefined : item.id)}
+                >
+                  <span aria-hidden="true">{item.id === stage() ? "▸ " : n() > 0 ? "✓ " : ""}</span>
+                  {item.label}
+                  {n() > 1 ? <span class="opacity-70"> ×{n()}</span> : null}
+                  <span class="sr-only">
+                    {item.id === stage() ? " (current)" : n() > 0 ? ` (done${n() > 1 ? `, ${n()} times` : ""})` : ""}
+                    {n() > 0 ? ", press to show what happened" : ""}
+                  </span>
+                </button>
               </li>
             )
           }}
         </For>
       </ol>
+      <Show when={open()}>
+        {(id) => (
+          <div
+            id={`mind-${id()}`}
+            class="max-h-60 overflow-auto rounded-md border border-black/10 p-2 text-[12px]"
+            role="region"
+            aria-label={`${STAGES.find((item) => item.id === id())?.label} steps`}
+          >
+            <For each={inStage(id())} fallback={<div class="opacity-70">Nothing here yet.</div>}>
+              {(part, index) => (
+                <div class="flex min-w-0 flex-col gap-0.5 py-1" classList={{ "border-t border-black/10": index() > 0 }}>
+                  <div class="flex min-w-0 gap-2">
+                    <span aria-hidden="true">{part.type === "tool" ? mark(part) : "•"}</span>
+                    <span class="font-[530]">
+                      {part.type === "tool" ? part.name : part.type === "text" ? "wrote" : "thought"}
+                    </span>
+                    <span class="min-w-0 truncate opacity-70">{targetOf(part)}</span>
+                    <span class="ms-auto shrink-0 opacity-70">
+                      {part.type === "tool" ? `${markWord(part)} ${took(part)}`.trim() : ""}
+                    </span>
+                  </div>
+                  <Show when={part.type !== "tool" && clip(part.text)}>
+                    <div class="whitespace-pre-wrap opacity-80">{clip(part.text)}</div>
+                  </Show>
+                  <Show when={part.state?.status === "error" && part.state?.error}>
+                    <div class="whitespace-pre-wrap">{clip(String(part.state?.error))}</div>
+                  </Show>
+                </div>
+              )}
+            </For>
+          </div>
+        )}
+      </Show>
       <Show when={(recent()?.length ?? 0) > 0}>
         <ul class="m-0 flex list-none flex-col gap-0.5 p-0 text-[12px]" aria-label="Recent steps">
           <For each={recent()}>
