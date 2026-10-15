@@ -15,6 +15,12 @@ Left by the "OCxTF context window limits" session. Append below the line; do not
 - planted code word recovered with a non-leading final question
 - not shown: flat at 50+ turns; whether the ladder beats a pointer-only note
 
+## Added since (also uncommitted)
+- `khora/opencode-worknotes.mjs` — task directory: append-only per-agent marks, atomic claims (O_EXCL, TTL decay, done final).
+- `khora/opencode-rec.mjs` — REC: EOT.md + LOG.jsonl, exit 0 keeps / else reverts, fold last-wins. Picks up the holographic-coding skill (`.opencode/skills/holographic-coding`), whose runner already exists as `khora/native/the-fold/code-loop.js` (runVoidLoop). Not yet joined to it.
+- Tests: `khora/opencode-{surf,worknotes,rec}.test.mjs`, 15 pass.
+- Fork: root-session task default in `fold.ts` (typechecks; installed binary predates it).
+
 ## Open questions
 1. Does the surf note collide with archons notes (both push onto `event.system` / the head message)?
 2. Is there an existing mechanical summarizer (eoreader7 "mechanical summaries") that should replace the ladder's term scoring?

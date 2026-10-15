@@ -8,6 +8,7 @@ const setup: Setup<typeof Fold> = (ctx) => {
   const SessionHolodeckPanel = lazy(() => import("./archive"))
   const SessionPerceivePanel = lazy(() => import("./perceive"))
   const SessionWorktreePanel = lazy(() => import("./worktree"))
+  const SessionMindTree = lazy(() => import("./mind-tree"))
   // Compile the panels while the app idles, so the first open renders at once.
   onCleanup(onIdle(() => void SessionFoldPanel.preload()))
   onCleanup(onIdle(() => void SessionHolodeckPanel.preload()))
@@ -92,6 +93,20 @@ const setup: Setup<typeof Fold> = (ctx) => {
     render: (props) => (
       <Suspense>
         <SessionHolodeckPanel session={props.session} browser={browser} />
+      </Suspense>
+    ),
+  })
+
+  // The work tree tab: what the turn touched, how far each thing walked the nine operators, what grew from what.
+  const mindTree: PanelTab = { id: "tree", title: "Work tree", closable: "compact" }
+
+  ctx.add(Panel, {
+    id: "tree",
+    region: "side",
+    list: () => [mindTree],
+    render: (props) => (
+      <Suspense>
+        <SessionMindTree session={props.session} />
       </Suspense>
     ),
   })

@@ -56,6 +56,15 @@ What the door does (khora side, `opencode-doorway.mjs` mounted in `proxy.mjs`):
   so parallel agents share a medium, not a window. The door also answers
   `mark`, `claim`, `done` and `notes` events for agents that are not this
   fork. Door down: local truncation answers, and no marks are shared.
+  **REC** (`rec` / `record` events): the only way a change enters the task's
+  verified record. DEF a referent and a real check; EVA is the check's exit
+  code; exit 0 appends one EOT block to `EOT.md` (last-wins per referent,
+  `supersedes:` chain), anything else is reverted and logged in `LOG.jsonl`
+  (`VoidLog@1`, with the judge disclosed: `box` when the door ran the check,
+  opt-in `FOLD_REC_EXEC=1`, else `reported`; no judge, no keep). The surf note
+  carries the folded record, so the window holds verified state, not the
+  conversation that produced it. Same-tab subagents share one task: `task`
+  defaults to the root of the session's `parentID` chain.
 - **`title`** — session titles are derived from the ask by rule (first words,
   cleaned). No model, local or frontier, is consulted.
 - **`event`** — the turn's events (steps, tools, text, usage, boundary) are

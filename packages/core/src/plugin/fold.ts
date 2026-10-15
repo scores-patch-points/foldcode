@@ -282,6 +282,14 @@ export const Plugin = define({
     // with no setup. Cached per session; any lookup failure falls back to the
     // session's own id (a private task), never blocking a turn.
     const roots = new Map<string, string>()
+    // Session.get on an unknown id raises a DEFECT (NotFoundError validates its
+    // own sessionID), which Effect.catch does not see and which kills the
+    // session's drain. So: only real "ses…" ids are looked up, and the whole
+    // cause is swallowed. Nothing here may ever fail a turn.
+    const lookup = (id: string) =>
+      id.startsWith("ses")
+        ? ctx.session.get(id as never).pipe(Effect.catchCause(() => Effect.succeed(undefined)))
+        : Effect.succeed(undefined)
     const taskOf = (sessionID: string) =>
       Effect.gen(function* () {
         if (process.env.FOLD_TASK) return process.env.FOLD_TASK
@@ -289,7 +297,7 @@ export const Plugin = define({
         if (hit) return hit
         let current: string = sessionID
         for (let depth = 0; depth < 8; depth++) {
-          const session = yield* ctx.session.get(current as never).pipe(Effect.catch(() => Effect.succeed(undefined)))
+          const session = yield* lookup(current)
           const parent = (session as { parentID?: string } | undefined)?.parentID
           if (!parent) break
           current = parent
@@ -553,8 +561,47 @@ export const Plugin = define({
       editor.add({
         name: "fold",
         description:
-          "fold savings (`/fold`), how this turn was prompted (`/fold audit`), or the resumable record (`/fold matrix|drive [login|pull|push|logout]`; matrix login takes <homeserver> <user>)",
+          "fold savings (`/fold`), how this turn was prompted (`/fold audit`), a verified fill of the project's stubs (`/fold chase <test command>`), or the resumable record (`/fold matrix|drive [login|pull|push|logout]`; matrix login takes <homeserver> <user>)",
         execute: (input) => {
+          // CHASE: the door runs the DEF->EVA->REC void loop over this session's directory,
+          // judged only by the declared test command's exit code. Green draws become EOT
+          // blocks in the session's task record (shared with its subagents); red draws are
+          // reverted on disk. The door must have FOLD_REC_EXEC=1; otherwise it refuses.
+          const chase = /^\s*(?:\/fold\s+)?chase\s+([\s\S]+?)\s*$/i.exec(input.prompt.text)
+          if (chase) {
+            const testCommand = chase[1]
+            return Effect.gen(function* () {
+              const task = yield* taskOf(input.sessionID)
+              const session = yield* lookup(input.sessionID)
+              const workspace = (session as { location?: { directory?: string } } | undefined)?.location?.directory ?? process.cwd()
+              const answer = yield* post(
+                { event: "chase", sessionID: input.sessionID, agent: input.sessionID, task, workspace, testCommand, ask: `make \`${testCommand}\` pass by filling the stubs` },
+                280_000,
+              )
+              const rounds = Array.isArray(answer?.rounds) ? (answer.rounds as Array<Record<string, unknown>>) : []
+              const record = Array.isArray(answer?.record) ? (answer.record as Array<Record<string, unknown>>) : []
+              const text =
+                answer === undefined
+                  ? `fold chase: door unreachable at ${base}`
+                  : answer.ok !== true
+                    ? `fold chase refused: ${String(answer.gap ?? "unknown")}${answer.gap === "exec-disabled" ? " (start the door with FOLD_REC_EXEC=1)" : ""}`
+                    : [
+                        `fold chase ${answer.done ? "green" : `not green${answer.gap ? ` (${String(answer.gap)})` : ""}`} · ${rounds.length} round(s) · workspace ${workspace}`,
+                        ...rounds.flatMap((r) =>
+                          r.target
+                            ? [`- ${String(r.target)}: ${r.reverted ? "reverted" : r.testExitCode === 0 ? "kept" : "carried"} (exit ${String(r.testExitCode)})`]
+                            : [],
+                        ),
+                        `record (${record.length}): ${record.map((b) => String(b.referent)).join(", ") || "—"}`,
+                      ].join("\n")
+              yield* ctx.session.synthetic({
+                sessionID: input.sessionID,
+                text,
+                description: "fold chase — verified fill, judged by the real test",
+                resume: false,
+              })
+            }).pipe(Effect.ignore)
+          }
           // The Matrix record (khora fold-matrix.mjs): the door keeps every settled turn as
           // sealed EODB events in the account's room, so logging in on another machine resumes
           // the fold. The password is never typed here — it would persist in the transcript;
