@@ -5,7 +5,9 @@ import type { Browser } from "../browser/contract"
 
 // The real holodeck page (the scores-patch-points holodeck app), opened in the app's native browser embed for
 // THIS session's workspace. Nothing here is a mock-up: the tab opens the actual surface.
-const HOLODECK_URL = "http://127.0.0.1:8788/index.html"
+// ?ws=local asks for the local corpus, so the Titanic demo sample never installs over it: the surface starts
+// empty and the folder picker loads the session's workspace by hand.
+const HOLODECK_URL = "http://127.0.0.1:8788/index.html?ws=local"
 
 export default function SessionHolodeckPanel(props: { session: MountedSession; browser: Accessor<Live<Browser>> }) {
   const ctx = useExtension()
