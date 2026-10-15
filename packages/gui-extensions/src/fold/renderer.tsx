@@ -118,15 +118,14 @@ const setup: Setup<typeof Fold> = (ctx) => {
     ),
   })
 
-  // Hijack the side region for the fold's way of prompting: every routed session brings the
-  // worktree up, selected, and opens the region, so the workspace you are working on is always
-  // one glance away.
+  // Every routed session lists the worktree tab, but quietly: it is added to the side region
+  // without selecting it or opening the region, so the panel stays however you left it.
   createKeyed(
     () => ctx.sessions.current()?.key,
     () => {
       const session = ctx.sessions.current()
 
-      if (session) ctx.layout.open(`${ctx.id}:worktree`, session, { tab: "select" })
+      if (session) ctx.layout.open(`${ctx.id}:worktree`, session, { tab: "append" })
     },
   )
 }
