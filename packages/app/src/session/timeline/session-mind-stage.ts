@@ -97,7 +97,10 @@ export const mark = (part: Part) => (part.state?.status === "error" ? "✗" : pa
 export const markWord = (part: Part) =>
   part.state?.status === "error" ? "failed" : part.state?.status === "completed" ? "done" : "in progress"
 
-export type Target = { key: string; where: string; range: string; steps: Array<{ part: Part; stage: MindStage }> }
+/** One step on a target. `stage` is the operator the step itself is. `reframed` is true when it came right after a
+ *  failure: the walk looped back (REC) and this step begins a new lap. `lap` counts passes from 0. */
+export type Step = { part: Part; stage: MindStage; reframed: boolean; lap: number; because?: Part }
+export type Target = { key: string; where: string; range: string; steps: Step[] }
 
 /** The turn's parts grouped by what they act on. A part that names nothing (thinking, writing) belongs to
  *  the target before it, so each target carries its own walk through the operators. */
@@ -105,7 +108,8 @@ export function targetsOf(parts: ReadonlyArray<Part>): Target[] {
   const out: Target[] = []
   let current: Target | undefined
   parts.forEach((part, i) => {
-    const stage = stageOf(part, parts[i - 1])
+    const stage = stageOf(part)
+    const reframed = stageOf(part, parts[i - 1]) === "REC"
     const where = part.type === "tool" ? whereOf(part) : ""
     if (where && (!current || current.where !== where)) {
       current = out.find((item) => item.where === where) ?? undefined
@@ -119,16 +123,21 @@ export function targetsOf(parts: ReadonlyArray<Part>): Target[] {
       out.push(current)
     }
     if (!current.range) current.range = rangeOf(part)
-    current.steps.push({ part, stage })
+    const lap = (current.steps.at(-1)?.lap ?? 0) + (reframed && current.steps.length > 0 ? 1 : 0)
+    current.steps.push({ part, stage, reframed: reframed && current.steps.length > 0, lap, because: reframed ? parts[i - 1] : undefined })
   })
   return out
 }
 
 export const indexOf = (id: MindStage) => STAGES.findIndex((item) => item.id === id)
 
-/** How far one target has walked: the furthest operator any of its steps reached. */
+/** The pass the target is on now: 0 until it has been reframed. */
+export const lapOf = (target: Target): number => target.steps.at(-1)?.lap ?? 0
+
+/** How far one target has walked in its current lap: the furthest operator any of that lap's steps reached. */
 export function reachedOf(target: Target): number {
-  return target.steps.reduce((at, step) => Math.max(at, step.stage === "REC" ? at : indexOf(step.stage)), -1)
+  const lap = lapOf(target)
+  return target.steps.reduce((at, step) => (step.lap === lap ? Math.max(at, indexOf(step.stage)) : at), -1)
 }
 
 /** Targets with a step running right now. Two or more means the work is walking in parallel. */

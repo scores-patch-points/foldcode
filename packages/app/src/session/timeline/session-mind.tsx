@@ -2,6 +2,7 @@ import { createMemo, createSignal, For, onCleanup, Show } from "solid-js"
 import {
   indexOf,
   inFlightOf,
+  lapOf,
   mark,
   markWord,
   rangeOf,
@@ -39,10 +40,14 @@ export function SessionMind(props: {
   const steps = createMemo(() => shown()?.steps ?? [])
   const lanes = createMemo(() => inFlightOf(targets()))
   const isLive = createMemo(() => shown() === targets().at(-1))
+  const lap = createMemo(() => (shown() ? lapOf(shown()!) : 0))
+  const lapSteps = createMemo(() => steps().filter((step) => step.lap === lap()))
+  const reframes = createMemo(() => steps().filter((step) => step.reframed))
   const here = createMemo(() => steps().at(-1)?.stage ?? "NUL")
   const reached = createMemo(() => (shown() ? Math.max(reachedOf(shown()!), indexOf(here())) : -1))
-  const count = (id: MindStage) => steps().filter((step) => step.stage === id).length
-  const lit = (id: MindStage) => (id === "REC" ? count("REC") > 0 : indexOf(id) <= reached())
+  // The grid is the current lap. REC is the loop: it counts the times this target was reframed and lights once it has been.
+  const count = (id: MindStage) => (id === "REC" ? reframes().length : lapSteps().filter((step) => step.stage === id).length)
+  const lit = (id: MindStage) => (id === "REC" ? reframes().length > 0 : indexOf(id) <= reached())
 
   const seconds = (from?: number) => (from ? Math.max(0, Math.round((now() - from) / 1000)) : 0)
   const total = createMemo(() => seconds(props.startedAt ?? parts()[0]?.time?.created))
@@ -78,7 +83,10 @@ export function SessionMind(props: {
           {current().glyph}
         </span>
         <span class="flex min-w-0 flex-col">
-          <span class="text-[13px] font-[560]">{doing()}</span>
+          <span class="text-[13px] font-[560]">
+            {doing()}
+            {lap() > 0 ? <span class="ms-2 text-[11px] font-[500] opacity-70">lap {lap() + 1}</span> : null}
+          </span>
           <Show
             when={canOpen(shown()?.where ?? "")}
             fallback={
@@ -189,7 +197,7 @@ export function SessionMind(props: {
             role="region"
             aria-label={`${STAGES.find((item) => item.id === id())?.label} steps on ${placeLabel(shown() ?? { key: "", where: "", range: "", steps: [] })}`}
           >
-            <For each={steps().filter((step) => step.stage === id())} fallback={<div class="opacity-70">Nothing here yet.</div>}>
+            <For each={id() === "REC" ? reframes() : lapSteps().filter((step) => step.stage === id())} fallback={<div class="opacity-70">Nothing here yet.</div>}>
               {(step, index) => {
                 const where = () => whereOf(step.part)
                 return (
@@ -218,6 +226,12 @@ export function SessionMind(props: {
                         {step.part.type === "tool" ? `${markWord(step.part)} ${took(step.part)}`.trim() : ""}
                       </span>
                     </div>
+                    <Show when={id() === "REC" && step.because}>
+                      <div class="ps-5 opacity-80">
+                        Reframed after {step.because?.name ?? "a step"} failed
+                        {step.because?.state?.error ? `: ${clip(String(step.because.state.error), 160)}` : ""}
+                      </div>
+                    </Show>
                     <Show when={rangeOf(step.part)}>
                       <div class="ps-5 opacity-60">{rangeOf(step.part)}</div>
                     </Show>

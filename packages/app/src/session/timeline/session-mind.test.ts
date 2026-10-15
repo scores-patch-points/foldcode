@@ -63,3 +63,14 @@ describe("parallel lanes", () => {
     expect(inFlightOf(targets).map((item) => item.where)).toEqual(["a.ts", "b.ts"])
   })
 })
+
+describe("REC is the loop", () => {
+  test("a step after a failure begins a new lap and the walk restarts", async () => {
+    const { targetsOf, lapOf, reachedOf } = await import("./session-mind-stage")
+    const step = (name: string, status: string, path = "a.ts") => ({ type: "tool", name, state: { status, input: { filePath: path } } })
+    const target = targetsOf([step("read", "completed"), step("edit", "completed"), step("edit", "error"), step("read", "completed")] as any)[0]!
+    expect(lapOf(target)).toBe(1)
+    expect(target.steps.filter((item) => item.reframed).length).toBe(1)
+    expect(reachedOf(target)).toBe(2) // lap 2 has only walked as far as Name
+  })
+})
