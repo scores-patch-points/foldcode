@@ -1,4 +1,4 @@
-import { createMemo, createSignal, For, Match, Show, Switch, type JSX } from "solid-js"
+import { createMemo, createSignal, For, Match, onCleanup, Show, Switch, type JSX } from "solid-js"
 import { Option, Schema } from "effect"
 import { Button } from "@opencode/ui/button"
 import { ScrollView } from "@opencode/ui/scroll-view"
@@ -319,9 +319,15 @@ type Result = Schema.Schema.Type<typeof Result>
 export default function SessionFoldPanel(props: { session: MountedSession }) {
   const ctx = useExtension()
   const [nonce, setNonce] = createSignal(0)
+  const [tick, setTick] = createSignal(0)
+
+  // Poll the door so the panel tracks turns as they land, without a manual Refresh. The audit is a local read.
+  const timer = setInterval(() => setTick((value) => value + 1), 2000)
+
+  onCleanup(() => clearInterval(timer))
 
   const data = createLatest(
-    () => `${props.session.key}#${nonce()}`,
+    () => `${props.session.key}#${nonce()}#${tick()}`,
     async (_key, signal) => {
       const [audit, meter] = await Promise.all([
         fetch(`${FOLD_URL}/v1/hooks/opencode/audit`, { signal }).then((r) => (r.ok ? r.json() : Promise.reject(new Error(`audit ${r.status}`)))),
