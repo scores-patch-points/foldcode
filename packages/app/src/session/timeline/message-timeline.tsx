@@ -28,6 +28,8 @@ import { SessionAncestorTrail, SessionProjectMenu, SessionTitleHeader } from "..
 import { SessionHeaderSpacer } from "@/session/header/session-header"
 import { SessionRunningMenu } from "@/session/header/session-running-menu"
 import { SessionMind } from "./session-mind"
+import { useExtensionHost } from "@/runtime/extension/host"
+import { useExtensionAttachment } from "@/runtime/extension/host-apis"
 
 type BlockingTask = { type: "shell" | "subagent"; partID: string; id?: string; label?: string }
 
@@ -393,6 +395,10 @@ function MessageTimelineView(
     })
   })
 
+  const mindLinks = useExtensionHost().links
+  const mindAttachment = useExtensionAttachment()
+  const openInPanel = (path: string) => mindLinks.open({ href: path, exact: true, session: mindAttachment.current() })
+
   const mindParts = () => {
     const active = projection.activeMessageID()
     const list = active ? projection.assistantMessagesByParent().get(active) : undefined
@@ -433,7 +439,7 @@ function MessageTimelineView(
         </div>
         <Show when={showWorking()}>
           <div class={`pb-2 ${turnPadding()}`}>
-            <SessionMind parts={mindParts()} />
+            <SessionMind parts={mindParts()} onOpen={openInPanel} />
           </div>
         </Show>
       </div>
