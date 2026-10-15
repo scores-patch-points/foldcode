@@ -1,9 +1,9 @@
 import { createEffect, For, on, onCleanup } from "solid-js"
 import { createStore } from "solid-js/store"
 
-const target = ["o", "p", "e", "n", "c", "o", "d", "e"] as const
+const target = ["o", "p", "e", "n", "c", "o", "d", "e", "x", "f", "o", "l", "d"] as const
 
-const choices = ["o", "p", "e", "n", "c", "d"] as const
+const choices = ["o", "p", "e", "n", "c", "d", "x", "f", "l"] as const
 
 export function AnimatedWordmark(props: { active: boolean }) {
   const [state, setState] = createStore({ letters: [...target] })
@@ -47,7 +47,7 @@ export function AnimatedWordmark(props: { active: boolean }) {
   onCleanup(() => timers.forEach(clearTimeout))
 
   return (
-    <svg class="settings-about-wordmark" viewBox="0 0 234 42" aria-hidden="true">
+    <svg class="settings-about-wordmark" viewBox="0 0 384 42" aria-hidden="true">
       <defs>
         <symbol id="settings-about-letter-o" viewBox="0 0 24 42">
           <path class="settings-about-letter-shadow" d="M18 30H6V18H18V30Z" />
@@ -72,6 +72,21 @@ export function AnimatedWordmark(props: { active: boolean }) {
         <symbol id="settings-about-letter-d" viewBox="0 0 24 42">
           <path class="settings-about-letter-shadow" d="M18 30H6V18H18V30Z" />
           <path d="M18 12H6V30H18V12ZM24 36H0V6H18V0H24V36Z" />
+        </symbol>
+        <symbol id="settings-about-letter-x" viewBox="0 0 24 42">
+          <path class="settings-about-letter-shadow" d="M18 36H6V12H18V36Z" />
+          <path d="M0 0H6L24 30V36H18L0 6V0Z" />
+          <path d="M18 0H24V6L6 36H0V30L18 0Z" />
+        </symbol>
+        <symbol id="settings-about-letter-f" viewBox="0 0 24 42">
+          <path class="settings-about-letter-shadow" d="M18 36H12V12H18V36Z" />
+          <path d="M18 36H12V0H18V36Z" />
+          <path d="M18 6H6V0H18V6Z" />
+          <path d="M18 18H0V12H18V18Z" />
+        </symbol>
+        <symbol id="settings-about-letter-l" viewBox="0 0 24 42">
+          <path class="settings-about-letter-shadow" d="M24 36H18V18H24V36Z" />
+          <path d="M24 36H18V0H24V36Z" />
         </symbol>
       </defs>
       <For each={state.letters}>
