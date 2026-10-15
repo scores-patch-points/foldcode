@@ -130,3 +130,10 @@ export const indexOf = (id: MindStage) => STAGES.findIndex((item) => item.id ===
 export function reachedOf(target: Target): number {
   return target.steps.reduce((at, step) => Math.max(at, step.stage === "REC" ? at : indexOf(step.stage)), -1)
 }
+
+/** Targets with a step running right now. Two or more means the work is walking in parallel. */
+export function inFlightOf(targets: ReadonlyArray<Target>): Target[] {
+  return targets.filter((item) =>
+    item.steps.some((step) => step.part.state?.status === "running" || step.part.state?.status === "streaming"),
+  )
+}

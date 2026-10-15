@@ -54,3 +54,12 @@ describe("per-target walk", () => {
     expect(rangeOf(read("a.ts", { offset: 10, limit: 5 }) as any)).toBe("lines 10–14")
   })
 })
+
+describe("parallel lanes", () => {
+  test("a target is in flight while any of its steps is running", async () => {
+    const { inFlightOf, targetsOf } = await import("./session-mind-stage")
+    const run = (path: string, status: string) => ({ type: "tool", name: "read", state: { status, input: { filePath: path } } })
+    const targets = targetsOf([run("a.ts", "running"), run("b.ts", "streaming"), run("c.ts", "completed")] as any)
+    expect(inFlightOf(targets).map((item) => item.where)).toEqual(["a.ts", "b.ts"])
+  })
+})

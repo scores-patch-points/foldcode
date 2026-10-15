@@ -1,6 +1,7 @@
 import { createMemo, createSignal, For, onCleanup, Show } from "solid-js"
 import {
   indexOf,
+  inFlightOf,
   mark,
   markWord,
   rangeOf,
@@ -36,6 +37,7 @@ export function SessionMind(props: {
   // Follow the target the work is on now, unless one was picked from the list.
   const shown = createMemo(() => targets().find((item) => item.key === pickedKey()) ?? targets().at(-1))
   const steps = createMemo(() => shown()?.steps ?? [])
+  const lanes = createMemo(() => inFlightOf(targets()))
   const isLive = createMemo(() => shown() === targets().at(-1))
   const here = createMemo(() => steps().at(-1)?.stage ?? "NUL")
   const reached = createMemo(() => (shown() ? Math.max(reachedOf(shown()!), indexOf(here())) : -1))
@@ -103,6 +105,41 @@ export function SessionMind(props: {
         </span>
       </div>
 
+      <Show when={lanes().length > 1}>
+        <ul class="m-0 flex list-none flex-col gap-1 p-0 text-[12px]" aria-label="Targets being worked on in parallel">
+          <For each={lanes().slice(-4)}>
+            {(lane) => (
+              <li class="flex min-w-0 items-center gap-1">
+                <button
+                  type="button"
+                  aria-pressed={shown() === lane}
+                  class="flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-lg bg-[color-mix(in_srgb,currentColor_6%,transparent)] px-2 py-1 text-start hover:bg-[color-mix(in_srgb,currentColor_10%,transparent)] focus-visible:outline-2 focus-visible:outline-offset-2"
+                  classList={{ "ring-1 ring-current": shown() === lane }}
+                  onClick={() => setPickedKey(lane === targets().at(-1) ? undefined : lane.key)}
+                >
+                  <span class="min-w-0 truncate" title={lane.where}>{placeLabel(lane)}</span>
+                  <span class="ms-auto shrink-0 font-mono opacity-85" aria-hidden="true">
+                    {STAGES.map((st, i) => (i <= reachedOf(lane) ? st.glyph : "·")).join("")}
+                  </span>
+                  <span class="sr-only">{` running, at ${STAGES[Math.max(0, reachedOf(lane))]?.label}`}</span>
+                </button>
+                <Show when={canOpen(lane.where)}>
+                  <button
+                    type="button"
+                    aria-label={`Open ${lane.where} in the side panel`}
+                    title="Open in the side panel"
+                    class="shrink-0 cursor-pointer rounded-md px-1 opacity-70 hover:opacity-100 focus-visible:outline-2"
+                    onClick={() => openWhere(lane.where)}
+                  >
+                    ↗
+                  </button>
+                </Show>
+              </li>
+            )}
+          </For>
+        </ul>
+        <div class="text-[11px] opacity-60">{lanes().length} in parallel</div>
+      </Show>
       <ol class="m-0 grid list-none grid-cols-3 gap-1.5 p-0" aria-label="The nine operators, for this target">
         <For each={STAGES}>
           {(item) => {
