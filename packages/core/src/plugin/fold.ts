@@ -121,6 +121,33 @@ const formatMeter = (meter: Record<string, unknown>) => {
   ].join("\n")
 }
 
+const short = (value: unknown, max = 400) => {
+  const text = typeof value === "string" ? value : JSON.stringify(value) ?? ""
+  return text.length > max ? `${text.slice(0, max)}…[+${text.length - max}]` : text
+}
+
+// How the last turns were prompted, disclosed: the recall note the door
+// injected, the addresses it pointed the ask at, the title it derived by rule,
+// and the cut it made (dropped / kept / the record that stood in). This is the
+// doorway's own bookkeeping — never the model's words.
+const formatAudit = (audit: Record<string, unknown>) => {
+  const turns = Array.isArray(audit.turns) ? (audit.turns as Array<Record<string, unknown>>) : []
+  if (turns.length === 0) return `fold audit · no turns recorded yet · ${base}/v1/hooks/opencode/audit`
+  const row = (turn: Record<string, unknown>, index: number) =>
+    [
+      `${turns.length - index}. ${short(turn.ask, 160)}`,
+      `   address ${String(turn.address ?? "?")} · ${turn.repeat ? `repeat ×${String(turn.repeat)}` : "first ask"} · ${turn.settled ? "settled" : "open"}`,
+      `   recall  ${turn.recall ? short(turn.recall) : "—"}`,
+      `   look    ${turn.look ? short(turn.look) : "—"}`,
+      `   cut     ${turn.project ? short(turn.project) : "—"}`,
+      `   title   ${turn.title ? short(turn.title, 120) : "—"}`,
+    ].join("\n")
+  return [
+    `fold audit · last ${turns.length} turn(s) · read at ${base}/v1/hooks/opencode/audit`,
+    ...turns.map(row),
+  ].join("\n\n")
+}
+
 export const Plugin = define({
   id: "fold.doorway",
   effect: Effect.fn(function* (ctx) {
@@ -261,27 +288,41 @@ export const Plugin = define({
     yield* ctx.command.transform((editor) => {
       editor.add({
         name: "fold",
-        description: "fold savings: frontier tokens and dollars the fold kept out",
-        execute: (input) =>
-          Effect.gen(function* () {
-            const meter = yield* Effect.tryPromise(async () => {
-              const response = await fetch(`${base}/v1/hooks/opencode/meter`, { signal: AbortSignal.timeout(3000) })
-              if (!response.ok) throw new Error(`meter ${response.status}`)
+        description: "fold savings (`/fold`) or how this turn was prompted (`/fold audit`)",
+        execute: (input) => {
+          const audit = /\baudit\b/i.test(input.prompt.text)
+          const url = `${base}/v1/hooks/opencode/${audit ? "audit" : "meter"}`
+          return Effect.gen(function* () {
+            const data = yield* Effect.tryPromise(async () => {
+              const response = await fetch(url, { signal: AbortSignal.timeout(3000) })
+              if (!response.ok) throw new Error(`${url} ${response.status}`)
               return (await response.json()) as Record<string, unknown>
             })
-            yield* ctx.session.synthetic({ sessionID: input.sessionID, text: formatMeter(meter), resume: false })
+            // A synthetic message WITH a description renders as its own notice
+            // row — a block physically separate from the model's output, never
+            // folded into the transcript's assistant text.
+            yield* ctx.session.synthetic({
+              sessionID: input.sessionID,
+              text: audit ? formatAudit(data) : formatMeter(data),
+              description: audit
+                ? "fold audit — how this turn was prompted"
+                : "fold savings — what the fold kept out of the frontier",
+              resume: false,
+            })
           }).pipe(
             Effect.catch(() =>
               ctx.session
                 .synthetic({
                   sessionID: input.sessionID,
                   text: `fold door unreachable at ${base} — nothing folded, nothing saved`,
+                  description: "fold door unreachable",
                   resume: false,
                 })
                 .pipe(Effect.ignore),
             ),
             Effect.ignore,
-          ),
+          )
+        },
       })
     })
 
