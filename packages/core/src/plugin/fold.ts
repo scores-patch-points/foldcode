@@ -476,8 +476,48 @@ export const Plugin = define({
     yield* ctx.command.transform((editor) => {
       editor.add({
         name: "fold",
-        description: "fold savings (`/fold`) or how this turn was prompted (`/fold audit`)",
+        description:
+          "fold savings (`/fold`), how this turn was prompted (`/fold audit`), or the resumable record (`/fold matrix|drive [login|pull|push|logout]`; matrix login takes <homeserver> <user>)",
         execute: (input) => {
+          // The Matrix record (khora fold-matrix.mjs): the door keeps every settled turn as
+          // sealed EODB events in the account's room, so logging in on another machine resumes
+          // the fold. The password is never typed here — it would persist in the transcript;
+          // the door reads it from FOLD_MATRIX_PASSWORD on its own side.
+          const mx = /^\s*(?:\/fold\s+)?(matrix|drive)\b\s*(\S*)\s*(\S*)\s*(\S*)/i.exec(input.prompt.text)
+          if (mx) {
+            const [, where, act, a, b] = mx
+            const verb = ["login", "pull", "push", "logout"].includes(act.toLowerCase()) ? act.toLowerCase() : "status"
+            const post_ = verb !== "status"
+            return Effect.gen(function* () {
+              const data = yield* Effect.tryPromise(async () => {
+                const response = await fetch(`${base}/v1/hooks/opencode/${where.toLowerCase()}/${verb}`, {
+                  method: post_ ? "POST" : "GET",
+                  headers: { "content-type": "application/json" },
+                  body: post_ ? JSON.stringify(verb === "login" ? { base: a, user: b } : {}) : undefined,
+                  signal: AbortSignal.timeout(30_000),
+                })
+                return (await response.json()) as Record<string, unknown>
+              })
+              yield* ctx.session.synthetic({
+                sessionID: input.sessionID,
+                text: `fold ${where.toLowerCase()} ${verb}\n${JSON.stringify(data, null, 2)}`,
+                description: "fold matrix — the account's resumable record",
+                resume: false,
+              })
+            }).pipe(
+              Effect.catch(() =>
+                ctx.session
+                  .synthetic({
+                    sessionID: input.sessionID,
+                    text: `fold door unreachable at ${base} — matrix not reached`,
+                    description: "fold door unreachable",
+                    resume: false,
+                  })
+                  .pipe(Effect.ignore),
+              ),
+              Effect.ignore,
+            )
+          }
           const audit = /\baudit\b/i.test(input.prompt.text)
           const url = `${base}/v1/hooks/opencode/${audit ? "audit" : "meter"}`
           return Effect.gen(function* () {
