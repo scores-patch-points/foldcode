@@ -29,6 +29,7 @@ import { SessionHeaderSpacer } from "@/session/header/session-header"
 import { SessionRunningMenu } from "@/session/header/session-running-menu"
 import { SessionMind } from "./session-mind"
 import { publishMind, snapshotOf, targetsOf } from "./session-mind-stage"
+import { followBottom } from "./follow-bottom"
 import { AssistantReasoningContent } from "@opencode/session-ui/message-content"
 import { useExtensionHost } from "@/runtime/extension/host"
 import { useExtensionAttachment } from "@/runtime/extension/host-apis"
@@ -413,6 +414,20 @@ function MessageTimelineView(
       />
     )
   }
+  // The rail lives in the gutter beside the session column, and only when that gutter is wide enough to hold it;
+  // otherwise the mind stays in the flow under the Working line. It is never drawn over the content.
+  const [mindRoomy, setMindRoomy] = createSignal(false)
+  const watchRoom = (element: HTMLElement) => {
+    const host = element.parentElement
+    if (!host) return
+    const SESSION = 744 // --container-session
+    const RAIL = 288 + 32
+    const measure = () => setMindRoomy(host.clientWidth >= SESSION + RAIL * 2)
+    const observer = new ResizeObserver(measure)
+    observer.observe(host)
+    measure()
+    onCleanup(() => observer.disconnect())
+  }
   const mindLinks = useExtensionHost().links
   const mindAttachment = useExtensionAttachment()
   const openInPanel = (path: string) => mindLinks.open({ href: path, exact: true, session: mindAttachment.current() })
@@ -456,7 +471,7 @@ function MessageTimelineView(
           </Show>
         </div>
         <Show when={showWorking()}>
-          <div class={`pb-2 xl:hidden ${turnPadding()}`}>
+          <div class={`pb-2 ${turnPadding()}`} classList={{ hidden: mindRoomy() }}>
             <SessionMind parts={mindParts()} onOpen={openInPanel} thinking={mindThinking()} />
           </div>
         </Show>
@@ -485,9 +500,14 @@ function MessageTimelineView(
           <aside
             data-component="session-mind-rail"
             aria-label="What the model is doing"
-            class="pointer-events-none absolute right-4 top-14 z-[50] hidden w-72 xl:block"
+            class="pointer-events-none absolute right-4 top-14 z-[50] w-72"
+            classList={{ hidden: !mindRoomy() }}
+            ref={watchRoom}
           >
-            <div class="pointer-events-auto max-h-[70vh] overflow-auto rounded-xl bg-v2-background-bg-base p-3 shadow-sm ring-1 ring-black/5">
+            <div
+              class="pointer-events-auto max-h-[70vh] overflow-auto rounded-xl bg-v2-background-bg-base p-3 shadow-sm ring-1 ring-black/5"
+              ref={(element) => onCleanup(followBottom(element))}
+            >
               <SessionMind parts={mindParts()} onOpen={openInPanel} thinking={mindThinking()} />
             </div>
           </aside>

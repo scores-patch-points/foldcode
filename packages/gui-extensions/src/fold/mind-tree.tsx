@@ -1,5 +1,6 @@
 import { createMemo, createSignal, For, onCleanup, Show } from "solid-js"
 import { useExtension, type MountedSession } from "../sdk"
+import { followBottom } from "./follow"
 import { buildTree, type Snapshot, type TreeNode } from "./mind-tree-model"
 
 // The stigmergic work tree: what the turn has touched, how far each thing has walked the nine operators, and
@@ -92,7 +93,7 @@ export default function SessionMindTree(props: { session: MountedSession }) {
           settled hangs under it.
         </div>
       </div>
-      <div class="min-h-0 flex-1 overflow-auto px-3 py-2">
+      <div class="min-h-0 flex-1 overflow-auto px-3 py-2" ref={(element) => onCleanup(followBottom(element))}>
         <Show
           when={tree().length > 0}
           fallback={<div class="px-2 py-4 text-[13px] opacity-70">Nothing yet. The tree grows as the turn works.</div>}

@@ -1,4 +1,5 @@
 import { createMemo, createSignal, For, onCleanup, Show, type JSX } from "solid-js"
+import { followBottom } from "./follow-bottom"
 import {
   indexOf,
   conceptOf,
@@ -226,6 +227,7 @@ export function SessionMind(props: {
           <div
             id={`mind-${id()}`}
             class="max-h-64 overflow-auto rounded-lg bg-[color-mix(in_srgb,currentColor_5%,transparent)] p-2 text-[12px]"
+            ref={(element) => onCleanup(followBottom(element))}
             role="region"
             aria-label={`${STAGES.find((item) => item.id === id())?.label} steps on ${placeLabel(shown() ?? { key: "", where: "", range: "", steps: [] })}`}
           >
