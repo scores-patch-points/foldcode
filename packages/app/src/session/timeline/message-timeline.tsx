@@ -419,7 +419,6 @@ function MessageTimelineView(
             <div data-component="session-working" role="status">
               <TextShimmer text={language.t("session.timeline.working")} active />
             </div>
-            <SessionMind content={mindContent()} steps={mindSteps()} />
           </Show>
           <Show when={backgroundHintPresence.present()}>
             <div
@@ -436,6 +435,11 @@ function MessageTimelineView(
             </div>
           </Show>
         </div>
+        <Show when={showWorking()}>
+          <div class={`pb-2 ${turnPadding()}`}>
+            <SessionMind content={mindContent()} steps={mindSteps()} />
+          </div>
+        </Show>
       </div>
     </Show>
   )

@@ -44,7 +44,7 @@ export function SessionMind(props: { content: { type?: string; name?: string } |
     return unknown ? ` (${name})` : ""
   })
   return (
-    <div data-component="session-mind" class="flex min-w-0 flex-col gap-1">
+    <div data-component="session-mind" class="flex min-w-0 flex-col gap-1 text-text-base">
       <div role="status" aria-live="polite" aria-atomic="true" class="text-[13px] font-[530]">
         {doing()}
         {detail()}
