@@ -32,11 +32,13 @@ echo "building opencode-fold for ${target} (this takes a few minutes)"
 # fork's commit as provenance: release gates check semver (>= 1.18.0) and a
 # bare dev build reports 0.0.0-<branch>-<ts>, which fails them.
 tree_version=$(bun -e 'console.log((await Bun.file("package.json").json()).version)')
+outdir="${FOLD_BUILD_DIR:-$HOME/.cache/opencode-fold}"
+rm -rf "$outdir"
 OPENCODE_VERSION="${tree_version}-fold.$(git rev-parse --short HEAD)" \
-  bun run --cwd packages/cli script/build.ts --single --outdir=dist-fold
+  bun run --cwd packages/cli script/build.ts --single --outdir="$outdir"
 
-built=$(ls packages/cli/dist-fold/cli-*/bin/opencode 2>/dev/null | head -1 || true)
-[ -n "$built" ] && [ -x "$built" ] || { echo "build did not produce a binary under packages/cli/dist-fold" >&2; exit 1; }
+built=$(ls "$outdir"/cli-*/bin/opencode 2>/dev/null | head -1 || true)
+[ -n "$built" ] && [ -x "$built" ] || { echo "build did not produce a binary under $outdir" >&2; exit 1; }
 
 dest="${OPENCODE_BIN_DIR:-$HOME/.opencode/bin}"
 mkdir -p "$dest"
