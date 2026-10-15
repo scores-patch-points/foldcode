@@ -100,7 +100,7 @@ export const markWord = (part: Part) =>
 /** One step on a target. `stage` is the operator the step itself is. `reframed` is true when it came right after a
  *  failure: the walk looped back (REC) and this step begins a new lap. `lap` counts passes from 0. */
 export type Step = { part: Part; stage: MindStage; reframed: boolean; lap: number; because?: Part }
-export type Target = { key: string; where: string; range: string; steps: Step[] }
+export type Target = { key: string; where: string; range: string; steps: Step[]; after?: string }
 
 /** The turn's parts grouped by what they act on. A part that names nothing (thinking, writing) belongs to
  *  the target before it, so each target carries its own walk through the operators. */
@@ -114,7 +114,9 @@ export function targetsOf(parts: ReadonlyArray<Part>): Target[] {
     if (where && (!current || current.where !== where)) {
       current = out.find((item) => item.where === where) ?? undefined
       if (!current) {
-        current = { key: where, where, range: "", steps: [] }
+        // A walk that begins once another target has settled starts from that result: remember what it follows.
+        const settled = [...out].reverse().find((item) => item !== current && settledBy(item))
+        current = { key: where, where, range: "", steps: [], after: settled?.where || undefined }
         out.push(current)
       }
     }
@@ -133,6 +135,16 @@ export const indexOf = (id: MindStage) => STAGES.findIndex((item) => item.id ===
 
 /** The pass the target is on now: 0 until it has been reframed. */
 export const lapOf = (target: Target): number => target.steps.at(-1)?.lap ?? 0
+
+/** The check that closed this target, if one did: a passing evaluate in the current lap with nothing failing after it.
+ *  A settled target has finished its walk; REC then carries its result forward instead of looping back. */
+export function settledBy(target: Target): Part | undefined {
+  const lap = lapOf(target)
+  const at = target.steps.findLastIndex((step) => step.lap === lap && step.stage === "EVA" && step.part.state?.status === "completed")
+  if (at < 0) return undefined
+  const failedAfter = target.steps.slice(at + 1).some((step) => step.part.state?.status === "error")
+  return failedAfter ? undefined : target.steps[at]!.part
+}
 
 /** How far one target has walked in its current lap: the furthest operator any of that lap's steps reached. */
 export function reachedOf(target: Target): number {

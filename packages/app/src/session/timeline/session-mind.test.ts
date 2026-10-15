@@ -74,3 +74,26 @@ describe("REC is the loop", () => {
     expect(reachedOf(target)).toBe(2) // lap 2 has only walked as far as Name
   })
 })
+
+describe("REC closes a settled target", () => {
+  const run = (name: string, status: string, input: object) => ({ type: "tool", name, state: { status, input } })
+
+  test("a passing check settles the target; a failure after it unsettles", async () => {
+    const { targetsOf, settledBy } = await import("./session-mind-stage")
+    const ok = targetsOf([run("bash", "completed", { command: "bun test a" })] as any)[0]!
+    expect(settledBy(ok)).toBeDefined()
+    const broken = targetsOf([run("bash", "completed", { command: "bun test a" }), run("bash", "error", { command: "bun test a" })] as any)[0]!
+    expect(settledBy(broken)).toBeUndefined()
+  })
+
+  test("the next target remembers the one that settled before it", async () => {
+    const { targetsOf } = await import("./session-mind-stage")
+    const targets = targetsOf([
+      run("edit", "completed", { filePath: "a.ts" }),
+      run("bash", "completed", { command: "bun test a" }),
+      run("edit", "completed", { filePath: "b.ts" }),
+    ] as any)
+    expect(targets.at(-1)!.where).toBe("b.ts")
+    expect(targets.at(-1)!.after).toBe("bun test a")
+  })
+})
