@@ -94,6 +94,27 @@ const surfPlan = (messages: SessionHooks["context"]["messages"]) => {
   return { cut, turns }
 }
 
+// Every settled turn before the current ask, as {ask, answer, grounds}: published to the door
+// each turn so the project's other agents can read them (through Houdini, never raw).
+const priorTurns = (messages: SessionHooks["context"]["messages"]) => {
+  const starts = messages.flatMap((item, index) =>
+    item.role === "user" && item.content.some((part) => part.type === "text") ? [index] : [],
+  )
+  if (starts.length < 2) return []
+  const end = starts[starts.length - 1]
+  return starts.slice(0, -1).map((start, i, all) => {
+    const turn = messages.slice(start, i + 1 < all.length ? all[i + 1] : end)
+    const answer = turn
+      .findLast((item) => item.role === "assistant")
+      ?.content.flatMap((part) => (part.type === "text" ? [part.text] : []))
+      .join("\n")
+    const grounds = [
+      ...new Set(turn.flatMap((item) => item.content.flatMap((part) => (part.type === "tool-call" ? [part.name] : [])))),
+    ]
+    return { n: i + 1, ask: lastUserText(turn), answer: (answer ?? "").slice(0, 4000), grounds }
+  })
+}
+
 const surfLocal = (turns: NonNullable<ReturnType<typeof surfPlan>>["turns"]) =>
   `[fold: ${turns.length} earlier turn(s) kept out of this context; the full history remains in the session]\n` +
   turns
@@ -281,30 +302,26 @@ export const Plugin = define({
     // of its parent chain, so a tab's subagents share one worknotes directory
     // with no setup. Cached per session; any lookup failure falls back to the
     // session's own id (a private task), never blocking a turn.
-    const roots = new Map<string, string>()
-    // Session.get on an unknown id raises a DEFECT (NotFoundError validates its
-    // own sessionID), which Effect.catch does not see and which kills the
-    // session's drain. So: only real "ses…" ids are looked up, and the whole
-    // cause is swallowed. Nothing here may ever fail a turn.
+    // The task is the PROJECT, resolved by the door from the session's workspace, so every agent
+    // in one repository (subagents and separate tabs alike) shares one medium. An explicit
+    // FOLD_TASK overrides. Session lookups never fail a turn: Session.get on an unknown id
+    // raises a DEFECT, which Effect.catch does not see, so only "ses…" ids are looked up and the
+    // whole cause is swallowed.
     const lookup = (id: string) =>
       id.startsWith("ses")
         ? ctx.session.get(id as never).pipe(Effect.catchCause(() => Effect.succeed(undefined)))
         : Effect.succeed(undefined)
-    const taskOf = (sessionID: string) =>
+    const workspaces = new Map<string, string>()
+    const workspaceOf = (sessionID: string) =>
       Effect.gen(function* () {
-        if (process.env.FOLD_TASK) return process.env.FOLD_TASK
-        const hit = roots.get(sessionID)
+        const hit = workspaces.get(sessionID)
         if (hit) return hit
-        let current: string = sessionID
-        for (let depth = 0; depth < 8; depth++) {
-          const session = yield* lookup(current)
-          const parent = (session as { parentID?: string } | undefined)?.parentID
-          if (!parent) break
-          current = parent
-        }
-        roots.set(sessionID, current)
-        return current
+        const session = yield* lookup(sessionID)
+        const dir = (session as { location?: { directory?: string } } | undefined)?.location?.directory ?? process.cwd()
+        workspaces.set(sessionID, dir)
+        return dir
       })
+    const taskOf = (_sessionID: string) => Effect.succeed(process.env.FOLD_TASK || undefined)
 
     const foldMessages = (event: SessionHooks["context"]) =>
       Effect.gen(function* () {
@@ -507,6 +524,7 @@ export const Plugin = define({
         // The recall and the fold both knock on the door; the recall first, so
         // the turn exists before any fold can be attributed to it.
         if (isNewAsk(event.messages)) {
+          const workspace = yield* workspaceOf(event.sessionID)
           const answer = yield* post(
             {
               event: "context",
@@ -516,11 +534,18 @@ export const Plugin = define({
               ask: lastUserText(event.messages),
               messages: event.messages.length,
               tools: Object.keys(event.tools),
+              workspace,
+              task: process.env.FOLD_TASK || undefined,
+              turns: priorTurns(event.messages),
             },
             askTimeout,
           )
           const note = answer?.system
           if (typeof note === "string" && note.length > 0) event.system.push({ type: "text", text: note })
+          // The project's commons: what the other agents here have settled, already ingested and
+          // projected through Houdini by the door against this ask.
+          const commons = answer?.commons
+          if (typeof commons === "string" && commons.length > 0) event.system.push({ type: "text", text: commons })
           // Step 1 of the doorway plan: the archon ground note rides only
           // when the door computed and injected it (FOLD_ARCHONS=1 on the
           // door; default is shadow — recorded, never injected). The fork
@@ -535,7 +560,8 @@ export const Plugin = define({
         const plan = surfPlan(event.messages)
         if (plan) {
           const task = yield* taskOf(event.sessionID)
-          const answer = yield* post({ event: "surf", sessionID: event.sessionID, task, ask: lastUserText(event.messages), turns: plan.turns }, askTimeout)
+          const workspace = yield* workspaceOf(event.sessionID)
+          const answer = yield* post({ event: "surf", sessionID: event.sessionID, task, workspace, ask: lastUserText(event.messages), turns: plan.turns }, askTimeout)
           surfApply(event.messages, plan.cut, typeof answer?.note === "string" && answer.note.length > 0 ? answer.note : surfLocal(plan.turns))
         }
         yield* foldMessages(event)

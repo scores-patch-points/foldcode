@@ -9,6 +9,7 @@ const setup: Setup<typeof Fold> = (ctx) => {
   const SessionPerceivePanel = lazy(() => import("./perceive"))
   const SessionWorktreePanel = lazy(() => import("./worktree"))
   const SessionMindTree = lazy(() => import("./mind-tree"))
+  const SessionWorkPlans = lazy(() => import("./plans"))
   // Compile the panels while the app idles, so the first open renders at once.
   onCleanup(onIdle(() => void SessionFoldPanel.preload()))
   onCleanup(onIdle(() => void SessionHolodeckPanel.preload()))
@@ -111,6 +112,20 @@ const setup: Setup<typeof Fold> = (ctx) => {
     ),
   })
 
+  // The work plans tab: the stigmergic marks and settled turns each task left behind.
+  const plansTab: PanelTab = { id: "plans", title: "Work plans", closable: "compact" }
+
+  ctx.add(Panel, {
+    id: "plans",
+    region: "side",
+    list: () => [plansTab],
+    render: (props) => (
+      <Suspense>
+        <SessionWorkPlans session={props.session} />
+      </Suspense>
+    ),
+  })
+
   // The Perceive tab: which eyes and ears attached files get, before the
   // frontier is sent them. Local-first by default; the tab reads and writes
   // the door's perceive config, and the doorway plugin enforces it.
@@ -132,6 +147,14 @@ const setup: Setup<typeof Fold> = (ctx) => {
       </Suspense>
     ),
   })
+
+  // The app asks for the work tree (the mind line in the timeline is a button): open it, selected, beside the feed.
+  const openTree = () => {
+    const session = ctx.sessions.current()
+    if (session) ctx.layout.open(`${ctx.id}:tree`, session, { tab: "select" })
+  }
+  window.addEventListener("fold:open-tree", openTree)
+  onCleanup(() => window.removeEventListener("fold:open-tree", openTree))
 
   // Every routed session lists the worktree tab, but quietly: it is added to the side region
   // without selecting it or opening the region, so the panel stays however you left it.
