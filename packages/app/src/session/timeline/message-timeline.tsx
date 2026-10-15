@@ -393,14 +393,10 @@ function MessageTimelineView(
     })
   })
 
-  const mindContent = () => {
-    const active = projection.activeMessageID()
-    return active ? projection.assistantMessagesByParent().get(active)?.at(-1)?.content.at(-1) : undefined
-  }
-  const mindSteps = () => {
+  const mindParts = () => {
     const active = projection.activeMessageID()
     const list = active ? projection.assistantMessagesByParent().get(active) : undefined
-    return list?.reduce((n, item) => n + item.content.filter((part) => part.type === "tool").length, 0) ?? 0
+    return list?.flatMap((item) => item.content) ?? []
   }
 
   // Undelivered input waits below the work the model has seen, so live status moves into the row above it.
@@ -437,7 +433,7 @@ function MessageTimelineView(
         </div>
         <Show when={showWorking()}>
           <div class={`pb-2 ${turnPadding()}`}>
-            <SessionMind content={mindContent()} steps={mindSteps()} />
+            <SessionMind parts={mindParts()} />
           </div>
         </Show>
       </div>
