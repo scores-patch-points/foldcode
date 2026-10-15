@@ -51,6 +51,16 @@ export function SessionMind(props: { parts?: ReadonlyArray<Part | undefined>; st
     parts().forEach((_, i) => counts.set(stageAt(i), (counts.get(stageAt(i)) ?? 0) + 1))
     return counts
   })
+  // Everything walks the operators in order. The furthest one reached is where the work is on the path; any
+  // earlier one never visited was stepped over. REC is the loop back, so it never counts as a skip.
+  const furthest = createMemo(() => {
+    let at = -1
+    STAGES.forEach((item, i) => {
+      if (item.id !== "REC" && (visits().get(item.id) ?? 0) > 0) at = i
+    })
+    return at
+  })
+  const skipped = createMemo(() => STAGES.filter((item, i) => i < furthest() && item.id !== "REC" && !(visits().get(item.id) ?? 0)))
   const doing = createMemo(() => STAGES.find((item) => item.id === stage())?.doing ?? "Working")
   const target = createMemo(() => targetOf(last()))
   const seconds = (from?: number) => (from ? Math.max(0, Math.round((now() - from) / 1000)) : 0)
@@ -80,10 +90,11 @@ export function SessionMind(props: { parts?: ReadonlyArray<Part | undefined>; st
         {(tools()?.length ?? 0) > 0 ? `step ${tools().length}` : "starting"} · {total()}s elapsed
         {last()?.type === "tool" && last()?.time?.created ? ` · this step ${seconds(last()?.time?.created)}s` : ""}
       </div>
-      <ol class="m-0 flex list-none flex-wrap gap-x-3 gap-y-1 p-0 text-[12px]" aria-label="Stages of the work">
+      <ol class="m-0 grid max-w-md list-none grid-cols-3 gap-1 p-0 text-[12px]" aria-label="The nine operators">
         <For each={STAGES}>
           {(item) => {
             const n = () => visits().get(item.id) ?? 0
+            const skip = () => skipped().some((x) => x.id === item.id)
             return (
               <li
                 aria-current={item.id === stage() ? "step" : undefined}
@@ -98,7 +109,7 @@ export function SessionMind(props: { parts?: ReadonlyArray<Part | undefined>; st
                   disabled={n() === 0}
                   aria-expanded={open() === item.id}
                   aria-controls={`mind-${item.id}`}
-                  class="cursor-pointer rounded-sm px-1 hover:bg-black/5 disabled:cursor-default disabled:hover:bg-transparent focus-visible:outline-2 focus-visible:outline-offset-2"
+                  class="w-full cursor-pointer rounded-md border border-black/10 px-2 py-1.5 text-start hover:bg-black/5 disabled:cursor-default disabled:hover:bg-transparent focus-visible:outline-2 focus-visible:outline-offset-2"
                   classList={{
                     "underline underline-offset-4 decoration-2": item.id === stage() || open() === item.id,
                   }}
@@ -107,7 +118,9 @@ export function SessionMind(props: { parts?: ReadonlyArray<Part | undefined>; st
                   <span aria-hidden="true">{item.id === stage() ? "▸ " : n() > 0 ? "✓ " : ""}{item.glyph} </span>
                   {item.label}
                   {n() > 1 ? <span class="opacity-70"> ×{n()}</span> : null}
+                  {skip() ? <span class="block text-[11px] opacity-70">skipped</span> : null}
                   <span class="sr-only">
+                    {skip() ? " (skipped — a later step was reached without it)" : ""}
                     {item.id === stage() ? " (current)" : n() > 0 ? ` (done${n() > 1 ? `, ${n()} times` : ""})` : ""}
                     {n() > 0 ? ", press to show what happened" : ""}
                   </span>
@@ -117,6 +130,11 @@ export function SessionMind(props: { parts?: ReadonlyArray<Part | undefined>; st
           }}
         </For>
       </ol>
+      <Show when={skipped().length > 0}>
+        <div class="text-[12px] opacity-80">
+          Stepped over so far: {skipped().map((item) => item.label).join(", ")}. The path runs in order, so these are gaps.
+        </div>
+      </Show>
       <Show when={open()}>
         {(id) => (
           <div
