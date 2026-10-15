@@ -282,45 +282,46 @@ function Withheld(props: { project: Project | null | undefined }) {
   )
 }
 
-// The fold's reading animation, reused: the turn as a drawn watch — you → fold → model, edges drawing in and
-// flowing, the fold node pulsing when it acted, a loop arc marking the fold's own move, withheld shown beside.
+// The fold's reading animation, reused: the turn as a drawn watch — you → fold → model, tracks drawing in and
+// flowing, the fold's ring drawing and its dot pulsing when it acted, withheld shown beside.
 function Watch(props: { turn: Turn }) {
   const engaged = () => !!props.turn.recall || !!(props.turn.look && !isGap(props.turn.look)) || (props.turn.project?.drop?.length ?? 0) > 0
   const withheld = () => props.turn.project?.drop?.length ?? 0
 
   return (
-    <svg viewBox="0 0 300 52" class="mt-1 w-full text-text-weak" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
-      <path class="fw-edge" d="M26 30 H112" />
-      <g classList={{ "text-v2-text-text-accent": engaged() }}>
-        <Show when={engaged()} fallback={<path class="fw-edge" d="M144 30 H232" />}>
-          <path class="fw-edge flow" d="M144 30 H232" />
-          <path class="fw-arc" d="M126 12 A 20 20 0 1 0 126 48" />
-        </Show>
-      </g>
-      <g class="fw-node" style={{ "animation-delay": "60ms" }}>
-        <circle cx="20" cy="30" r="5" fill="currentColor" />
-        <text x="20" y="50" text-anchor="middle" fill="currentColor" style={{ "font-size": "9px" }}>
-          you
-        </text>
-      </g>
-      <g class="fw-node" style={{ "animation-delay": "160ms" }}>
-        <circle cx="128" cy="30" r="5" fill="currentColor" classList={{ "fw-dot": engaged() }} />
-        <text x="128" y="50" text-anchor="middle" fill="currentColor" style={{ "font-size": "9px" }}>
-          fold
-        </text>
-      </g>
-      <g class="fw-node" style={{ "animation-delay": "260ms" }}>
-        <circle cx="248" cy="30" r="5" fill="currentColor" />
-        <text x="248" y="50" text-anchor="middle" fill="currentColor" style={{ "font-size": "9px" }}>
-          model
-        </text>
-      </g>
+    <div class="mt-2 flex flex-wrap items-center gap-2 text-12-regular text-text-weak">
+      <span class="flex items-center gap-1.5">
+        <span class="size-2 rounded-full bg-current" />
+        you
+      </span>
+      <span classList={{ "fw-track": true, flow: engaged() }} />
+      <span class="flex items-center gap-1.5">
+        <span class="relative flex items-center justify-center">
+          <span
+            classList={{
+              "size-2 rounded-full": true,
+              "bg-current": !engaged(),
+              "bg-v2-icon-icon-accent": engaged(),
+              "fw-dot": engaged(),
+            }}
+          />
+          <Show when={engaged()}>
+            <svg class="pointer-events-none absolute -inset-1 size-4 text-v2-text-text-accent" viewBox="0 0 16 16" aria-hidden="true">
+              <circle class="fw-ring" cx="8" cy="8" r="6" />
+            </svg>
+          </Show>
+        </span>
+        fold
+      </span>
+      <span classList={{ "fw-track": true, flow: engaged() }} />
+      <span class="flex items-center gap-1.5">
+        <span class="size-2 rounded-full bg-current" />
+        model
+      </span>
       <Show when={withheld()}>
-        <text x="128" y="12" text-anchor="middle" fill="currentColor" style={{ "font-size": "9px" }}>
-          ⊘ {withheld()} withheld
-        </text>
+        <span class="ml-1">⊘ {withheld()} withheld</span>
       </Show>
-    </svg>
+    </div>
   )
 }
 
