@@ -35,7 +35,10 @@ tree_version=$(bun -e 'console.log((await Bun.file("package.json").json()).versi
 outdir="${FOLD_BUILD_DIR:-$HOME/.cache/opencode-fold}"
 rm -rf "$outdir"
 OPENCODE_VERSION="${tree_version}-fold.$(git rev-parse --short HEAD)" \
-  bun run --cwd packages/cli script/build.ts --single --outdir="$outdir"
+  bun run --cwd packages/cli script/build.ts --single --skip-install --outdir="$outdir"
+# The build's dependency step can reorder a manifest; the tree must stay clean
+# for fold-sync's delta guard.
+git checkout -- packages/cli/package.json 2>/dev/null || true
 
 built=$(ls "$outdir"/cli-*/bin/opencode 2>/dev/null | head -1 || true)
 [ -n "$built" ] && [ -x "$built" ] || { echo "build did not produce a binary under $outdir" >&2; exit 1; }
