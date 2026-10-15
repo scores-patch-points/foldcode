@@ -5,8 +5,10 @@ import type Fold from "./index"
 
 const setup: Setup<typeof Fold> = (ctx) => {
   const SessionFoldPanel = lazy(() => import("./panel"))
-  // Compile the panel while the app idles, so the first open renders at once.
+  const SessionHolodeckPanel = lazy(() => import("./archive"))
+  // Compile the panels while the app idles, so the first open renders at once.
   onCleanup(onIdle(() => void SessionFoldPanel.preload()))
+  onCleanup(onIdle(() => void SessionHolodeckPanel.preload()))
 
   ctx.add(Style, css)
 
@@ -28,6 +30,26 @@ const setup: Setup<typeof Fold> = (ctx) => {
     render: (props) => (
       <Suspense>
         <SessionFoldPanel session={props.session} />
+      </Suspense>
+    ),
+  })
+
+  // The Holodeck tab: every past turn in full, scrollable and explorable — the archive, separate from the live feed.
+  const holodeck: PanelTab = {
+    id: "holodeck",
+    get title() {
+      return ctx.t("tab.holodeck")
+    },
+    closable: "compact",
+  }
+
+  ctx.add(Panel, {
+    id: "holodeck",
+    region: "side",
+    list: (input) => (input.open.includes("holodeck") ? [holodeck] : []),
+    render: (props) => (
+      <Suspense>
+        <SessionHolodeckPanel session={props.session} />
       </Suspense>
     ),
   })

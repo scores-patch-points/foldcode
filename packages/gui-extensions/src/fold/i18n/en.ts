@@ -1,5 +1,10 @@
 export default {
   "tab.title": "Fold",
+  "tab.holodeck": "Holodeck",
+  "panel.archive": "Open the Holodeck",
+  "holodeck.title": "Holodeck — past content, in full",
+  "holodeck.subtitle": "scroll and explore every turn, verbatim, with what they touched",
+  "holodeck.empty": "No turns recorded yet.",
   "panel.title": "The Fold",
   "panel.subtitle": "it decides what the model is sent — verbatim, no embeddings, no guessing",
   "panel.refresh": "Refresh",

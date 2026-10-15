@@ -7,7 +7,7 @@ import { createLatest, useExtension, type MountedSession } from "../sdk"
 
 // The fold door's default address. CORS is open, so the window reads the audit directly. This panel shows exactly
 // what the model was sent — built from the real request, not from the fold's own claims.
-const FOLD_URL = "http://127.0.0.1:11436"
+export const FOLD_URL = "http://127.0.0.1:11436"
 
 const Project = Schema.Struct({
   drop: Schema.optional(Schema.Array(Schema.String)),
@@ -21,7 +21,7 @@ type Project = Schema.Schema.Type<typeof Project>
 
 const PlanStep = Schema.Struct({ name: Schema.optional(Schema.String), ok: Schema.optional(Schema.NullOr(Schema.Boolean)) })
 
-const Turn = Schema.Struct({
+export const Turn = Schema.Struct({
   when: Schema.optional(Schema.String),
   ask: Schema.optional(Schema.String),
   address: Schema.optional(Schema.String),
@@ -38,16 +38,34 @@ const Turn = Schema.Struct({
   prompt: Schema.optional(Schema.NullOr(Schema.String)),
 })
 
-type Turn = Schema.Schema.Type<typeof Turn>
+export type Turn = Schema.Schema.Type<typeof Turn>
 
-const Audit = Schema.Struct({
+const LiveTool = Schema.Struct({ name: Schema.optional(Schema.String), ok: Schema.optional(Schema.NullOr(Schema.Boolean)) })
+
+const LiveTurn = Schema.Struct({
+  sessionID: Schema.optional(Schema.String),
+  ask: Schema.optional(Schema.String),
+  model: Schema.optional(Schema.Unknown),
+  steps: Schema.optional(Schema.Number),
+  tools: Schema.optional(Schema.Array(LiveTool)),
+  recalled: Schema.optional(Schema.Boolean),
+  system: Schema.optional(Schema.NullOr(Schema.String)),
+  look: Schema.optional(Schema.NullOr(Schema.String)),
+  project: Schema.optional(Schema.NullOr(Project)),
+  title: Schema.optional(Schema.NullOr(Schema.String)),
+})
+
+type LiveTurn = Schema.Schema.Type<typeof LiveTurn>
+
+export const Audit = Schema.Struct({
   door: Schema.optional(Schema.String),
   schema: Schema.optional(Schema.String),
   audited: Schema.optional(Schema.Number),
+  live: Schema.optional(Schema.Array(LiveTurn)),
   turns: Schema.optional(Schema.Array(Turn)),
 })
 
-type Audit = Schema.Schema.Type<typeof Audit>
+export type Audit = Schema.Schema.Type<typeof Audit>
 
 const Count = Schema.Struct({ n: Schema.optional(Schema.Number), tokens: Schema.optional(Schema.Number), recalled: Schema.optional(Schema.Number) })
 
@@ -336,7 +354,59 @@ function Watch(props: { turn: Turn }) {
   )
 }
 
-function TurnView(props: { turn: Turn; index: number; total: number; session: MountedSession }) {
+// The open turn, while the model streams: what the fold has injected so far and the stations it is lighting.
+// Reused fold idiom — a doing line with a running dot, station pills, drawn edges — so it reads as the fold's
+// own live view, not a status banner.
+function LiveView(props: { live: LiveTurn }) {
+  const tools = () => props.live.tools ?? []
+
+  const last = () => tools().length - 1
+
+  const current = () => {
+    const tool = tools()[last()]
+
+    if (tool && (tool.ok === null || tool.ok === undefined)) return tool.name
+
+    return `step ${(props.live.steps ?? 0) + 1}`
+  }
+
+  const folded = () => ({ recall: props.live.system ?? null, look: props.live.look ?? null, project: props.live.project ?? null })
+
+  return (
+    <div class="foldlive flex shrink-0 flex-col gap-2 border-b border-v2-border-border-base px-5 py-4">
+      <AskChip ask={props.live.ask || "(working)"} />
+      <Watch turn={folded()} />
+      <div class="fpv-do running">
+        <span class="dot" />
+        <span class="t">working · {current()}</span>
+        <span class="n">
+          {tools().length} tool(s) · {props.live.steps ?? 0} step(s)
+        </span>
+      </div>
+      <Show when={tools().length}>
+        <div class="fpv-stations">
+          <For each={tools()}>
+            {(tool, index) => (
+              <span
+                classList={{
+                  done: index() < last() || (tool.ok !== null && tool.ok !== undefined),
+                  on: index() === last() && (tool.ok === null || tool.ok === undefined),
+                }}
+              >
+                {tool.name}
+              </span>
+            )}
+          </For>
+        </div>
+      </Show>
+      <Show when={props.live.system}>
+        <div class="mt-1 text-13-regular text-text-base">the fold injected memory — verbatim</div>
+      </Show>
+    </div>
+  )
+}
+
+export function TurnView(props: { turn: Turn; index: number; total: number; session: MountedSession }) {
   const status = createMemo(() => statusOf(props.turn))
   const plan = createMemo(() => (props.turn.plan ?? []).map((step) => step.name).filter(Boolean).join(", "))
 
@@ -415,15 +485,14 @@ function Summary(props: { meter: Meter | undefined; fallbackTurns: number }) {
   )
 }
 
-const Result = Schema.Struct({ audit: Audit, meter: Schema.optional(Meter) })
+export const Result = Schema.Struct({ audit: Audit, meter: Schema.optional(Meter) })
 
-type Result = Schema.Schema.Type<typeof Result>
+export type Result = Schema.Schema.Type<typeof Result>
 
 export default function SessionFoldPanel(props: { session: MountedSession }) {
   const ctx = useExtension()
   const [nonce, setNonce] = createSignal(0)
   const [tick, setTick] = createSignal(0)
-  const [replay, setReplay] = createSignal(0)
 
   // Poll the door so the panel tracks turns as they land, without a manual Refresh. The audit is a local read.
   const timer = setInterval(() => setTick((value) => value + 1), 1000)
@@ -448,25 +517,8 @@ export default function SessionFoldPanel(props: { session: MountedSession }) {
     },
   )
 
-  // Keep turn objects stable across polls so only genuinely new turns remount (and animate in).
-  const cache = new Map<string, Turn>()
-
-  const turns = createMemo(() => {
-    const next = (data.latest?.audit.turns ?? []).map((turn) => {
-      const key = `${replay()}#${turn.when ?? ""}#${turn.address ?? ""}`
-      const kept = cache.get(key) ?? turn
-
-      cache.set(key, kept)
-
-      return kept
-    })
-
-    const live = new Set(next.map((turn) => `${replay()}#${turn.when ?? ""}#${turn.address ?? ""}`))
-
-    for (const key of cache.keys()) if (!live.has(key)) cache.delete(key)
-
-    return next
-  })
+  const count = createMemo(() => data.latest?.audit.turns?.length ?? 0)
+  const openArchive = () => ctx.layout.open(`${ctx.id}:holodeck`, props.session, { tab: "select" })
 
   const refresh = () => setNonce((value) => value + 1)
 
@@ -475,15 +527,7 @@ export default function SessionFoldPanel(props: { session: MountedSession }) {
       <div class="flex shrink-0 items-start justify-between gap-3 border-b border-v2-border-border-base px-5 py-4">
         <div class="flex min-w-0 flex-col gap-0.5">
           <div class="flex min-w-0 items-center gap-2">
-            <button
-              type="button"
-              class="flex shrink-0 cursor-pointer items-center"
-              aria-label={ctx.t("panel.replay")}
-              title={ctx.t("panel.replay")}
-              onClick={() => setReplay((value) => value + 1)}
-            >
-              <span class="size-1.5 animate-pulse rounded-full bg-v2-icon-icon-accent" aria-hidden="true" />
-            </button>
+            <span class="size-1.5 shrink-0 animate-pulse rounded-full bg-v2-icon-icon-accent" aria-hidden="true" />
             <div class="min-w-0 truncate text-13-regular text-text-base">{ctx.t("panel.title")}</div>
           </div>
           <div class="min-w-0 truncate text-12-regular text-text-weak">{ctx.t("panel.subtitle")}</div>
@@ -516,10 +560,20 @@ export default function SessionFoldPanel(props: { session: MountedSession }) {
             {(value) => (
               <div class="flex h-full min-h-0 flex-col">
                 <Summary meter={value().meter} fallbackTurns={value().audit.audited ?? 0} />
+                <For each={value().audit.live ?? []}>{(live) => <LiveView live={live} />}</For>
                 <div class="relative min-h-0 flex-1">
                   <ScrollView class="absolute inset-0">
-                    <div class="px-5">
-                      <For each={turns()}>{(turn, index) => <TurnView turn={turn} index={index()} total={turns().length} session={props.session} />}</For>
+                    <div class="px-5 py-3">
+                      <Show when={count() > 0}>
+                        <div class="flex flex-col items-center gap-3 py-6 text-center">
+                          <div class="text-13-regular text-text-base">
+                            {count()} past {count() === 1 ? "turn" : "turns"} live in the Holodeck
+                          </div>
+                          <Button size="small" variant="outline" onClick={openArchive}>
+                            {ctx.t("panel.archive")}
+                          </Button>
+                        </div>
+                      </Show>
                     </div>
                   </ScrollView>
                 </div>
