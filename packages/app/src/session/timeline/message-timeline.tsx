@@ -29,6 +29,7 @@ import { SessionHeaderSpacer } from "@/session/header/session-header"
 import { SessionRunningMenu } from "@/session/header/session-running-menu"
 import { SessionMind } from "./session-mind"
 import { publishMind, snapshotOf, targetsOf } from "./session-mind-stage"
+import { AssistantReasoningContent } from "@opencode/session-ui/message-content"
 import { useExtensionHost } from "@/runtime/extension/host"
 import { useExtensionAttachment } from "@/runtime/extension/host-apis"
 
@@ -397,6 +398,21 @@ function MessageTimelineView(
   })
 
   createEffect(() => publishMind(snapshotOf(targetsOf(mindParts()))))
+  // The latest reasoning, in opencode's own Thinking row: shimmer title, the live heading, paced markdown, collapsible.
+  const mindThinking = () => {
+    const parts = mindParts()
+    const index = parts.findLastIndex((part) => part?.type === "reasoning")
+    const content = index >= 0 ? parts[index] : undefined
+    if (!content || content.type !== "reasoning") return undefined
+    return (
+      <AssistantReasoningContent
+        id={`mind-reasoning-${index}`}
+        content={content}
+        streaming={index === parts.length - 1 && content.time?.completed === undefined}
+        defaultOpen={false}
+      />
+    )
+  }
   const mindLinks = useExtensionHost().links
   const mindAttachment = useExtensionAttachment()
   const openInPanel = (path: string) => mindLinks.open({ href: path, exact: true, session: mindAttachment.current() })
@@ -441,7 +457,7 @@ function MessageTimelineView(
         </div>
         <Show when={showWorking()}>
           <div class={`pb-2 ${turnPadding()}`}>
-            <SessionMind parts={mindParts()} onOpen={openInPanel} />
+            <SessionMind parts={mindParts()} onOpen={openInPanel} thinking={mindThinking()} />
           </div>
         </Show>
       </div>

@@ -1,4 +1,4 @@
-import { createMemo, createSignal, For, onCleanup, Show } from "solid-js"
+import { createMemo, createSignal, For, onCleanup, Show, type JSX } from "solid-js"
 import {
   indexOf,
   conceptOf,
@@ -30,6 +30,8 @@ export function SessionMind(props: {
   startedAt?: number
   /** Open a path in the right-hand panel. */
   onOpen?: (path: string) => void
+  /** The model's reasoning, drawn the way opencode draws it everywhere else (its Thinking row). */
+  thinking?: JSX.Element
 }) {
   const [now, setNow] = createSignal(Date.now())
   const [pickedKey, setPickedKey] = createSignal<string | undefined>()
@@ -71,7 +73,7 @@ export function SessionMind(props: {
     return name
   })
   const aim = createMemo(() => conceptOf(shown(), parts()))
-  const murmur = createMemo(() => murmurOf(parts(), now()))
+  const murmur = createMemo(() => (props.thinking && parts().at(-1)?.type === "reasoning" ? "" : murmurOf(parts(), now())))
   const doing = createMemo(() => STAGES.find((item) => item.id === here())?.doing ?? "Working")
   const clip = (value: string | undefined, max = 240) => {
     const one = (value ?? "").trim().replace(/\s+/g, " ")
@@ -216,6 +218,8 @@ export function SessionMind(props: {
           }}
         </For>
       </ol>
+
+      {props.thinking}
 
       <Show when={open()}>
         {(id) => (
