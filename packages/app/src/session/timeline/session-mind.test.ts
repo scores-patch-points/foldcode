@@ -50,7 +50,7 @@ describe("per-target walk", () => {
     expect(targets.map((item) => item.where)).toEqual(["a.ts", "b.ts"])
     expect(targets[0]!.steps.length).toBe(3)
     expect(reachedOf(targets[0]!)).toBe(5) // composed: NUL SIG INS SEG CON SYN
-    expect(reachedOf(targets[1]!)).toBe(2) // only minted
+    expect(reachedOf(targets[1]!)).toBe(2) // only named
     expect(rangeOf(read("a.ts", { offset: 10, limit: 5 }) as any)).toBe("lines 10–14")
   })
 })

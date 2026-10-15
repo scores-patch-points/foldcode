@@ -9,7 +9,7 @@ export type MindStage = "NUL" | "SIG" | "INS" | "SEG" | "CON" | "SYN" | "DEF" | 
 export const STAGES: ReadonlyArray<{ id: MindStage; glyph: string; label: string; doing: string }> = [
   { id: "NUL", glyph: "∅", label: "Hold", doing: "Holding — thinking it through" },
   { id: "SIG", glyph: "○", label: "Notice", doing: "Noticing — looking for what is there" },
-  { id: "INS", glyph: "●", label: "Mint", doing: "Minting — taking a specific thing in" },
+  { id: "INS", glyph: "●", label: "Name", doing: "Naming — taking a specific thing in" },
   { id: "SEG", glyph: "｜", label: "Segment", doing: "Segmenting — cutting the work into units" },
   { id: "CON", glyph: "⋈", label: "Bond", doing: "Bonding — relating things to each other" },
   { id: "SYN", glyph: "△", label: "Compose", doing: "Composing — making the change" },
