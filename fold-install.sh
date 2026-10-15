@@ -13,7 +13,31 @@
 # open against anything it does not understand.
 set -euo pipefail
 
-cd "$(dirname "$0")"
+# One command, from anywhere:
+#   curl -fsSL https://raw.githubusercontent.com/scores-patch-points/opencode-fold/fold/fold-install.sh | bash
+# Run from a checkout, it builds that checkout. Run from a pipe, it clones (or
+# updates) the fork into ~/.opencode-fold first, then builds. Override with
+# FOLD_REPO_DIR, FOLD_REPO_URL, FOLD_BRANCH.
+here="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || true)"
+if [ -z "${here:-}" ] || [ ! -f "$here/packages/cli/script/build.ts" ]; then
+  repo="${FOLD_REPO_DIR:-$HOME/.opencode-fold}"
+  url="${FOLD_REPO_URL:-https://github.com/scores-patch-points/opencode-fold.git}"
+  branch="${FOLD_BRANCH:-fold}"
+  command -v git >/dev/null || { echo "git is required" >&2; exit 1; }
+  if [ -d "$repo/.git" ]; then
+    echo "updating $repo ($branch)"
+    git -C "$repo" fetch origin "$branch" --depth 1
+    git -C "$repo" checkout -q "$branch"
+    git -C "$repo" reset --hard "origin/$branch"
+  else
+    echo "cloning $url ($branch) → $repo"
+    git clone --depth 1 --branch "$branch" "$url" "$repo"
+  fi
+  exec "$repo/fold-install.sh"
+fi
+
+cd "$here"
+command -v bun >/dev/null || { echo "bun is required: https://bun.sh" >&2; exit 1; }
 
 case "$(uname -s)" in
   Darwin) os=darwin ;;
