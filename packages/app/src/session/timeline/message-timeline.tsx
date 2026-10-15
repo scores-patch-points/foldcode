@@ -27,6 +27,7 @@ import { useCommand } from "@/shell/commands/command"
 import { SessionAncestorTrail, SessionProjectMenu, SessionTitleHeader } from "../session-identity-header"
 import { SessionHeaderSpacer } from "@/session/header/session-header"
 import { SessionRunningMenu } from "@/session/header/session-running-menu"
+import { SessionMind } from "./session-mind"
 
 type BlockingTask = { type: "shell" | "subagent"; partID: string; id?: string; label?: string }
 
@@ -392,6 +393,16 @@ function MessageTimelineView(
     })
   })
 
+  const mindContent = () => {
+    const active = projection.activeMessageID()
+    return active ? projection.assistantMessagesByParent().get(active)?.at(-1)?.content.at(-1) : undefined
+  }
+  const mindSteps = () => {
+    const active = projection.activeMessageID()
+    const list = active ? projection.assistantMessagesByParent().get(active) : undefined
+    return list?.reduce((n, item) => n + item.content.filter((part) => part.type === "tool").length, 0) ?? 0
+  }
+
   // Undelivered input waits below the work the model has seen, so live status moves into the row above it.
   const activityRow = createMemo(() => projection.rows().some((row) => Predicate.isTagged(row, "Activity")))
 
@@ -408,6 +419,7 @@ function MessageTimelineView(
             <div data-component="session-working" role="status">
               <TextShimmer text={language.t("session.timeline.working")} active />
             </div>
+            <SessionMind content={mindContent()} steps={mindSteps()} />
           </Show>
           <Show when={backgroundHintPresence.present()}>
             <div

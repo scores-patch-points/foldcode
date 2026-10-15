@@ -25,6 +25,7 @@ honesty is one diff check.
 |---|---|
 | `packages/core/src/plugin/fold.ts` | the doorway client — a thin forwarder to the fold stack's `POST /v1/hooks/opencode` (khora's `opencode-doorway.mjs`). No fold logic lives here, so it does not change when the fold does. |
 | `packages/core/src/plugin/internal.ts` | its registration: one import, one entry, added last so it sees the context every other plugin has already shaped. |
+| `packages/app/src/session/timeline/session-mind.tsx` | the mind: says in words what the model is doing while a turn runs (stage, step count, polite live announcement, no reliance on motion or colour). Mounted by three added lines in `message-timeline.tsx`; nothing upstream is removed. |
 | `fold-sync.sh` | the upstream tracker: rebase, delta guard, typecheck, optional install. |
 | `fold-install.sh` | builds this checkout and swaps it in as the machine's `opencode`. |
 | `UPSTREAM.md` | this contract. |
