@@ -67,6 +67,52 @@ const lastUserText = (messages: SessionHooks["context"]["messages"]) => {
   return message.content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n")
 }
 
+// Surf: the window must not grow per prompt. Turns older than the last
+// `keepTurns` collapse into one receipt block (the ask and how it ended); the
+// durable session keeps everything, and the frontier can re-read on demand.
+// FOLD_KEEP_TURNS=0 disables (upstream behavior).
+const keepTurns = Number(process.env.FOLD_KEEP_TURNS ?? 1)
+
+const surfPlan = (messages: SessionHooks["context"]["messages"]) => {
+  if (keepTurns <= 0) return undefined
+  const starts = messages.flatMap((item, index) =>
+    item.role === "user" && item.content.some((part) => part.type === "text") ? [index] : [],
+  )
+  if (starts.length <= keepTurns) return undefined
+  const cut = starts[starts.length - keepTurns]
+  const turns = starts.slice(0, starts.length - keepTurns).map((start, i, all) => {
+    const turn = messages.slice(start, i + 1 < all.length ? all[i + 1] : cut)
+    const answer = turn
+      .findLast((item) => item.role === "assistant")
+      ?.content.flatMap((part) => (part.type === "text" ? [part.text] : []))
+      .join("\n")
+    const grounds = [
+      ...new Set(turn.flatMap((item) => item.content.flatMap((part) => (part.type === "tool-call" ? [part.name] : [])))),
+    ]
+    return { n: i + 1, ask: lastUserText(turn), answer: answer ?? "", grounds }
+  })
+  return { cut, turns }
+}
+
+const surfLocal = (turns: NonNullable<ReturnType<typeof surfPlan>>["turns"]) =>
+  `[fold: ${turns.length} earlier turn(s) kept out of this context; the full history remains in the session]\n` +
+  turns
+    .map((t) => `- ask: ${short(t.ask, 300)}\n  outcome: ${t.answer ? short(t.answer, 400) : "(no text reply)"}`)
+    .join("\n")
+
+const surfApply = (messages: SessionHooks["context"]["messages"], cut: number, note: string) => {
+  const head = messages[cut]
+  messages.splice(0, cut)
+  messages[0] = Message.make({
+    id: head.id,
+    role: head.role,
+    content: [{ type: "text" as const, text: note }, ...head.content],
+    metadata: head.metadata,
+    providerMetadata: head.providerMetadata,
+    native: head.native,
+  })
+}
+
 const isNewAsk = (messages: SessionHooks["context"]["messages"]) => messages.at(-1)?.role === "user"
 
 // Event payloads are trimmed before they leave the process: the record needs the
@@ -230,6 +276,27 @@ export const Plugin = define({
     // further door traffic. The cache is keyed by part id and scoped to the
     // session's plugin lifetime.
     const folded = new Map<string, string>()
+
+    // The task a session's marks belong to: FOLD_TASK when set, else the root
+    // of its parent chain, so a tab's subagents share one worknotes directory
+    // with no setup. Cached per session; any lookup failure falls back to the
+    // session's own id (a private task), never blocking a turn.
+    const roots = new Map<string, string>()
+    const taskOf = (sessionID: string) =>
+      Effect.gen(function* () {
+        if (process.env.FOLD_TASK) return process.env.FOLD_TASK
+        const hit = roots.get(sessionID)
+        if (hit) return hit
+        let current: string = sessionID
+        for (let depth = 0; depth < 8; depth++) {
+          const session = yield* ctx.session.get(current as never).pipe(Effect.catch(() => Effect.succeed(undefined)))
+          const parent = (session as { parentID?: string } | undefined)?.parentID
+          if (!parent) break
+          current = parent
+        }
+        roots.set(sessionID, current)
+        return current
+      })
 
     const foldMessages = (event: SessionHooks["context"]) =>
       Effect.gen(function* () {
@@ -453,6 +520,15 @@ export const Plugin = define({
           const archons = answer?.archons as { note?: unknown } | undefined
           if (archons && typeof archons.note === "string" && archons.note.length > 0)
             event.system.push({ type: "text", text: archons.note })
+        }
+        // Surf: the window must not grow per prompt. The door's ladder (figure /
+        // kind / pattern, each line addressed) answers; with it down, local
+        // truncation does, so growth is bounded either way.
+        const plan = surfPlan(event.messages)
+        if (plan) {
+          const task = yield* taskOf(event.sessionID)
+          const answer = yield* post({ event: "surf", sessionID: event.sessionID, task, ask: lastUserText(event.messages), turns: plan.turns }, askTimeout)
+          surfApply(event.messages, plan.cut, typeof answer?.note === "string" && answer.note.length > 0 ? answer.note : surfLocal(plan.turns))
         }
         yield* foldMessages(event)
       })

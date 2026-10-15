@@ -41,6 +41,21 @@ What the door does (khora side, `opencode-doorway.mjs` mounted in `proxy.mjs`):
   receipts every elision with its line range. What is not needed is not sent.
   The frontier can always re-read an exact range on demand; the chars kept out
   are the tokens saved.
+- **`surf`** — the window must not grow per prompt. Turns older than the last
+  `FOLD_KEEP_TURNS` (default 1; 0 disables) go to the door as `{ask, answer,
+  grounds}`; it answers one note: a compression ladder (Figure for the newest,
+  Kind for older turns sharing a rare-term signature admitted only when the MDL
+  gain is positive with independent grounds, Pattern past the cap), no model.
+  The same call is how agents coordinate **stigmergically**: a task directory
+  (`~/.fold/worknotes/<task>/`, `FOLD_WORKNOTES_DIR`; `task` is `FOLD_TASK`,
+  default the sessionID) holds one append-only marks file per agent
+  (`<iso> · <agent> · fact|claim|done|block · <text>`, no writer contention),
+  atomic claims (`claims/<slug>.json`, O_EXCL; decay after `FOLD_CLAIM_TTL_MS`,
+  default 15 min; `done` is final), and each agent's own turns file. The
+  context note carries the ladder plus what others hold and the latest facts,
+  so parallel agents share a medium, not a window. The door also answers
+  `mark`, `claim`, `done` and `notes` events for agents that are not this
+  fork. Door down: local truncation answers, and no marks are shared.
 - **`title`** — session titles are derived from the ask by rule (first words,
   cleaned). No model, local or frontier, is consulted.
 - **`event`** — the turn's events (steps, tools, text, usage, boundary) are
