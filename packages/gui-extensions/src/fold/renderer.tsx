@@ -12,6 +12,9 @@ const setup: Setup<typeof Fold> = (ctx) => {
 
   ctx.add(Style, css)
 
+  // The optional browser pane, handed to the panels so they can open the REAL fold/holodeck pages.
+  const browser = ctx.uses.browser
+
   // Pinned: always a trigger in the side strip. first + fallback: the region's default content.
   const tab: PanelTab = {
     id: "main",
@@ -29,7 +32,7 @@ const setup: Setup<typeof Fold> = (ctx) => {
     list: () => [tab],
     render: (props) => (
       <Suspense>
-        <SessionFoldPanel session={props.session} />
+        <SessionFoldPanel session={props.session} browser={browser} />
       </Suspense>
     ),
   })
@@ -49,7 +52,7 @@ const setup: Setup<typeof Fold> = (ctx) => {
     list: (input) => (input.open.includes("holodeck") ? [holodeck] : []),
     render: (props) => (
       <Suspense>
-        <SessionHolodeckPanel session={props.session} />
+        <SessionHolodeckPanel session={props.session} browser={browser} />
       </Suspense>
     ),
   })

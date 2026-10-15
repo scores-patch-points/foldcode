@@ -1,13 +1,17 @@
-import { createMemo, createSignal, For, Match, onCleanup, Show, Switch, type JSX } from "solid-js"
+import { type Accessor, createMemo, createSignal, For, Match, onCleanup, Show, Switch, type JSX } from "solid-js"
 import { Option, Schema } from "effect"
 import { Button } from "@opencode/ui/button"
 import { ScrollView } from "@opencode/ui/scroll-view"
 import { TextShimmer } from "@opencode/ui/text-shimmer"
-import { createLatest, useExtension, type MountedSession } from "../sdk"
+import { createLatest, useExtension, type Live, type MountedSession } from "../sdk"
+import type { Browser } from "../browser/contract"
 
 // The fold door's default address. CORS is open, so the window reads the audit directly. This panel shows exactly
 // what the model was sent — built from the real request, not from the fold's own claims.
 export const FOLD_URL = "http://127.0.0.1:11436"
+
+// The REAL fold page (the fold-chat app with its own pv animation), opened in the app's native browser embed.
+export const FOLD_APP_URL = "http://127.0.0.1:8788/vendor/fold-chat/index.html"
 
 const Project = Schema.Struct({
   drop: Schema.optional(Schema.Array(Schema.String)),
@@ -489,7 +493,7 @@ export const Result = Schema.Struct({ audit: Audit, meter: Schema.optional(Meter
 
 export type Result = Schema.Schema.Type<typeof Result>
 
-export default function SessionFoldPanel(props: { session: MountedSession }) {
+export default function SessionFoldPanel(props: { session: MountedSession; browser: Accessor<Live<Browser>> }) {
   const ctx = useExtension()
   const [nonce, setNonce] = createSignal(0)
   const [tick, setTick] = createSignal(0)

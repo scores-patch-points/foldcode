@@ -158,6 +158,72 @@
   animation: fw-ask-edge 800ms ease-out forwards;
 }
 
+/* The Holodeck reading: an answer as sentences with their standing, then its sources and checks.
+   Same idiom as the fold's own reading — a verified sentence is plain, an unchecked one is dotted. */
+.hl-face {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 0;
+  border-bottom: 1px solid rgb(255 255 255 / 0.08);
+}
+
+.hl-ans {
+  font-size: 13px;
+  line-height: 1.6;
+  color: #e8e8ea;
+}
+
+.hl-sen {
+  border-radius: 3px;
+}
+
+.hl-sen.ok:hover {
+  background: rgb(255 255 255 / 0.06);
+}
+
+.hl-sen.weak {
+  text-decoration: underline dotted #9a9aa5;
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 4px;
+}
+
+.hl-src,
+.hl-checks {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.hl-k {
+  font-size: 12px;
+  color: #9a9aa5;
+}
+
+.hl-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.hl-row .hl-v {
+  color: #e8e8ea;
+  overflow-wrap: anywhere;
+}
+
+.hl-row .hl-d {
+  color: #9a9aa5;
+}
+
+.hl-row.ok .hl-v {
+  color: #7aa2ff;
+}
+
+.hl-row.no .hl-v {
+  color: #f0b429;
+}
+
 /* The fold's live turn language, scoped (.foldlive): a doing line with a running dot and station pills.
    Same geometry/read as the fold's own live view. */
 .foldlive {
