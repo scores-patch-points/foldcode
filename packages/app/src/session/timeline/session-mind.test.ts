@@ -120,3 +120,18 @@ describe("conceptOf", () => {
     expect(conceptOf(targetsOf(grep)[0], grep)).toBe("searching for useExtensionHost")
   })
 })
+
+describe("murmurOf", () => {
+  const T = 100_000
+  test("is built from the trace, never invented", async () => {
+    const { murmurOf } = await import("./session-mind-stage")
+    expect(murmurOf([], T)).toBe("waiting for the first move")
+    expect(murmurOf([{ type: "reasoning", text: "check the tests first" }] as any, T)).toBe("check the tests first · 4 words so far")
+    expect(
+      murmurOf([{ type: "tool", name: "bash", time: { created: T - 7000 }, state: { status: "running", input: { command: "bun test" } } }] as any, T),
+    ).toBe("bash running on bun test · 7s")
+    expect(
+      murmurOf([{ type: "tool", name: "read", time: { created: T - 9000, completed: T - 3000 }, state: { status: "completed", input: {} } }] as any, T),
+    ).toBe("deciding what is next · 3s since read finished")
+  })
+})

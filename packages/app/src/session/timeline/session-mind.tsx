@@ -3,6 +3,7 @@ import {
   indexOf,
   conceptOf,
   inFlightOf,
+  murmurOf,
   lapOf,
   settledBy,
   mark,
@@ -57,6 +58,7 @@ export function SessionMind(props: {
   const toolCount = createMemo(() => parts().filter((part) => part.type === "tool").length)
   const lastPart = createMemo(() => parts().at(-1))
   const concept = createMemo(() => conceptOf(shown(), parts()))
+  const murmur = createMemo(() => murmurOf(parts(), now()))
   const doing = createMemo(() => STAGES.find((item) => item.id === here())?.doing ?? "Working")
   const clip = (value: string | undefined, max = 240) => {
     const one = (value ?? "").trim().replace(/\s+/g, " ")
@@ -116,6 +118,9 @@ export function SessionMind(props: {
           <Show when={shown()?.after}>
             <span class="min-w-0 truncate text-[11px] opacity-70" title={shown()?.after}>after {shown()?.after} settled</span>
           </Show>
+          <span class="min-w-0 truncate font-mono text-[11px] opacity-75" aria-hidden="true" title={murmur()}>
+            {murmur()}
+          </span>
           <span class="text-[11px] opacity-60" aria-hidden="true">
             {toolCount() > 0 ? `step ${toolCount()}` : "starting"} · {duration(total())}
             {lastPart()?.type === "tool" && lastPart()?.time?.created ? ` · this step ${duration(seconds(lastPart()?.time?.created))}` : ""}

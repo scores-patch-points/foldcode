@@ -278,3 +278,28 @@ export function conceptOf(target: Target | undefined, all: ReadonlyArray<Part> =
   }
   return `searching for ${where.length > 40 ? `${where.slice(0, 39)}…` : where}`
 }
+
+/** Real feedback for the moments with nothing else to show: built only from what is actually on the trace (how much
+ *  has been reasoned, how long a tool has run, how long since the last result), never invented progress. */
+export function murmurOf(parts: ReadonlyArray<Part>, now: number): string {
+  const last = parts.at(-1)
+  const since = (from?: number) => (from ? Math.max(0, Math.round((now - from) / 1000)) : 0)
+  if (!last) return "waiting for the first move"
+  if (last.type === "reasoning") {
+    const text = (last.text ?? "").replace(/\s+/g, " ").trim()
+    const count = text ? text.split(" ").length : 0
+    const tail = text.length > 110 ? `…${text.slice(-110)}` : text
+    return tail ? `${tail} · ${count} words so far` : `reasoning · ${since(last.time?.created)}s`
+  }
+  if (last.type === "text") {
+    const count = (last.text ?? "").trim().split(/\s+/).filter(Boolean).length
+    return `writing the reply · ${count} words so far`
+  }
+  const name = last.name ?? "step"
+  const status = last.state?.status
+  if (status === "running" || status === "streaming") {
+    const target = targetOf(last)
+    return `${name} running${target ? ` on ${target}` : ""} · ${since(last.time?.created)}s`
+  }
+  return `deciding what is next · ${since(last.time?.completed ?? last.time?.created)}s since ${name} ${status === "error" ? "failed" : "finished"}`
+}
