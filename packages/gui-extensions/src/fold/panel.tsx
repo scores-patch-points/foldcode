@@ -26,7 +26,7 @@ const Turn = Schema.Struct({
   address: Schema.optional(Schema.String),
   recall: Schema.optional(Schema.NullOr(Schema.String)),
   look: Schema.optional(Schema.NullOr(Schema.String)),
-  project: Schema.optional(Project),
+  project: Schema.optional(Schema.NullOr(Project)),
   title: Schema.optional(Schema.NullOr(Schema.String)),
   repeat: Schema.optional(Schema.Number),
   settled: Schema.optional(Schema.Boolean),
@@ -50,8 +50,8 @@ const clip = (text: string, max = 600) => {
 
 // The mechanical cut, verbatim: which earlier exchanges were left out, which ride whole, and the record that
 // stood in for the dropped ones. Address/line-based, never embedded or scored.
-const verbatimCut = (project: Project | undefined) => {
-  if (project === undefined) return "**the mechanical cut** — none (no earlier exchanges to snip)"
+const verbatimCut = (project: Project | null | undefined) => {
+  if (!project) return "**the mechanical cut** — none (no earlier exchanges to snip)"
 
   if (project.gap) return `**the mechanical cut** — none (${project.gap})`
 
