@@ -94,6 +94,56 @@ Activation is a *layer of inferred meaning*, disclosed as inference:
 - Every activation names its basis (`giver: eodb:activation`) and the rows it
   drew from, so the layer is auditable — and falsifiable.
 
+## Default: go local, and obtain what is missing
+
+opencode X-fold defaults to local. When a task needs a modality the harness does
+not have, **obtain it locally** rather than refusing or reaching for a hosted
+service — and do it the same way every time:
+
+- **A local model by default.** Ollama on `11435`: pull `gemma2:2b` (fast text),
+  `qwen2.5-coder:1.5b` (tools), `nomic-embed-text` (embeddings). Pull only what
+  the task needs.
+  ```sh
+  OLLAMA_HOST=127.0.0.1:11435 ollama pull gemma2:2b
+  ```
+- **A local CV model when vision needs one** (the pattern the fold's apps use):
+  opencode chats with it; the frontier never does.
+- **Whisper** for audio, **tesseract** for images — the senses above.
+- **Any ingestion the harness lacks:** images (`perceive`), audio (`transcribe`),
+  pages (`webfetch`), whole folders/a repo (the door's `/v1/workspace` +
+  `/v1/documents`), and video via the local yt-dlp helper. If a source type has
+  no path yet, add the smallest local one and name it — never invent a reading.
+
+The order is fixed: **local before remote, mechanical before generated, free
+before paid.** A hosted model is the last resort, and only when the task truly
+needs it.
+
+## Use the fold's power: meaning from anything, signal from noise
+
+The fold reads. Point it at anything — a page, a screenshot, a recording, a repo,
+a statute — and:
+
+1. **Reduce every input to bytes at an address.** A perception becomes an
+   `EOTObservation@1` row; its provenance is its address (file, page, region,
+   byte range, model tag). Nothing enters without an address.
+2. **Extract signal from noise mechanically.** Keep the passages the ask's own
+   words point at — by measured overlap at real addresses, never by a vector,
+   never by a guess. Receipt every elision with its range; what is not needed is
+   not carried, and what was dropped stays readable.
+3. **Prefer mechanical output.** Compute, count, snip, and cut verbatim before
+   generating. If a fact, a total, a quote, or a range can be produced by rule,
+   it is — and it is stamped, so it cannot be confused with prose. Generate only
+   what genuinely cannot be measured.
+4. **Build the activation layer as inference, on the record.** Over the rows,
+   record which activated which, with the basis named (`eodb:activation`) — a
+   layer of inferred contextual meaning that is auditable and falsifiable.
+5. **Disclose the gaps.** Absence is a result: a field the image does not show, a
+   word the waveform does not carry, a question the corpus is silent on. Say it;
+   never fill it.
+
+The measure of success is a reading you can check: every claim descends to an
+address, every elision is receipted, and everything mechanical is mechanical.
+
 ## The wall (say it plainly)
 
 - A **sense** measures; a **model** phrases. Keep them in different rows with
