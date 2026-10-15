@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { ago, counts, order, titleOf, type Plan } from "./plans-model"
+import { ago, counts, order, spiralOf, titleOf, type Plan } from "./plans-model"
 
 const plan = (task: string, updated: number, extra: Partial<Plan> = {}): Plan => ({
   task,
@@ -38,5 +38,21 @@ describe("work plans", () => {
     expect(ago(0, 45_000)).toBe("45s ago")
     expect(ago(0, 5 * 60_000)).toBe("5m ago")
     expect(ago(0, 3 * 3_600_000)).toBe("3h ago")
+  })
+})
+
+describe("spiralOf", () => {
+  test("counts re-entries per referent and flags answers held two ways", () => {
+    const rows = spiralOf({
+      record: [{ id: "b3", referent: "retry", delta: ["max 5"], check: "bun test retry" }, { id: "b1", referent: "auth", delta: ["token"] }],
+      supersedes: [
+        { referent: "retry", superseded: "b1x", supersededBy: "b2x" },
+        { referent: "retry", superseded: "b2x", supersededBy: "b3" },
+      ],
+      disagreements: [{ referent: "retry", answers: ["max 3", "max 5"] }],
+    })
+    expect(rows.find((row) => row.referent === "retry")).toMatchObject({ reentries: 2, answers: 2 })
+    expect(rows.find((row) => row.referent === "auth")).toMatchObject({ reentries: 0, answers: 1 })
+    expect(spiralOf(undefined)).toEqual([])
   })
 })

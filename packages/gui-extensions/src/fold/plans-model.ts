@@ -41,3 +41,27 @@ export function ago(from: number, now: number): string {
   if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`
   return `${Math.floor(secs / 86400)}d ago`
 }
+
+/** The door's verified record for a task (opencode-record.mjs reconcile): last-wins blocks, the supersession edges
+ *  where a later block redefined an earlier one, and referents answered two ways. */
+export type RecordBlock = { id: string; referent: string; delta: ReadonlyArray<string>; check?: string }
+export type RecordView = {
+  record: ReadonlyArray<RecordBlock>
+  supersedes: ReadonlyArray<{ referent: string; superseded: string; supersededBy: string }>
+  disagreements: ReadonlyArray<{ referent: string; answers: ReadonlyArray<string> }>
+}
+
+export type SpiralRow = { referent: string; delta: ReadonlyArray<string>; check?: string; reentries: number; answers: number }
+
+/** One row per referent: how many times it was redefined (each is a re-entry, the spiral turning) and whether it is
+ *  held two ways. A referent never redefined is a line: it has one pass. */
+export function spiralOf(view: RecordView | undefined): SpiralRow[] {
+  if (!view) return []
+  return view.record.map((block) => ({
+    referent: block.referent,
+    delta: block.delta,
+    check: block.check,
+    reentries: view.supersedes.filter((edge) => edge.referent === block.referent).length,
+    answers: view.disagreements.find((item) => item.referent === block.referent)?.answers.length ?? 1,
+  }))
+}

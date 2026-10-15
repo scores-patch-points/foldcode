@@ -2,7 +2,7 @@ import { createMemo, createSignal, For, onCleanup, Show } from "solid-js"
 import { createLatest, type MountedSession } from "../sdk"
 import { followBottom } from "./follow"
 import { FOLD_URL } from "./panel"
-import { ago, counts, KIND_GLYPH, KIND_WORD, order, titleOf, type Plan } from "./plans-model"
+import { ago, counts, KIND_GLYPH, KIND_WORD, order, spiralOf, titleOf, type Plan, type RecordView } from "./plans-model"
 
 // Work plans: what each task's agents left behind in the stigmergic medium. Marks (fact, claim, done, block), what is
 // still claimed, and every settled turn in full. Reasoning is kept, not erased, so it is here to read.
@@ -21,6 +21,22 @@ export default function SessionWorkPlans(props: { session: MountedSession }) {
       if (!response.ok) throw new Error(`plans ${response.status}`)
       const body = (await response.json()) as { plans?: Plan[] }
       return body.plans ?? []
+    },
+  )
+
+  // The verified record for the plan on screen: the frames REC re-entered and the answers held two ways.
+  const recordFor = createLatest(
+    () => `${picked() ?? props.session.id}#${tick()}`,
+    async (key, signal) => {
+      const task = key.split("#")[0]!
+      const response = await fetch(`${FOLD_URL}/v1/hooks/opencode`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ event: "record", task }),
+        signal,
+      })
+      if (!response.ok) throw new Error(`record ${response.status}`)
+      return (await response.json()) as RecordView
     },
   )
 
@@ -97,6 +113,31 @@ export default function SessionWorkPlans(props: { session: MountedSession }) {
                     </For>
                   </section>
                 </Show>
+
+                <section aria-label="Record">
+                  <div class="mb-1 text-[11px] font-semibold uppercase tracking-wide opacity-60">Record, re-entered</div>
+                  <Show
+                    when={spiralOf(recordFor.latest).length > 0}
+                    fallback={<div class="text-[12px] opacity-60">Nothing admitted to the record yet.</div>}
+                  >
+                    <For each={spiralOf(recordFor.latest)}>
+                      {(row) => (
+                        <div class="py-0.5 text-[12px]">
+                          <span class="font-semibold">{row.referent}</span>
+                          <span class="opacity-70">
+                            {" "}
+                            · {row.reentries > 0 ? `re-entered ×${row.reentries}` : "one pass, a line"}
+                            {row.answers > 1 ? ` · held ${row.answers} ways` : ""}
+                          </span>
+                          <div class="opacity-80">{row.delta.join("; ")}</div>
+                          <Show when={row.check}>
+                            <div class="opacity-55">check: {row.check}</div>
+                          </Show>
+                        </div>
+                      )}
+                    </For>
+                  </Show>
+                </section>
 
                 <section aria-label="Marks">
                   <div class="mb-1 text-[11px] font-semibold uppercase tracking-wide opacity-60">Marks</div>
