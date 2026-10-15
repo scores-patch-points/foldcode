@@ -85,6 +85,8 @@ type Input = {
 type ViewProps = {
   header: JSX.Element
   bottomSpacer?: JSX.Element
+  /** Pinned over the bottom of the viewport, so it stays in view without scrolling. */
+  overlay?: JSX.Element
   workspaceSession: Accessor<boolean>
   deferred: (row: TimelineRow.TimelineRow) => boolean
   renderRow: (row: Accessor<TimelineRow.TimelineRow>, onSizeChange?: () => void) => JSX.Element
@@ -915,6 +917,7 @@ export function createTimelineVirtualizer(input: Input) {
             </div>
           </div>
         </ScrollView>
+        {props.overlay}
       </div>
     )
   }

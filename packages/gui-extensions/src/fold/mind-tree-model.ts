@@ -24,6 +24,7 @@ export type Snapshot = {
     laps: ReadonlyArray<{
       lap: number
       reached: number
+      carried?: string
       steps: ReadonlyArray<{ name: string; kind: string; stage: string; status: string; reframed: boolean; error?: string }>
     }>
   }>
@@ -62,16 +63,24 @@ export function buildTree(snapshot: Snapshot | undefined): TreeNode[] {
       openable: openable(item.where),
       where: item.where,
       detail: item.range || undefined,
-      children: item.laps.map((lap) => ({
+      children: [],
+    }
+    // A spiral, not a list: each lap sits inside the one before it, and carries what the last one learned.
+    let inner: TreeNode[] = node.children
+    for (const lap of item.laps) {
+      const lapNode: TreeNode = {
         id: `t${index}-l${lap.lap}`,
-        kind: "lap" as const,
+        kind: "lap",
         label: `lap ${lap.lap + 1}`,
         track: trackOf(lap.reached),
-        state: lap.steps.some((step) => step.status === "error") ? ("failed" as const) : ("open" as const),
+        state: lap.steps.some((step) => step.status === "error") ? "failed" : "open",
         openable: false,
+        detail: lap.carried ? `carried: ${lap.carried}` : undefined,
         steps: lap.steps.map((step) => ({ name: step.name, status: step.status, stage: step.stage, error: step.error })),
         children: [],
-      })),
+      }
+      inner.push(lapNode)
+      inner = lapNode.children
     }
     // The most recent target with this `where` wins when a name repeats.
     nodes.set(item.where, node)

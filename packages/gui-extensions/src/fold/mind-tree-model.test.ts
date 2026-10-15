@@ -25,7 +25,7 @@ describe("buildTree", () => {
     expect(tree[0]!.children.filter((child) => child.kind === "target").map((child) => child.label)).toEqual(["src/b.ts"])
   })
 
-  test("each lap is its own child and a failing lap reads as failed", () => {
+  test("laps nest as a spiral and each carries what the last one hit", () => {
     const tree = buildTree({
       at: 0,
       targets: [
@@ -33,13 +33,17 @@ describe("buildTree", () => {
           lap: 1,
           laps: [
             { lap: 0, reached: 5, steps: [{ name: "edit", kind: "tool", stage: "SYN", status: "error", reframed: false, error: "boom" }] },
-            { lap: 1, reached: 2, steps: [{ name: "read", kind: "tool", stage: "INS", status: "completed", reframed: true }] },
+            { lap: 1, reached: 2, carried: "boom", steps: [{ name: "read", kind: "tool", stage: "INS", status: "completed", reframed: true }] },
           ],
         }),
       ],
     })
-    const laps = tree[0]!.children.filter((child) => child.kind === "lap")
-    expect(laps.map((lap) => lap.state)).toEqual(["failed", "open"])
+    const first = tree[0]!.children[0]!
+    expect(first.kind).toBe("lap")
+    expect(first.state).toBe("failed")
+    const second = first.children[0]!
+    expect(second.label).toBe("lap 2")
+    expect(second.detail).toBe("carried: boom")
   })
 
   test("only paths are openable", () => {

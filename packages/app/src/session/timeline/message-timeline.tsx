@@ -455,11 +455,6 @@ function MessageTimelineView(
             </div>
           </Show>
         </div>
-        <Show when={showWorking()}>
-          <div class={`pb-2 ${turnPadding()}`}>
-            <SessionMind parts={mindParts()} onOpen={openInPanel} thinking={mindThinking()} />
-          </div>
-        </Show>
       </div>
     </Show>
   )
@@ -479,6 +474,18 @@ function MessageTimelineView(
     <VirtualizedTimeline
       workspaceSession={workspaceSession}
       bottomSpacer={<Show when={!activityRow()}>{activity()}</Show>}
+      overlay={
+        <Show when={showWorking()}>
+          <div
+            data-component="session-mind-pinned"
+            class="absolute inset-x-0 bottom-0 z-[50] max-h-[60%] overflow-auto border-t border-v2-border-border-base bg-v2-background-bg-base"
+          >
+            <div class={`py-2 ${turnPadding()} ${props.centered ? "md:max-w-session md:mx-auto" : ""}`}>
+              <SessionMind parts={mindParts()} onOpen={openInPanel} thinking={mindThinking()} />
+            </div>
+          </div>
+        </Show>
+      }
       deferred={(row) => {
         if (!Predicate.isTagged(row, "AssistantPart") || row.group.type !== "part") return false
         const content = Timeline.resolveContent(messageByID().get(row.group.ref.messageID), row.group.ref.partID)

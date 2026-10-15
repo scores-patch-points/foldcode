@@ -174,6 +174,8 @@ export type MindSnapshot = {
     laps: Array<{
       lap: number
       reached: number
+      /** What this lap began from: the failure it reframed, so the next pass is informed by the last. */
+      carried?: string
       steps: Array<{ name: string; kind: string; stage: MindStage; status: string; reframed: boolean; error?: string }>
     }>
   }>
@@ -188,9 +190,11 @@ export function snapshotOf(targets: ReadonlyArray<Target>, now = Date.now()): Mi
       const laps: MindSnapshot["targets"][number]["laps"] = []
       for (let n = 0; n <= lap; n++) {
         const steps = item.steps.filter((step) => step.lap === n)
+        const because = steps[0]?.because
         laps.push({
           lap: n,
           reached: steps.reduce((at, step) => Math.max(at, indexOf(step.stage)), -1),
+          carried: n === 0 ? undefined : because?.state?.error ? String(because.state.error).slice(0, 160) : because ? `${because.name ?? "a step"} failed` : undefined,
           steps: steps.map((step) => ({
             name: step.part.name ?? step.part.type ?? "step",
             kind: step.part.type ?? "",
