@@ -35,3 +35,22 @@ describe("stageOf", () => {
     expect(stageOf(undefined)).toBe("NUL")
   })
 })
+
+describe("per-target walk", () => {
+  const read = (path: string, extra: object = {}) => ({
+    type: "tool",
+    name: "read",
+    state: { status: "completed", input: { filePath: path, ...extra } },
+  })
+  const edit = (path: string) => ({ type: "tool", name: "edit", state: { status: "completed", input: { filePath: path } } })
+
+  test("steps group by what they act on; unnamed parts join the target before them", async () => {
+    const { targetsOf, reachedOf, rangeOf } = await import("./session-mind-stage")
+    const targets = targetsOf([read("a.ts", { offset: 10, limit: 5 }), { type: "reasoning" }, edit("a.ts"), read("b.ts")] as any)
+    expect(targets.map((item) => item.where)).toEqual(["a.ts", "b.ts"])
+    expect(targets[0]!.steps.length).toBe(3)
+    expect(reachedOf(targets[0]!)).toBe(5) // composed: NUL SIG INS SEG CON SYN
+    expect(reachedOf(targets[1]!)).toBe(2) // only minted
+    expect(rangeOf(read("a.ts", { offset: 10, limit: 5 }) as any)).toBe("lines 10–14")
+  })
+})

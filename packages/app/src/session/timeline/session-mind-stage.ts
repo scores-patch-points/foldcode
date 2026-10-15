@@ -50,3 +50,83 @@ export function stageOf(content: Kind | undefined, previous?: Kind): MindStage {
   }
   return OPERATOR_OF[name] ?? "NUL"
 }
+
+export type Part = {
+  type?: string
+  name?: string
+  text?: string
+  state?: { status?: string; input?: unknown; error?: unknown }
+  time?: { created?: number; completed?: number }
+}
+
+const TARGET_KEYS = ["filePath", "path", "pattern", "command", "url", "query", "description", "prompt"]
+
+const inputOf = (part: Part | undefined): Record<string, unknown> => {
+  const input = part?.state?.input
+  return input && typeof input === "object" ? (input as Record<string, unknown>) : {}
+}
+
+/** What a tool is acting on, in full: a file, a pattern, a command. Empty when the part names nothing. */
+export function whereOf(part: Part | undefined): string {
+  const input = inputOf(part)
+  for (const key of TARGET_KEYS) {
+    const value = input[key]
+    if (typeof value === "string" && value.trim()) return value.trim().replace(/\s+/g, " ")
+  }
+  return ""
+}
+
+/** Which part of the target: a line range when the tool was given one. */
+export function rangeOf(part: Part | undefined): string {
+  const input = inputOf(part)
+  const offset = typeof input.offset === "number" ? input.offset : typeof input.line === "number" ? input.line : undefined
+  const limit = typeof input.limit === "number" ? input.limit : undefined
+  if (offset !== undefined && limit !== undefined) return `lines ${offset}–${offset + limit - 1}`
+  if (offset !== undefined) return `from line ${offset}`
+  if (limit !== undefined) return `first ${limit} lines`
+  return ""
+}
+
+/** Back-compat short form used by the trail: the target, clipped. */
+export function targetOf(part: Part | undefined): string {
+  const one = whereOf(part)
+  return one.length > 70 ? `${one.slice(0, 69)}…` : one
+}
+
+export const mark = (part: Part) => (part.state?.status === "error" ? "✗" : part.state?.status === "completed" ? "✓" : "…")
+export const markWord = (part: Part) =>
+  part.state?.status === "error" ? "failed" : part.state?.status === "completed" ? "done" : "in progress"
+
+export type Target = { key: string; where: string; range: string; steps: Array<{ part: Part; stage: MindStage }> }
+
+/** The turn's parts grouped by what they act on. A part that names nothing (thinking, writing) belongs to
+ *  the target before it, so each target carries its own walk through the operators. */
+export function targetsOf(parts: ReadonlyArray<Part>): Target[] {
+  const out: Target[] = []
+  let current: Target | undefined
+  parts.forEach((part, i) => {
+    const stage = stageOf(part, parts[i - 1])
+    const where = part.type === "tool" ? whereOf(part) : ""
+    if (where && (!current || current.where !== where)) {
+      current = out.find((item) => item.where === where) ?? undefined
+      if (!current) {
+        current = { key: where, where, range: "", steps: [] }
+        out.push(current)
+      }
+    }
+    if (!current) {
+      current = { key: "", where: "", range: "", steps: [] }
+      out.push(current)
+    }
+    if (!current.range) current.range = rangeOf(part)
+    current.steps.push({ part, stage })
+  })
+  return out
+}
+
+export const indexOf = (id: MindStage) => STAGES.findIndex((item) => item.id === id)
+
+/** How far one target has walked: the furthest operator any of its steps reached. */
+export function reachedOf(target: Target): number {
+  return target.steps.reduce((at, step) => Math.max(at, step.stage === "REC" ? at : indexOf(step.stage)), -1)
+}
