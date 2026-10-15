@@ -151,3 +151,13 @@ describe("prettyNameOf", () => {
     expect(await name("useExtensionHost", "grep")).toBe("Search: useExtensionHost")
   })
 })
+
+describe("frameChange", () => {
+  const tool = (name: string, where: string) => ({ type: "tool", name, state: { status: "error", input: { filePath: where } } })
+  test("the same tool on the same target is a re-draw; anything else changed the frame", async () => {
+    const { frameChange } = await import("./session-mind-stage")
+    expect(frameChange(tool("edit", "a.ts") as any, tool("edit", "a.ts") as any).changed).toBe(false)
+    expect(frameChange(tool("edit", "a.ts") as any, tool("read", "a.ts") as any).changed).toBe(true)
+    expect(frameChange(tool("edit", "a.ts") as any, tool("edit", "b.ts") as any).changed).toBe(true)
+  })
+})

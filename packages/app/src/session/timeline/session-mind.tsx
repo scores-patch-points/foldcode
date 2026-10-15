@@ -3,6 +3,7 @@ import { followBottom } from "./follow-bottom"
 import {
   indexOf,
   conceptOf,
+  frameChange,
   inFlightOf,
   murmurOf,
   prettyNameOf,
@@ -55,7 +56,7 @@ export function SessionMind(props: {
   const reached = createMemo(() => (shown() ? Math.max(reachedOf(shown()!), indexOf(here())) : -1))
   // The grid is the current lap. REC is the loop: it counts the times this target was reframed and lights once it has been.
   const count = (id: MindStage) => (id === "REC" ? reframes().length : lapSteps().filter((step) => step.stage === id).length)
-  const lit = (id: MindStage) => (id === "REC" ? reframes().length > 0 || !!settled() || !!shown()?.after : indexOf(id) <= reached())
+  const lit = (id: MindStage) => (id === "REC" ? reframes().length > 0 : indexOf(id) <= reached())
 
   const seconds = (from?: number) => (from ? Math.max(0, Math.round((now() - from) / 1000)) : 0)
   const total = createMemo(() => seconds(props.startedAt ?? parts()[0]?.time?.created))
@@ -187,7 +188,7 @@ export function SessionMind(props: {
               <li aria-current={isLive() && isHere() ? "step" : undefined} class="min-w-0">
                 <button
                   type="button"
-                  disabled={count(item.id) === 0 && !(item.id === "REC" && (!!settled() || !!shown()?.after))}
+                  disabled={count(item.id) === 0}
                   aria-expanded={open() === item.id}
                   aria-controls={`mind-${item.id}`}
                   class="flex w-full min-w-0 items-center gap-2 rounded-lg px-2 py-1.5 text-start text-[12px] transition-colors enabled:cursor-pointer enabled:hover:bg-[color-mix(in_srgb,currentColor_10%,transparent)] focus-visible:outline-2 focus-visible:outline-offset-2 motion-reduce:transition-none"
@@ -207,7 +208,7 @@ export function SessionMind(props: {
                   </span>
                   <span class="min-w-0 truncate">{item.label}</span>
                   <span class="ms-auto shrink-0 text-[11px] opacity-70" aria-hidden="true">
-                    {isHere() ? "now" : item.id === "REC" && settled() ? "closed" : item.id === "REC" && shown()?.after && reframes().length === 0 ? "carried" : count(item.id) > 1 ? `×${count(item.id)}` : lit(item.id) ? "✓" : ""}
+                    {isHere() ? "now" : count(item.id) > 1 ? `×${count(item.id)}` : lit(item.id) ? "✓" : ""}
                   </span>
                   <span class="sr-only">
                     {isHere() ? " (current)" : lit(item.id) ? " (passed)" : ""}
@@ -231,15 +232,7 @@ export function SessionMind(props: {
             role="region"
             aria-label={`${STAGES.find((item) => item.id === id())?.label} steps on ${placeLabel(shown() ?? { key: "", where: "", range: "", steps: [] })}`}
           >
-            <Show when={id() === "REC" && shown()?.after}>
-              <div class="py-1">Began from the settled result of {shown()?.after}.</div>
-            </Show>
-            <Show when={id() === "REC" && settled()}>
-              <div class="py-1">
-                Closed: {whereOf(settled())} passed{took(settled()!) ? ` in ${took(settled()!)}` : ""}. Its result is carried to the next target.
-              </div>
-            </Show>
-            <For each={id() === "REC" ? reframes() : lapSteps().filter((step) => step.stage === id())} fallback={<Show when={!(id() === "REC" && (settled() || shown()?.after))}><div class="opacity-70">Nothing here yet.</div></Show>}>
+            <For each={id() === "REC" ? reframes() : lapSteps().filter((step) => step.stage === id())} fallback={<div class="opacity-70">Nothing here yet.</div>}>
               {(step, index) => {
                 const where = () => whereOf(step.part)
                 return (
@@ -272,6 +265,11 @@ export function SessionMind(props: {
                       <div class="ps-5 opacity-80">
                         Reframed after {step.because?.name ?? "a step"} failed
                         {step.because?.state?.error ? `: ${clip(String(step.because.state.error), 160)}` : ""}
+                        <div class="opacity-80">
+                          {frameChange(step.because, step.part).changed
+                            ? `Frame changed: ${frameChange(step.because, step.part).from} → ${frameChange(step.because, step.part).to}`
+                            : "Same frame again: a re-draw, so a line, not a spiral."}
+                        </div>
                       </div>
                     </Show>
                     <Show when={rangeOf(step.part)}>

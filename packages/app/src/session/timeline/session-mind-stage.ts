@@ -345,3 +345,16 @@ export function prettyNameOf(target: Pick<Target, "where"> & { steps?: ReadonlyA
   }
   return `Search: ${shortWords(where, 3)}`
 }
+
+/** Did a reframe actually change the frame? REC re-defines the ground after a failed check; the same tool on the same
+ *  target again is a re-draw in the same frame, which is a line, not a spiral. */
+export function frameChange(failed: Part | undefined, next: Part | undefined): { changed: boolean; from: string; to: string } {
+  const label = (part: Part | undefined) => {
+    if (!part) return "?"
+    const where = whereOf(part)
+    return `${part.name ?? part.type ?? "step"}${where ? ` ${where.length > 48 ? `${where.slice(0, 47)}…` : where}` : ""}`
+  }
+  const from = label(failed)
+  const to = label(next)
+  return { changed: from !== to, from, to }
+}
