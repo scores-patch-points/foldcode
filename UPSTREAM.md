@@ -35,6 +35,13 @@ What the door does (khora side, `opencode-doorway.mjs` mounted in `proxy.mjs`):
 - **`context`** — a new ask is about to reach the frontier model. If this exact
   ask was settled before, the door answers with a `<fold-recall>` system note:
   the plan that worked and how it ended. First asks get nothing.
+- **`memory`** — the operator's standing facts (which repo is canonical, which
+  account publishes) from `~/.config/opencode/user-memory.md`, injected only
+  when the ask's own words bear on one (mechanical word overlap, stopword-
+  folded, capped). The door parses the store and answers the note on the
+  `context` call; the fork injects what it is handed and carries no memory
+  logic. `GET /v1/hooks/opencode/memory` reads the store back; a `memory` drop
+  event appends a new fact.
 - **`fold`** — a tool output is about to enter the frontier's context. The door
   scores the ask's content words against the output's lines (rarer terms weigh
   more), keeps the windows the ask needs plus the structural head and tail, and

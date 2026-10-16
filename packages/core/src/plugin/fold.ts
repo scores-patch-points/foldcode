@@ -553,6 +553,12 @@ export const Plugin = define({
           const archons = answer?.archons as { note?: unknown } | undefined
           if (archons && typeof archons.note === "string" && archons.note.length > 0)
             event.system.push({ type: "text", text: archons.note })
+          // Memory: the operator's standing facts (which repo is canonical, which
+          // account publishes) the ask bears on, from ~/.config/opencode/user-memory.md.
+          // The door decides by mechanical word overlap; the fork carries no memory
+          // logic and injects the note only when it arrives.
+          const memory = answer?.memory
+          if (typeof memory === "string" && memory.length > 0) event.system.push({ type: "text", text: memory })
         }
         // Surf: the window must not grow per prompt. The door's ladder (figure /
         // kind / pattern, each line addressed) answers; with it down, local
