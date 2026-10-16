@@ -20,6 +20,8 @@ import { Message, ToolFailure } from "@opencode/ai"
 import { define, type Context } from "@opencode/plugin/effect/plugin"
 import type { SessionHooks } from "@opencode/plugin/effect/session"
 import { Effect, Schema, Stream } from "effect"
+import { Model } from "../model.js"
+import { Provider } from "../provider.js"
 import { record as rulerRecord, recordTokens as rulerTokens } from "./fold-ruler.js"
 
 const base = (process.env.FOLD_URL ?? "http://127.0.0.1:11436").replace(/\/+$/, "")
@@ -54,6 +56,8 @@ const shadowOn = process.env.FOLD_SHADOW === "1"
 // reply carries its provenance; FOLD_FACING=0 disables); it discloses provenance and doubt and never
 // alters the model's own text (level 1 = no behavior change).
 const facingOn = process.env.FOLD_FACING !== "0"
+// How much of the facing notice shows: off · line · standing · full. `/fold facing <level>` moves it.
+let facingLevel = process.env.FOLD_FACING_LEVEL ?? "full"
 // DRAFT-LINT (the-fold/docs/DRAFT-LINT.md): draft + act are the new door
 // events. FOLD_DRAFT=0 disables them; FOLD_OFF=1 still disables everything.
 // Rollout step 1 is observe-only — the door records verdicts it never
@@ -306,12 +310,11 @@ const facingNote = (answer: Record<string, unknown> | undefined): string => {
   // EVA·Pattern once flags fire), with the nulls the reading watched for.
   const st = g?.standing
   const where = st?.cell ? `standing · ${st.cell}${st.watched?.length ? ` — watched ${st.watched.join(", ")}` : ""}` : ""
-  return [
-    head,
-    where,
-    ...lines,
-    ...flags.map((f) => `⚠ ${String(f.kind ?? "flag")}${f.cell ? ` → ${f.cell}` : ""}: ${short(f.detail, 120)}`),
-  ].filter(Boolean).join("\n")
+  const flagLines = flags.map((f) => `⚠ ${String(f.kind ?? "flag")}${f.cell ? ` → ${f.cell}` : ""}: ${short(f.detail, 120)}`)
+  if (facingLevel === "off") return ""
+  if (facingLevel === "line") return [head, where].filter(Boolean).join("\n")
+  if (facingLevel === "standing") return [where, ...flagLines].filter(Boolean).join("\n")
+  return [head, where, ...lines, ...flagLines].filter(Boolean).join("\n")
 }
 
 export const Plugin = define({
@@ -330,6 +333,38 @@ export const Plugin = define({
       )
     })
     const priceIn = (model: { providerID: string; id: string }) => prices.get(`${model.providerID}/${model.id}`)
+
+    // HEIMDALL BY THE FOLD — register the fold's own routing as a selectable model.
+    // The bridge serves `heimdall-by-the-fold` on an OpenAI-compatible wire whose
+    // /v1/chat/completions runs the void loop (heimdall src/void.js, src/compose.js).
+    // Keyless and local: FOLD_HEIMDALL_URL picks the bridge (default :8790),
+    // FOLD_HEIMDALL_OFF=1 removes it. Fails open — a down bridge is a model that
+    // errors when used, never a broken opencode.
+    if (process.env.FOLD_HEIMDALL_OFF !== "1") {
+      const heimdallBase = (process.env.FOLD_HEIMDALL_URL ?? process.env.HEIMDALL_URL ?? "http://127.0.0.1:8790").replace(/\/+$/, "")
+      yield* ctx.provider.transform((editor) => {
+        const providerID = Provider.ID.make("heimdall")
+        const base = Model.Info.default(providerID, Model.ID.make("heimdall-by-the-fold"))
+        editor.add({
+          info: {
+            ...Provider.Info.empty(providerID),
+            name: "Heimdall By The Fold",
+            activation: "enabled",
+            package: "@opencode/ai/providers/openai-compatible",
+            settings: { baseURL: heimdallBase + "/v1", apiKey: "" },
+          },
+          models: [
+            {
+              ...base,
+              name: "Heimdall By The Fold",
+              package: "@opencode/ai/providers/openai-compatible",
+              capabilities: { ...base.capabilities, tools: true, input: ["text"], output: ["text"] },
+              limit: { context: 131072, output: 8192 },
+            },
+          ],
+        })
+      })
+    }
 
     // The contract check: the fork speaks events the door's handshake lists.
     // A drifted door logs; it never blocks (everything here fails open).
@@ -791,6 +826,22 @@ export const Plugin = define({
               ),
               Effect.ignore,
             )
+          }
+          // THE VIEW SWITCH: how much of the facing notice a reply carries — off · line · standing ·
+          // full. A session norm; the typed spread is still recorded either way.
+          const view = /^\s*(?:\/fold\s+)?(?:facing|layers|view)\b\s*(\S*)/i.exec(input.prompt.text)
+          if (view) {
+            const level = String(view[1] || "").toLowerCase()
+            const known = ["off", "line", "standing", "full"]
+            if (known.includes(level)) facingLevel = level
+            return ctx.session
+              .synthetic({
+                sessionID: input.sessionID,
+                text: `fold view — ${known.includes(level) ? `set to ${facingLevel}` : `now: ${facingLevel}`}\nlevels: off (nothing) · line (the count) · standing (the cell + flags) · full (the typed sentences too)`,
+                description: "fold view — the layers on the answer",
+                resume: false,
+              })
+              .pipe(Effect.ignore)
           }
           const audit = /\baudit\b/i.test(input.prompt.text)
           const url = `${base}/v1/hooks/opencode/${audit ? "audit" : "meter"}`
