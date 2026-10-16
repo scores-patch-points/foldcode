@@ -807,6 +807,41 @@ export const Plugin = define({
       }),
     )
 
+    // SNIP: the model composes by reference, the stack supplies the bytes. The description is the
+    // whole prompt cost of this tool, so it is one line. The door resolves the address, logs the read
+    // as a witnessed event, and says whether the bytes are witnessed (a file span, a test) or only
+    // asserted (what another agent said). An unresolvable address is a typed gap, never a guess.
+    yield* ctx.tool.transform((editor) =>
+      editor.add({
+        name: "snip",
+        options: { codemode: false },
+        description:
+          "Exact bytes by address: path#L10-L20, path#120-340, or an address shown in <fold-commons> (e.g. 8f3a2b1c#t3.s1). Returns the verbatim bytes and their standing (witnessed or asserted).",
+        input: Schema.Struct({ ref: Schema.String.annotate({ description: "The address to resolve" }) }),
+        output: Schema.Struct({ bytes: Schema.String, standing: Schema.String, from: Schema.String }),
+        execute: (input, context) =>
+          Effect.gen(function* () {
+            const sessionID = String((context as { sessionID?: unknown }).sessionID ?? "")
+            const workspace = yield* workspaceOf(sessionID)
+            const answer = yield* post({ event: "snip", sessionID, agent: sessionID, workspace, ref: input.ref }, askTimeout * 4)
+            if (answer === undefined) return yield* Effect.fail(new ToolFailure({ message: `snip: the fold door is unreachable at ${base}` }))
+            if (answer.ok !== true)
+              return yield* Effect.fail(new ToolFailure({ message: `snip ${String(answer.gap ?? "failed")}: ${input.ref}` }))
+            const prov = (answer.provenance ?? {}) as Record<string, unknown>
+            const from = [prov.kind, prov.file ?? prov.agent, prov.range ? JSON.stringify(prov.range) : null, prov.sha256]
+              .filter((x) => typeof x === "string" && x.length > 0)
+              .join(" ")
+            const bytes = String(answer.bytes ?? "")
+            const standing = String(answer.standing ?? "asserted")
+            return {
+              output: { bytes, standing, from },
+              content: bytes,
+              metadata: { schema: "EOTSnip@1", ref: input.ref, standing, from, origin: standing === "witnessed" ? "mechanical" : "model" },
+            }
+          }).pipe(Effect.mapError((error) => (error instanceof ToolFailure ? error : new ToolFailure({ message: "snip failed", error })))),
+      }),
+    )
+
     yield* ctx.session.hook("context", context)
     yield* ctx.session.hook("title", title)
     yield* ctx.session.hook("http.request", (event) => {
@@ -816,6 +851,12 @@ export const Plugin = define({
 
     yield* ctx.event.subscribe().pipe(
       Stream.runForEach((event) => {
+        // Worktree operations carry a project, not a session: the door reads what git now says in the
+        // workspace this plugin was loaded in and records the create/remove as EOT `wt` events.
+        if (event.type === "worktree.updated" || event.type === "worktree.resolved") {
+          const [sessionID, workspace] = workspaces.entries().next().value ?? [undefined, process.cwd()]
+          return post({ event: "event", type: event.type, sessionID, workspace, data: {} }, askTimeout).pipe(Effect.asVoid)
+        }
         const data = forward(event)
         if (!data) return Effect.void
         const sessionID = "sessionID" in event.data ? event.data.sessionID : undefined

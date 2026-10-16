@@ -65,6 +65,27 @@ What the door does (khora side, `opencode-doorway.mjs` mounted in `proxy.mjs`):
   carries the folded record, so the window holds verified state, not the
   conversation that produced it. Same-tab subagents share one task: `task`
   defaults to the root of the session's `parentID` chain.
+  **Provenance**: every judged action in `LOG.jsonl` also carries the byte
+  chain (`before`/`after`, sha256-16 of the file), the REC rungs and ground
+  digest it stood on (`rungs`, `def`), the draw itself (`draw`) and the draw it
+  follows for that referent (`parent`). The door's `provenance` event walks the
+  chain: a `break` is an action whose `before` is not the last kept `after`
+  (bytes changed outside the log), a `regression` is a referent refuted after
+  it was green. A unit's refuted bodies are shared across every agent of the
+  task: a later agent's `refusals` rung is seeded from them.
+  **One store, a firewall, and snip.** The task's log is `eot/<agent>.jsonl`
+  (Provenance@2 shape, penelope's id derivation; union of writers); the note,
+  commons, record, claims and provenance are projections of it. Every row has an
+  origin: `mechanical` (a file span, tool result or test the system observed)
+  or `model` (anything an agent said). A model-origin source cannot author a
+  mechanical stage (`verify`/`admit`/`read`/`contend`), its text is stored
+  defanged of the markers that would let it pass for a snip, and an `admit`
+  needs a witnessed exit-0 `verify` parent. The injected note keeps two
+  sections that never mix: `<fold-mechanical>` and `<fold-said>`. The model
+  composes by reference with the `snip` tool (address to verbatim bytes plus
+  standing); its final text is typed against the log and the disk, and what
+  doesn't resolve comes back as a mechanical `unverified in your last answer`
+  line. Budget: `FOLD_NOTE_CHARS` (700), `FOLD_COMMONS_CHARS` (600).
 - **`title`** — session titles are derived from the ask by rule (first words,
   cleaned). No model, local or frontier, is consulted.
 - **`event`** — the turn's events (steps, tools, text, usage, boundary) are
