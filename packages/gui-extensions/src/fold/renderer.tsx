@@ -10,10 +10,12 @@ const setup: Setup<typeof Fold> = (ctx) => {
   const SessionWorktreePanel = lazy(() => import("./worktree"))
   const SessionMindTree = lazy(() => import("./mind-tree"))
   const SessionWorkPlans = lazy(() => import("./plans"))
+  const SessionRememberPanel = lazy(() => import("./remember"))
   // Compile the panels while the app idles, so the first open renders at once.
   onCleanup(onIdle(() => void SessionFoldPanel.preload()))
   onCleanup(onIdle(() => void SessionHolodeckPanel.preload()))
   onCleanup(onIdle(() => void SessionPerceivePanel.preload()))
+  onCleanup(onIdle(() => void SessionRememberPanel.preload()))
   onCleanup(onIdle(() => void SessionWorktreePanel.preload()))
 
   ctx.add(Style, css)
@@ -149,6 +151,29 @@ const setup: Setup<typeof Fold> = (ctx) => {
   })
 
   // The app asks for the work tree (the mind line in the timeline is a button): open it, selected, beside the feed.
+  // The Remember tab: what the system knows about you, what it may read, and the
+  // system prompts attached to asks. All three stores are read back from the
+  // door and appended to here; the door injects an entry only when an ask's own
+  // words bear on it, so none of it is loaded into a prompt wholesale.
+  const remember: PanelTab = {
+    id: "remember",
+    get title() {
+      return ctx.t("tab.remember")
+    },
+    closable: "compact",
+  }
+
+  ctx.add(Panel, {
+    id: "remember",
+    region: "side",
+    list: () => [remember],
+    render: (props) => (
+      <Suspense>
+        <SessionRememberPanel session={props.session} />
+      </Suspense>
+    ),
+  })
+
   const openTree = () => {
     const session = ctx.sessions.current()
     if (session) ctx.layout.open(`${ctx.id}:tree`, session, { tab: "select" })
