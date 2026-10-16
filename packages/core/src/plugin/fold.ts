@@ -20,14 +20,21 @@ import { Message, ToolFailure } from "@opencode/ai"
 import { define, type Context } from "@opencode/plugin/effect/plugin"
 import type { SessionHooks } from "@opencode/plugin/effect/session"
 import { Effect, Schema, Stream } from "effect"
+import { record as rulerRecord, recordTokens as rulerTokens } from "./fold-ruler.js"
 
 const base = (process.env.FOLD_URL ?? "http://127.0.0.1:11436").replace(/\/+$/, "")
 const off = process.env.FOLD_OFF === "1"
-const askTimeout = Number(process.env.FOLD_TIMEOUT_MS ?? 1500)
+// The door sits on the request path, so its recall/surf/title calls get a small
+// budget by default: a healthy local door answers in milliseconds, and a wedged
+// or slow one fails open fast (the turn then sends native content) instead of
+// stalling the frontier. FOLD_TIMEOUT_MS raises it if a door legitimately needs longer.
+const askTimeout = Number(process.env.FOLD_TIMEOUT_MS ?? 250)
 const foldTimeout = Number(process.env.FOLD_FOLD_TIMEOUT_MS ?? 20_000)
 const minChars = Number(process.env.FOLD_MIN_CHARS ?? 4000)
 const coolDown = 30_000
 const debug = process.env.FOLD_DEBUG === "1"
+// FOLD_RULER_FILE=<path.jsonl> measures every primary request by segment (measurement only; see fold-ruler.ts).
+const rulerFile = process.env.FOLD_RULER_FILE
 // Local-first perception: attachments are transcribed by the khora on the
 // box (tesseract, ffmpeg, poppler, whisper.cpp when installed) before the
 // frontier is sent them, so vision and transcription default to local
@@ -38,6 +45,12 @@ const perceiveOff = process.env.FOLD_PERCEIVE === "0"
 // event. Default off. Local-only rows the door never ships, scores, or
 // injects; a failed post is lost, never blocking.
 const shadowOn = process.env.FOLD_SHADOW === "1"
+// FACING (level 1): the typing the door computes on every answer (groundCheck: each sentence
+// grounded / asserted / self, plus the verifiable-failure flags) is RENDERED ON the answer as its
+// own notice row, instead of only being deferred into the next turn's note. On by default (every
+// reply carries its provenance; FOLD_FACING=0 disables); it discloses provenance and doubt and never
+// alters the model's own text (level 1 = no behavior change).
+const facingOn = process.env.FOLD_FACING !== "0"
 // DRAFT-LINT (the-fold/docs/DRAFT-LINT.md): draft + act are the new door
 // events. FOLD_DRAFT=0 disables them; FOLD_OFF=1 still disables everything.
 // Rollout step 1 is observe-only — the door records verdicts it never
@@ -45,21 +58,27 @@ const shadowOn = process.env.FOLD_SHADOW === "1"
 
 let downUntil = 0
 
+// postRaw is a plain promise so the request path (post) and the event-time
+// precompute share one implementation: a tool result is folded the moment it
+// lands, off the request path, so the next context assembly reads the cache
+// with no door wait (see foldOnce / foldBudget below).
+const postRaw = async (body: unknown, timeout: number) => {
+  if (off || Date.now() < downUntil) return undefined
+  const response = await fetch(`${base}/v1/hooks/opencode`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-er7-surface": "opencode" },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(timeout),
+  }).catch(() => {
+    downUntil = Date.now() + coolDown
+    return undefined
+  })
+  if (!response?.ok) return undefined
+  return (await response.json().catch(() => undefined)) as Record<string, unknown> | undefined
+}
+
 const post = (body: unknown, timeout: number) =>
-  Effect.tryPromise(async () => {
-    if (off || Date.now() < downUntil) return undefined
-    const response = await fetch(`${base}/v1/hooks/opencode`, {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-er7-surface": "opencode" },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(timeout),
-    }).catch(() => {
-      downUntil = Date.now() + coolDown
-      return undefined
-    })
-    if (!response?.ok) return undefined
-    return (await response.json()) as Record<string, unknown>
-  }).pipe(Effect.catch(() => Effect.succeed(undefined)))
+  Effect.tryPromise(() => postRaw(body, timeout)).pipe(Effect.catch(() => Effect.succeed(undefined)))
 
 const lastUserText = (messages: SessionHooks["context"]["messages"]) => {
   const message = messages.findLast((item) => item.role === "user")
@@ -256,6 +275,42 @@ const formatAudit = (audit: Record<string, unknown>) => {
   ].join("\n\n")
 }
 
+// THE FACING PAGE, on the output. The door types every sentence of a finished answer mechanically
+// (groundCheck): [S# ref] = the sentence shares its content with a witnessed span or a settled one,
+// [M] = the mouth's own prose (no source shares it). Flags are the verifiable failures the door can
+// catch (unknown_path, unverified_pass). This renders the typing; it never edits the model's words
+// and never scores them as truth — the label is about provenance, not correctness.
+const facingNote = (answer: Record<string, unknown> | undefined): string => {
+  const g = answer as
+    | {
+        sentences?: Array<{ text?: string; type?: string; ref?: string }>
+        flags?: Array<{ kind?: string; detail?: string; cell?: string }>
+        summary?: Record<string, number>
+        standing?: { cell?: string; meaning?: string; watched?: string[] }
+      }
+    | undefined
+  const sentences = Array.isArray(g?.sentences) ? g.sentences : []
+  if (sentences.length === 0) return ""
+  const tag = (s: { type?: string; ref?: string }, i: number) =>
+    s.type === "grounded" ? `[S${i + 1} ${String(s.ref ?? "?")}]` : s.type === "asserted" ? `[S${i + 1} ${String(s.ref ?? "?")}·asserted]` : "[M]"
+  const lines = sentences.map((s, i) => `${tag(s, i)} ${short(s.text, 200)}`)
+  const flags = Array.isArray(g?.flags) ? g.flags : []
+  const sum = g?.summary
+  const head = sum
+    ? `fold facing · ${sum.grounded ?? 0} grounded · ${sum.asserted ?? 0} asserted · ${sum.selfModel ?? 0} self · ${sum.flagged ?? 0} flagged`
+    : `fold facing · ${sentences.length} sentence(s)`
+  // the standing cube: which cell this reply's claim stands at (EVA·Figure for a clean figure,
+  // EVA·Pattern once flags fire), with the nulls the reading watched for.
+  const st = g?.standing
+  const where = st?.cell ? `standing · ${st.cell}${st.watched?.length ? ` — watched ${st.watched.join(", ")}` : ""}` : ""
+  return [
+    head,
+    where,
+    ...lines,
+    ...flags.map((f) => `⚠ ${String(f.kind ?? "flag")}${f.cell ? ` → ${f.cell}` : ""}: ${short(f.detail, 120)}`),
+  ].filter(Boolean).join("\n")
+}
+
 export const Plugin = define({
   id: "fold.doorway",
   effect: Effect.fn(function* (ctx) {
@@ -298,6 +353,43 @@ export const Plugin = define({
     // session's plugin lifetime.
     const folded = new Map<string, string>()
 
+    // The precompute: a tool result is folded the moment it lands (event-time,
+    // off the request path) and cached by part id; the context hook reads the
+    // cache and only falls back to a cold door call when the fold has not landed
+    // yet. Precompute posts with the full fold budget; the request path races it
+    // against the small ask budget, so a slow door never stalls the turn — it
+    // just sends the raw bytes this once.
+    const folding = new Map<string, Promise<string | undefined>>()
+    const foldOnce = (
+      sessionID: string,
+      tool: string,
+      ask: string,
+      model: { providerID: string; id: string } | undefined,
+      id: string,
+      text: string,
+    ) => {
+      const existing = folding.get(id)
+      if (existing) return existing
+      const promise = postRaw({ event: "fold", sessionID, tool, ask, text, priceIn: model ? priceIn(model) : undefined }, foldTimeout)
+        .then((answer) => {
+          const value = answer === undefined ? undefined : typeof answer.folded === "string" && answer.folded.length > 0 ? answer.folded : undefined
+          if (value !== undefined) folded.set(id, value)
+          return value
+        })
+        .catch(() => undefined)
+        .finally(() => folding.delete(id))
+      folding.set(id, promise)
+      return promise
+    }
+    const foldBudget = (promise: Promise<string | undefined>, ms: number) =>
+      Promise.race([promise, new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), ms))])
+
+    // The turn's ask and model, so an event-time fold knows what to fold toward,
+    // and tool id -> name, so a result folded at event time is attributed to its tool.
+    const lastAsk = new Map<string, string>()
+    const lastModel = new Map<string, { providerID: string; id: string }>()
+    const toolNames = new Map<string, string>()
+
     // The task a session's marks belong to: FOLD_TASK when set, else the root
     // of its parent chain, so a tab's subagents share one worknotes directory
     // with no setup. Cached per session; any lookup failure falls back to the
@@ -333,17 +425,14 @@ export const Plugin = define({
             if (debug) yield* Effect.logWarning("fold.part", { id: target.id, chars: target.text.length })
             if (target.text.length < minChars) continue
             const cached = folded.get(target.id)
-            const text = cached ?? (yield* post(
-              {
-                event: "fold",
-                sessionID: event.sessionID,
-                tool: target.name,
-                ask: lastUserText(event.messages),
-                text: target.text,
-                priceIn: priceIn(event.model),
-              },
-              foldTimeout,
-            ))?.folded
+            const text =
+              cached ??
+              (yield* Effect.tryPromise(() =>
+                foldBudget(
+                  foldOnce(event.sessionID, target.name, lastUserText(event.messages), event.model, target.id, target.text),
+                  askTimeout,
+                ),
+              ).pipe(Effect.catch(() => Effect.succeed(undefined))))
             if (typeof text !== "string" || text.length === 0) {
               if (debug) yield* Effect.logWarning("fold.skipped", { id: target.id })
               continue
@@ -518,6 +607,10 @@ export const Plugin = define({
 
     const context = (event: SessionHooks["context"]) =>
       Effect.gen(function* () {
+        // Remember the turn's ask and model so a tool result that lands mid-turn
+        // can be folded at event time without re-reading the message list.
+        lastAsk.set(event.sessionID, lastUserText(event.messages))
+        lastModel.set(event.sessionID, event.model)
         // Perception first: media becomes local transcription before recall
         // or folding reads the turn, so everything downstream sees text.
         yield* perceiveMessages(event)
@@ -559,6 +652,17 @@ export const Plugin = define({
           // logic and injects the note only when it arrives.
           const memory = answer?.memory
           if (typeof memory === "string" && memory.length > 0) event.system.push({ type: "text", text: memory })
+          // Refs: addresses the operator gave the system access to (the Remember
+          // window's store), injected when the ask's own words bear on one. The
+          // source is named; its bytes are read on demand (the snip tool), never
+          // carried here. The door matches mechanically; the fork injects.
+          const refs = answer?.refs
+          if (typeof refs === "string" && refs.length > 0) event.system.push({ type: "text", text: refs })
+          // System: standing prompt text the operator attached to asks like this
+          // one, injected only when it bears — never every prompt.
+          const systemPrompt = answer?.systemPrompt
+          if (typeof systemPrompt === "string" && systemPrompt.length > 0)
+            event.system.push({ type: "text", text: systemPrompt })
         }
         // Surf: the window must not grow per prompt. The door's ladder (figure /
         // kind / pattern, each line addressed) answers; with it down, local
@@ -721,6 +825,9 @@ export const Plugin = define({
     // body) and the capture is detached, so it never delays the model request.
     // Nothing here is vectorized or ranked: it is the bytes sent.
     const capturePrompt = (event: SessionHooks["http.request"]) => {
+      // Layer 0 ruler: where the bytes of this exact request are. Local file, independent of the door.
+      if (rulerFile && event.kind === "primary")
+        void event.request.clone().text().then((body) => rulerRecord(rulerFile, { sessionID: event.sessionID, model: event.model }, body)).catch(() => undefined)
       if (off || Date.now() < downUntil || event.kind !== "primary") return
       void event.request
         .clone()
@@ -862,6 +969,27 @@ export const Plugin = define({
       return Effect.void
     })
 
+    // FACING (level 1): type the finished answer at the door and render the spread. Rides BESIDE
+    // the record, never instead; failure-silent (the door's ground answers a gap, never throws past
+    // post()'s catch). It only renders — the model's text is untouched.
+    const facing = (event: Observed) =>
+      Effect.gen(function* () {
+        if (event.type !== "session.text.ended") return
+        const sessionID = event.data.sessionID
+        const text = typeof event.data.text === "string" ? event.data.text : ""
+        if (text.trim().length < 8) return
+        const workspace = yield* workspaceOf(sessionID)
+        const answer = yield* post({ event: "ground", sessionID, agent: sessionID, workspace, text }, askTimeout)
+        const note = facingNote(answer)
+        if (!note) return
+        yield* ctx.session.synthetic({
+          sessionID,
+          text: note,
+          description: "fold facing — how this answer grounds",
+          resume: false,
+        })
+      }).pipe(Effect.ignore)
+
     yield* ctx.event.subscribe().pipe(
       Stream.runForEach((event) => {
         // Worktree operations carry a project, not a session: the door reads what git now says in the
@@ -870,20 +998,36 @@ export const Plugin = define({
           const [sessionID, workspace] = workspaces.entries().next().value ?? [undefined, process.cwd()]
           return post({ event: "event", type: event.type, sessionID, workspace, data: {} }, askTimeout).pipe(Effect.asVoid)
         }
+        if (rulerFile && event.type === "session.step.ended") rulerTokens(rulerFile, "sessionID" in event.data ? event.data.sessionID : undefined, event.data.tokens)
+        // Fold a tool result at the instant it lands, off the request path: the
+        // precompute wins the race against the next context assembly, so folding
+        // costs the frontier nothing but the bytes it removes. A miss (or a dead
+        // door) falls back to the cold, bounded path fold in `context`.
+        if (event.type === "session.tool.input.started") toolNames.set(event.data.id, event.data.name)
+        if (event.type === "session.tool.success") {
+          const name = toolNames.get(event.data.id) ?? "tool"
+          toolNames.delete(event.data.id)
+          const text = event.data.content.every((part) => part.type === "text")
+            ? event.data.content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n")
+            : ""
+          if (text.length >= minChars && !folded.has(event.data.id))
+            void foldOnce(event.data.sessionID, name, lastAsk.get(event.data.sessionID) ?? "", lastModel.get(event.data.sessionID), event.data.id, text)
+        }
         const data = forward(event)
         if (!data) return Effect.void
         const sessionID = "sessionID" in event.data ? event.data.sessionID : undefined
         const record = post({ event: "event", type: event.type, sessionID, data }, askTimeout).pipe(Effect.asVoid)
-        // Shadow capture rides alongside, never instead: concurrent, so
-        // the record path never waits on the trial path; failure-silent
-        // by post()'s own contract.
-        if (!shadowOn) return record
-        const shadow = shadowOf(event)
-        if (!shadow || !sessionID) return record
-        return Effect.all(
-          [record, post({ event: "shadow", sessionID, ...shadow }, askTimeout).pipe(Effect.asVoid)],
-          { concurrency: 2, discard: true },
-        )
+        // The record rides with its side effects — never instead of them, all concurrent, all
+        // failure-silent (post()'s own contract). Shadow capture feeds the draft-lint trial; facing
+        // renders the typing on the answer. Each is opt-in and neither can delay the other.
+        const side: Array<Effect.Effect<void, never, never>> = [record]
+        if (facingOn && event.type === "session.text.ended") side.push(facing(event))
+        if (shadowOn) {
+          const shadow = shadowOf(event)
+          if (shadow && sessionID) side.push(post({ event: "shadow", sessionID, ...shadow }, askTimeout).pipe(Effect.asVoid))
+        }
+        if (side.length === 1) return record
+        return Effect.all(side, { concurrency: side.length, discard: true })
       }),
       Effect.forkScoped({ startImmediately: true }),
     )
