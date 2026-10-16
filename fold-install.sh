@@ -88,6 +88,9 @@ mv -f "$dest/opencode.new" "$dest/opencode"
 base=$(git rev-parse --short upstream/dev 2>/dev/null || echo unknown)
 echo "installed $dest/opencode from opencode-fold @ $(git rev-parse --short HEAD) (upstream base: $base)"
 
+# macOS: a double-clickable "opencode X the fold" app that starts the desktop dev stack from this checkout.
+[ "$os" = darwin ] && ./fold-launcher.sh || true
+
 # The fold stack: report whether the live doorway answers, and whether it
 # speaks this fork's contract (the plugin also checks at startup, logs, and
 # fails open either way).
