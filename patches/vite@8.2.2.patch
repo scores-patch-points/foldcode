@@ -17,10 +17,154 @@ index 4c4a3f6f884795001ffbae43cd3c3d6bf84169dc..b5e80b68140824e7460439b125eec8ec
  			const ctx = new BundledDevHMRContext(bundledDevHmrClient, moduleId);
  			ctx._internal = {
 diff --git a/dist/node/chunks/node.js b/dist/node/chunks/node.js
-index 87cfa480c3d4132f9dd1b74c6c1bbe2b90385d3f..83da417e7b9c380d06b7679d3fbfaeed998f5277 100644
+index 87cfa480c3d4132f9dd1b74c6c1bbe2b90385d3f..fd6c7139729609902718d294e1b6241495928bd4 100644
 --- a/dist/node/chunks/node.js
 +++ b/dist/node/chunks/node.js
-@@ -26309,7 +26309,6 @@ function memoryFilesMiddleware(server) {
+@@ -25755,16 +25755,24 @@ async function generateFallbackHtml(server) {
+   <\/script>
+   <style>
+     :root {
+-      --page-bg: #ffffff;
+-      --text-color: #1d1d1f;
+-      --spinner-track: #f5f5f7;
+-      --spinner-accent: #0071e3;
++      --page-bg: #fafafa;
++      --text-color: #111113;
++      --text-weak: #6b6875;
++      --accent: #6d28d9;
++      --icon-weak-base: #d4d4d8;
++      --icon-base: #52525b;
++      --icon-strong-base: #111113;
++      --track: color-mix(in srgb, var(--text-color) 12%, transparent);
+     }
+     @media (prefers-color-scheme: dark) {
+       :root {
+-        --page-bg: #1e1e1e;
++        --page-bg: #0f0f10;
+         --text-color: #f5f5f5;
+-        --spinner-track: #424242;
++        --text-weak: #a1a1aa;
++        --accent: #a78bfa;
++        --icon-weak-base: #3f3f46;
++        --icon-base: #a1a1aa;
++        --icon-strong-base: #f5f5f5;
+       }
+     }
+ 
+@@ -25774,33 +25782,103 @@ async function generateFallbackHtml(server) {
+       display: flex;
+       background-color: var(--page-bg);
+       color: var(--text-color);
++      font-family: ui-sans-serif, -apple-system, "Segoe UI", system-ui, sans-serif;
++      -webkit-font-smoothing: antialiased;
+     }
+ 
+     .container {
+       margin: auto;
+       padding: 2rem;
+-      text-align: center;
+-      border-radius: 1rem;
++      display: flex;
++      flex-direction: column;
++      align-items: center;
++      gap: 1.25rem;
++    }
++
++    .brand {
++      display: flex;
++      align-items: center;
++      gap: 0.75rem;
++    }
++
++    .brand .mark {
++      height: 1.5rem;
++      width: auto;
++    }
++
++    .brand .x {
++      color: var(--text-weak);
++      font-size: 1.25rem;
++      line-height: 1;
++    }
++
++    .brand .fold {
++      font-family: ui-monospace, SFMono-Regular, "IBM Plex Mono", Menlo, monospace;
++      font-size: 1.375rem;
++      letter-spacing: -0.03em;
++    }
++
++    .brand .fold .the { color: var(--text-weak); }
++    .brand .fold .word { color: var(--text-color); }
++
++    h1 {
++      margin: 0;
++      font-size: 0.9375rem;
++      font-weight: 500;
++    }
++
++    p {
++      margin: 0;
++      color: var(--text-weak);
++      font-size: 0.9375rem;
+     }
+ 
+     .spinner {
+-      width: 3rem;
+-      height: 3rem;
+-      margin: 2rem auto;
+-      border: 3px solid var(--spinner-track);
+-      border-top-color: var(--spinner-accent);
++      width: 1rem;
++      height: 1rem;
++      margin-top: 0.25rem;
++      border: 2px solid var(--track);
++      border-top-color: var(--accent);
+       border-radius: 50%;
+-      animation: spin 1s linear infinite;
++      animation: spin 0.8s linear infinite;
+     }
+ 
+     @keyframes spin { to { transform: rotate(360deg) } }
++
++    @media (prefers-reduced-motion: reduce) {
++      .spinner { animation-duration: 2.4s; }
++    }
+   </style>
+ </head>
+ <body>
+   <div class="container">
++    <div class="brand">
++      <svg class="mark" viewBox="0 0 234 42" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="opencode">
++        <g>
++          <path d="M18 30H6V18H18V30Z" fill="var(--icon-weak-base)" />
++          <path d="M18 12H6V30H18V12ZM24 36H0V6H24V36Z" fill="var(--icon-base)" />
++          <path d="M48 30H36V18H48V30Z" fill="var(--icon-weak-base)" />
++          <path d="M36 30H48V12H36V30ZM54 36H36V42H30V6H54V36Z" fill="var(--icon-base)" />
++          <path d="M84 24V30H66V24H84Z" fill="var(--icon-weak-base)" />
++          <path d="M84 24H66V30H84V36H60V6H84V24ZM66 18H78V12H66V18Z" fill="var(--icon-base)" />
++          <path d="M108 36H96V18H108V36Z" fill="var(--icon-weak-base)" />
++          <path d="M108 12H96V36H90V6H108V12ZM114 36H108V12H114V36Z" fill="var(--icon-base)" />
++          <path d="M144 30H126V18H144V30Z" fill="var(--icon-weak-base)" />
++          <path d="M144 12H126V30H144V36H120V6H144V12Z" fill="var(--icon-strong-base)" />
++          <path d="M168 30H156V18H168V30Z" fill="var(--icon-weak-base)" />
++          <path d="M168 12H156V30H168V12ZM174 36H150V6H174V36Z" fill="var(--icon-strong-base)" />
++          <path d="M198 30H186V18H198V30Z" fill="var(--icon-weak-base)" />
++          <path d="M198 12H186V30H198V12ZM204 36H180V6H198V0H204V36Z" fill="var(--icon-strong-base)" />
++          <path d="M234 24V30H216V24H234Z" fill="var(--icon-weak-base)" />
++          <path d="M216 12V18H228V12H216ZM234 24H216V30H234V36H210V6H234V24Z" fill="var(--icon-strong-base)" />
++        </g>
++      </svg>
++      <span class="x" aria-hidden="true">×</span>
++      <span class="fold"><span class="the">the</span> <span class="word">fold</span></span>
++    </div>
+     <h1>Bundling in progress</h1>
+     <p>The page will automatically reload when ready.</p>
+-    <div class="spinner"></div>
++    <div class="spinner" role="progressbar" aria-label="Bundling"></div>
+   </div>
+ </body>
+ </html>
+@@ -26309,7 +26387,6 @@ function memoryFilesMiddleware(server) {
  			const mime = lookup(filePath);
  			if (mime) res.setHeader("Content-Type", mime);
  			for (const name in headers) res.setHeader(name, headers[name]);
@@ -28,7 +172,7 @@ index 87cfa480c3d4132f9dd1b74c6c1bbe2b90385d3f..83da417e7b9c380d06b7679d3fbfaeed
  			return res.end(file.source);
  		}
  		next();
-@@ -26339,7 +26338,6 @@ function triggerLazyBundlingMiddleware(server) {
+@@ -26339,7 +26416,6 @@ function triggerLazyBundlingMiddleware(server) {
  		}
  		if (result == null) return next();
  		res.setHeader("Content-Type", "application/javascript");
@@ -36,7 +180,7 @@ index 87cfa480c3d4132f9dd1b74c6c1bbe2b90385d3f..83da417e7b9c380d06b7679d3fbfaeed
  		return res.end(result.code);
  	};
  }
-@@ -35155,6 +35153,9 @@ var BundledDev = class {
+@@ -35155,6 +35231,9 @@ var BundledDev = class {
  			this.clients.setupIfNeeded(client, payload.clientId);
  			this.devEngine.registerClient(payload.clientId);
  		});
@@ -46,7 +190,7 @@ index 87cfa480c3d4132f9dd1b74c6c1bbe2b90385d3f..83da417e7b9c380d06b7679d3fbfaeed
  		this.environment.hot.on("vite:client:connect", (_payload, client) => {
  			if (this.lastBuildError) {
  				debug$1?.("REPLAY: replaying last build error to newly connected client");
-@@ -35287,12 +35288,11 @@ var BundledDev = class {
+@@ -35287,12 +35366,11 @@ var BundledDev = class {
  		debug$1?.(`TRIGGER-LAZY: trigger lazy bundling for module ${moduleId} for client ${clientId}`);
  		const result = await this.devEngine.compileEntry(moduleId, clientId);
  		this.pendingPayloadFilenames.add(result.filename);
@@ -62,7 +206,7 @@ index 87cfa480c3d4132f9dd1b74c6c1bbe2b90385d3f..83da417e7b9c380d06b7679d3fbfaeed
  	*
  	* Note: the payload filename is unique across all clients.
  	*/
-@@ -35364,7 +35364,7 @@ var BundledDev = class {
+@@ -35364,7 +35442,7 @@ var BundledDev = class {
  			code: typeof hmrOutput.code === "string" ? "[code]" : hmrOutput.code
  		});
  		this.pendingPayloadFilenames.add(hmrOutput.filename);
@@ -71,7 +215,7 @@ index 87cfa480c3d4132f9dd1b74c6c1bbe2b90385d3f..83da417e7b9c380d06b7679d3fbfaeed
  		if (hmrOutput.sourcemapFilename && hmrOutput.sourcemap) this.memoryFiles.set(hmrOutput.sourcemapFilename, { source: hmrOutput.sourcemap });
  		client.send({
  			type: "bundled-dev-update",
-@@ -35407,6 +35407,10 @@ var Clients = class {
+@@ -35407,6 +35485,10 @@ var Clients = class {
  		}
  	}
  };
