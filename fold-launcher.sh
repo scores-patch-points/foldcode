@@ -30,35 +30,70 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
 </dict></plist>
 PLIST
 
-# The launcher never names the content-hashed dev bundle; it activates the running app or starts the stack.
+# The launcher never names the content-hashed dev bundle; it foregrounds the running
+# window, waits out a boot already in progress, or starts the stack. It never wedges on
+# a lock whose owner is gone, and never no-ops silently when the window has died.
 cat > "$app/Contents/MacOS/launcher" <<LAUNCHER
 #!/bin/zsh
 set -u
 REPO="$here"
 BUN="$bun_bin"
 LOCK="/tmp/opencode-fold-launch.lock"
+PIDFILE="\$LOCK/pid"
 LOG="\$HOME/Library/Logs/opencode-fold-launch.log"
 export PATH="$(dirname "$bun_bin"):/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
-dev_main() { pgrep -f "opencode-dev/.*/OpenCode Dev\.app/Contents/MacOS/Electron" | head -1; }
-dev_booting() { pgrep -f "electron-vite.js dev" >/dev/null 2>&1; }
+notify() { osascript -e "display notification \\"\$1\\" with title \\"opencode X the fold\\"" >/dev/null 2>&1 || true; }
+log() { print -r -- "\$(date '+%Y-%m-%d %H:%M:%S') \$1" >> "\$LOG" 2>/dev/null || true; }
 
-pid="\$(dev_main)"
-if [[ -n "\$pid" ]]; then
+# The dev app's Electron main process, matched on its own path — not a shell that merely names it.
+dev_main() { pgrep -f "opencode-dev/.*/OpenCode Dev\.app/Contents/MacOS/Electron" | head -1; }
+dev_booting() { pgrep -f "electron-vite" >/dev/null 2>&1 || pgrep -f "scripts/dev\.ts" >/dev/null 2>&1; }
+
+# Bring an already-running window to the front, whatever its content-hashed bundle path.
+foreground() {
+  local pid exe bundle
+  pid="\$(dev_main)"
+  [[ -z "\$pid" ]] && return 1
   exe="\$(ps -o comm= -p "\$pid" 2>/dev/null)"
   bundle="\${exe%/Contents/MacOS/Electron}"
-  [[ -n "\$bundle" && -d "\$bundle" ]] && open "\$bundle"
+  [[ -n "\$bundle" && -d "\$bundle" ]] || return 1
+  open "\$bundle"
+  return 0
+}
+
+foreground && exit 0
+
+# Another launch owns the lock and its process is alive: it is booting. Wait for its
+# window; never start a second stack that would fight it for port 3084.
+if [[ -d "\$LOCK" ]]; then
+  owner="\$(cat "\$PIDFILE" 2>/dev/null || true)"
+  if [[ -n "\$owner" ]] && kill -0 "\$owner" 2>/dev/null; then
+    for _ in {1..30}; do foreground && exit 0; sleep 2; done
+    notify "The dev stack is still starting; see \$LOG"
+    exit 0
+  fi
+  log "clearing stale lock (owner \${owner:-none} is gone)"
+  rm -rf "\$LOCK" 2>/dev/null || true
+fi
+
+# A watcher is alive but no window is up: booting, or its window died. Wait for the
+# window instead of exiting silently as the old guard did; report if it never appears.
+if dev_booting; then
+  for _ in {1..45}; do foreground && exit 0; sleep 2; done
+  notify "The dev stack is running but no window appeared; see \$LOG"
   exit 0
 fi
-dev_booting && exit 0
 
-# A lock whose owner died (a crashed or killed launch) must not block every later launch.
-if [[ -d "\$LOCK" ]] && ! pgrep -f "bun.* run dev" >/dev/null 2>&1; then rmdir "\$LOCK" 2>/dev/null; fi
-mkdir "\$LOCK" 2>/dev/null || exit 0
-osascript -e 'display notification "Starting the dev stack — the window appears in about a minute." with title "opencode X the fold"' >/dev/null 2>&1
-cd "\$REPO/packages/desktop" || { rmdir "\$LOCK"; exit 1; }
-"\$BUN" run dev >"\$LOG" 2>&1
-rmdir "\$LOCK" 2>/dev/null || true
+mkdir -p "\$LOCK" 2>/dev/null || exit 0
+print -r -- "\$\$" > "\$PIDFILE" 2>/dev/null || true
+trap 'rm -rf "\$LOCK" 2>/dev/null || true' EXIT INT TERM
+
+cd "\$REPO" || { log "repo missing: \$REPO"; notify "repo not found: \$REPO"; exit 1; }
+notify "Starting the dev stack — the window appears in about a minute."
+# Keep the log bounded without losing the last crash: rotate past 4 MB.
+if [[ -f "\$LOG" ]] && [[ "\$(wc -c < "\$LOG" 2>/dev/null || echo 0)" -gt 4000000 ]]; then mv -f "\$LOG" "\$LOG.1" 2>/dev/null || true; fi
+"\$BUN" run dev:desktop >>"\$LOG" 2>&1
 LAUNCHER
 chmod +x "$app/Contents/MacOS/launcher"
 
