@@ -1,5 +1,6 @@
 export default {
   "tab.title": "Fold",
+  "tab.sent": "Sent",
   "tab.worktree": "Worktree",
   "tab.holodeck": "Holodeck",
   "tab.perceive": "Perceive",

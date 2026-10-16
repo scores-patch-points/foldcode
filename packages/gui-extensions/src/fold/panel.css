@@ -297,3 +297,976 @@
   background: var(--f-acc);
   border-color: var(--f-acc);
 }
+
+/* The Fold tab (.ftm = fold tree, mikelacy), wearing mikelacy.site's skin: a dark terminal autoindex. Near-black
+   ground, monospace as the base face, 0.5px hairline rules, one teal accent, uppercase letter-spaced labels, and a
+   state as a bordered pill (RUN / DONE / MISS / OPEN) — the type-badge of a file listing. Everything is scoped under
+   .ftm so it never bleeds into the rest of the app's theme. */
+.ftm {
+  --ftm-bg: #0e0e0e;
+  --ftm-hover: #141410;
+  --ftm-fg: #c9c5b8;
+  --ftm-strong: #e8e4d8;
+  --ftm-name: #ddd8c8;
+  --ftm-desc: #a8a49a;
+  --ftm-muted: #5c5c54;
+  --ftm-faint: #5a5a52;
+  --ftm-dim: #404038;
+  --ftm-dimmer: #3a3a32;
+  --ftm-ink: #1c1c18;
+  --ftm-ink2: #2a2a24;
+  --ftm-acc: #7ab6a0;
+  --ftm-acc-hover: #9fd1be;
+  --ftm-acc-bg: #2d4f46;
+  --ftm-acc-muted: #2e6657;
+  --ftm-badge: #454540;
+  --ftm-warn: #c98b5e;
+  --ftm-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  background: var(--ftm-bg);
+  color: var(--ftm-fg);
+  font-family: var(--ftm-mono);
+  font-size: 13px;
+}
+
+/* Chrome: a site-label, a mono 18px title with a hairline beneath it (the "Index of /" treatment), then the
+   description as a muted subtitle. */
+.ftm-head {
+  flex: none;
+  padding: 18px 20px 0;
+}
+
+.ftm-site {
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ftm-faint);
+}
+
+.ftm-title {
+  font-size: 18px;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+  color: var(--ftm-strong);
+  border-bottom: 0.5px solid var(--ftm-ink2);
+  padding-bottom: 1.25rem;
+  margin-top: 2px;
+}
+
+.ftm-sub {
+  margin-top: 10px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--ftm-desc);
+}
+
+/* The live line: an uppercase tag, then the turn's doing, in the strong ink. */
+.ftm-now {
+  flex: none;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 10px 20px;
+  border-bottom: 0.5px solid var(--ftm-ink);
+}
+
+.ftm-now .k {
+  flex: none;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ftm-acc);
+}
+
+.ftm-now .t {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+  font-size: 12.5px;
+  color: var(--ftm-strong);
+}
+
+.ftm-mutedline {
+  color: var(--ftm-muted);
+  font-style: italic;
+}
+
+.ftm-body {
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: auto;
+  padding: 6px 0 40px;
+}
+
+.ftm-body ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.ftm-empty {
+  padding: 16px 20px;
+  font-size: 12.5px;
+}
+
+/* Visually hidden, for the word a badge abbreviates. */
+.ftm-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* A row is the autoindex entry: caret | state badge | name | operator. Hairline above each node, and the hover tint
+   bleeds to the panel edges so the grid reads as a listing rather than cards. */
+.ftm-node > .ftm-row {
+  border-top: 0.5px solid var(--ftm-ink);
+  transition: background-color 120ms ease;
+}
+
+.ftm-body > ul > .ftm-node:first-child > .ftm-row {
+  border-top: none;
+}
+
+.ftm-row {
+  display: grid;
+  grid-template-columns: 14px 44px minmax(0, 1fr) auto;
+  align-items: baseline;
+  column-gap: 10px;
+  padding: 8px 20px 8px 0;
+  cursor: default;
+}
+
+.ftm-node > .ftm-row:hover {
+  background: var(--ftm-hover);
+}
+
+.ftm-caret {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--ftm-dim);
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.ftm-caret:hover {
+  color: var(--ftm-acc);
+}
+
+.ftm-caret:disabled {
+  cursor: default;
+  color: var(--ftm-ghost, #2e2e26);
+}
+
+.ftm-caret:focus-visible {
+  outline: 2px solid var(--ftm-acc);
+  outline-offset: 1px;
+}
+
+/* The state badge — the type-badge of this listing. */
+.ftm-badge {
+  display: inline-block;
+  min-width: 30px;
+  padding: 3px 5px;
+  border: 0.5px solid var(--ftm-badge);
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  text-align: center;
+  color: var(--ftm-muted);
+  white-space: nowrap;
+}
+
+.ftm-badge.running {
+  color: var(--ftm-acc);
+  border-color: var(--ftm-acc-bg);
+}
+
+.ftm-badge.settled {
+  color: var(--ftm-acc-muted);
+  border-color: var(--ftm-acc-bg);
+}
+
+.ftm-badge.failed {
+  color: #d98f8f;
+  border-color: #4a2f2f;
+}
+
+.ftm-name {
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: var(--ftm-name);
+  overflow-wrap: anywhere;
+}
+
+button.ftm-name {
+  padding: 0;
+  border: none;
+  background: none;
+  text-align: start;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  text-decoration-color: rgb(122 182 160 / 0.35);
+}
+
+button.ftm-name:hover {
+  color: var(--ftm-acc-hover);
+  text-decoration-color: var(--ftm-acc-hover);
+}
+
+button.ftm-name:focus-visible {
+  outline: 2px solid var(--ftm-acc);
+  outline-offset: 2px;
+}
+
+/* The operator — the right-hand meta column, like a last-modified date. */
+.ftm-op {
+  flex: none;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--ftm-muted);
+  font-variant-numeric: tabular-nums;
+  padding-top: 2px;
+}
+
+.ftm-op .g {
+  font-family: var(--ftm-mono);
+  color: var(--ftm-faint);
+}
+
+/* The path / aim / pass / step lines sit under the entry, aligned to the name column (14 + 44 = 58px). */
+.ftm-path,
+.ftm-aim,
+.ftm-pass {
+  padding-right: 20px;
+  padding-left: 58px;
+}
+
+.ftm-path {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--ftm-faint);
+  padding-bottom: 2px;
+}
+
+.ftm-path .d {
+  flex: none;
+  color: var(--ftm-dimmer);
+}
+
+.ftm-path button {
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: start;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+}
+
+.ftm-path button:hover {
+  color: var(--ftm-fg);
+}
+
+.ftm-aim {
+  font-size: 12px;
+  font-style: italic;
+  color: var(--ftm-desc);
+  padding-bottom: 3px;
+}
+
+.ftm-pass {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ftm-muted);
+  padding-top: 4px;
+}
+
+.ftm-pass .carry {
+  min-width: 0;
+  font-weight: 400;
+  color: var(--ftm-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ftm-step {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr) minmax(0, max-content) 20px;
+  align-items: baseline;
+  column-gap: 8px;
+  padding: 2px 20px 2px 72px;
+  font-size: 12px;
+  color: var(--ftm-fg);
+}
+
+.ftm-step .m {
+  color: var(--ftm-dim);
+  text-align: center;
+}
+
+.ftm-step .m.err {
+  color: #d98f8f;
+}
+
+.ftm-step .n {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ftm-step .e {
+  min-width: 0;
+  color: var(--ftm-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ftm-step .g {
+  flex: none;
+  font-family: var(--ftm-mono);
+  font-size: 11px;
+  color: var(--ftm-dimmer);
+}
+
+/* Record: uppercase section rule, then referent / disposition rows. */
+.ftm-rec {
+  margin-top: 12px;
+  border-top: 0.5px solid var(--ftm-ink);
+  padding: 14px 20px 0;
+}
+
+.ftm-rec .h {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ftm-faint);
+  padding-bottom: 6px;
+}
+
+.ftm-rec .r {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 5px 0;
+  border-top: 0.5px solid var(--ftm-ink);
+  font-size: 12px;
+}
+
+.ftm-rec .r:first-of-type {
+  border-top: none;
+}
+
+.ftm-rec .ref {
+  min-width: 0;
+  font-weight: 500;
+  color: var(--ftm-name);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ftm-rec .disp {
+  flex: none;
+  margin-left: auto;
+  color: var(--ftm-dimmer);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+
+.ftm-rec .disp .re {
+  color: var(--ftm-acc-muted);
+}
+
+/* The lens: two ways to read the same turn, side by side, the selected one underlined in the accent like a tab. */
+.ftm-lens {
+  flex: none;
+  display: flex;
+  gap: 2px;
+  padding: 0 20px;
+  border-bottom: 0.5px solid var(--ftm-ink);
+}
+
+.ftm-lens button {
+  all: unset;
+  cursor: pointer;
+  padding: 8px 10px 7px;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ftm-faint);
+  border-bottom: 1.5px solid transparent;
+}
+
+.ftm-lens button:hover {
+  color: var(--ftm-strong);
+}
+
+.ftm-lens button[aria-selected="true"] {
+  color: var(--ftm-acc);
+  border-bottom-color: var(--ftm-acc);
+}
+
+.ftm-lens button:focus-visible {
+  outline: 1px solid var(--ftm-acc);
+  outline-offset: -1px;
+}
+
+/* The concepts lens: the map, the read, the live thinking, the card. */
+.ftm-body-map {
+  padding: 14px 20px 40px;
+}
+
+.ftm-map-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ftm-read {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--ftm-desc);
+  letter-spacing: 0.01em;
+}
+
+/* The level stepping: how many layers of groups are open. The holodeck's ↑ ↓ levels, made operable — every concept
+   is reachable by opening one more layer, so nothing is hidden that cannot be gone into. */
+.ftm-levels {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ftm-dim);
+}
+
+.ftm-levels button {
+  all: unset;
+  cursor: pointer;
+  padding: 1px 7px;
+  color: var(--ftm-desc);
+  border: 0.5px solid var(--ftm-ink2);
+}
+
+.ftm-levels button:hover:not([disabled]) {
+  color: var(--ftm-acc);
+  border-color: var(--ftm-acc-muted);
+}
+
+.ftm-levels button[disabled] {
+  color: var(--ftm-dimmer);
+  cursor: default;
+}
+
+/* The live line: the concept the walk is on, and the model's own words under it, in real time. The tick pulses while
+   a step is running, so "now" is legible without a spinner. */
+.ftm-think {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  padding: 6px 0;
+  border-top: 0.5px solid var(--ftm-ink2);
+  border-bottom: 0.5px solid var(--ftm-ink2);
+}
+
+.ftm-think .k {
+  flex: none;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ftm-acc);
+}
+
+.ftm-think .k::after {
+  content: "";
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-left: 6px;
+  border-radius: 50%;
+  background: var(--ftm-acc);
+  vertical-align: 1px;
+  animation: ftm-pulse 1.4s ease-in-out infinite;
+}
+
+.ftm-think .who {
+  flex: none;
+  font-weight: 500;
+  font-size: 12px;
+  color: var(--ftm-name);
+}
+
+.ftm-think .words {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--ftm-desc);
+}
+
+@keyframes ftm-pulse {
+  0%,
+  100% {
+    opacity: 0.25;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* The map itself: the same near-black as the page, so the marks are the only thing drawn. */
+.ftm-map {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  max-height: 62vh;
+  background: #0a0a0a;
+  border: 0.5px solid var(--ftm-ink2);
+}
+
+/* The orbit rings: the relational-distance shells around the focus, drawn as faint dashed concentric circles — the
+   holodeck's solar-system law made visible, so a concept's distance reads as how strongly it is tied, not how far
+   it is in a list. */
+.ftm-orbit {
+  fill: none;
+  stroke: var(--ftm-dim);
+  stroke-width: 0.3;
+  stroke-dasharray: 1 2;
+  opacity: 0.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.ftm-tie {
+  stroke: var(--ftm-dim);
+  stroke-width: 0.4;
+  vector-effect: non-scaling-stroke;
+}
+
+.ftm-tie.grow {
+  stroke: var(--ftm-badge);
+}
+
+.ftm-tie.held {
+  stroke: var(--ftm-warn);
+  stroke-dasharray: 1.6 1.6;
+}
+
+.ftm-c {
+  cursor: pointer;
+}
+
+.ftm-c .dot {
+  fill: #24241e;
+  stroke: var(--ftm-badge);
+  stroke-width: 0.35;
+  transition: fill 0.15s ease;
+  vector-effect: non-scaling-stroke;
+}
+
+.ftm-c .ring {
+  fill: none;
+  stroke: var(--ftm-dim);
+  stroke-width: 0.35;
+  stroke-dasharray: 1 1;
+  vector-effect: non-scaling-stroke;
+}
+
+/* A ring you can open: the circle the holon folds into. Hovering says it is clickable, and an open holon's ring is
+   solid so the two states read apart. */
+.ftm-c.holds .ring {
+  stroke: var(--ftm-badge);
+  cursor: pointer;
+}
+
+.ftm-c.holds .ring:hover {
+  stroke: var(--ftm-acc);
+}
+
+.ftm-c.open .ring {
+  stroke-dasharray: none;
+}
+
+.ftm-c .halo {
+  fill: none;
+  stroke: var(--ftm-acc);
+  stroke-width: 0.4;
+  opacity: 0.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.ftm-c .glyph {
+  fill: var(--ftm-strong);
+  font-size: 3px;
+  text-anchor: middle;
+  dominant-baseline: middle;
+  pointer-events: none;
+}
+
+.ftm-c .label {
+  fill: var(--ftm-desc);
+  font-size: 2.7px;
+  text-anchor: middle;
+  pointer-events: none;
+}
+
+.ftm-c:hover .dot {
+  fill: var(--ftm-acc-bg);
+}
+
+.ftm-c:hover .label {
+  fill: var(--ftm-strong);
+}
+
+.ftm-c.settled .dot {
+  fill: #1c2420;
+  stroke: var(--ftm-acc-muted);
+}
+
+.ftm-c.running .dot {
+  fill: var(--ftm-acc-bg);
+  stroke: var(--ftm-acc);
+  animation: ftm-pulse 1.4s ease-in-out infinite;
+}
+
+.ftm-c.failed .dot {
+  stroke: var(--ftm-warn);
+}
+
+.ftm-c.redefined .dot {
+  stroke: var(--ftm-acc-muted);
+}
+
+.ftm-c.contested .dot {
+  fill: #2a201a;
+  stroke: var(--ftm-warn);
+  stroke-width: 0.7;
+}
+
+.ftm-c.contested .label {
+  fill: var(--ftm-warn);
+}
+
+/* The cursor: the concept you are on, apart from the focus (where the map is drawn from). A dashed ring so the two
+   never read as the same thing — the focus has the solid halo, the cursor has the dashes. */
+.ftm-c .cur-ring {
+  fill: none;
+  stroke: var(--ftm-acc);
+  stroke-width: 0.45;
+  stroke-dasharray: 1.4 1.1;
+  opacity: 0.95;
+  vector-effect: non-scaling-stroke;
+}
+
+.ftm-c.cur .label {
+  fill: var(--ftm-strong);
+}
+
+.ftm-c.cur .dot {
+  stroke: var(--ftm-acc);
+}
+
+.ftm-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  font-size: 10.5px;
+  color: var(--ftm-dim);
+}
+
+.ftm-legend i.k {
+  display: inline-block;
+  width: 14px;
+  height: 0;
+  margin-right: 5px;
+  border-top: 1.5px solid var(--ftm-badge);
+  vertical-align: 3px;
+}
+
+.ftm-legend i.k.held {
+  border-top-color: var(--ftm-warn);
+  border-top-style: dashed;
+}
+
+/* The cursor line: where the cursor is on the draw, which concept it is on, and the keys. The map has a POSITION
+   (the focus) and a CURSOR (this); the cursor never recenters the map — it only moves over it. */
+.ftm-cursorline {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--ftm-desc);
+}
+
+.ftm-cursorline .pos {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+  color: var(--ftm-acc);
+  letter-spacing: 0.06em;
+}
+
+.ftm-cursorline .on {
+  flex: none;
+  font-weight: 500;
+  color: var(--ftm-name);
+}
+
+.ftm-cursorline .hint {
+  margin-left: auto;
+  color: var(--ftm-faint);
+}
+
+/* The profile: the drill-in page a concept opens onto, drawn from the same map and snapshot. Its rows are a list the
+   profile's own cursor steps — the row you are on is the one ENTER follows. */
+.ftm-profile {
+  border: 0.5px solid var(--ftm-ink2);
+  background: #111110;
+  padding: 12px 14px;
+}
+
+.ftm-prof-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.ftm-prof-head .nm {
+  font-size: 14px;
+  color: var(--ftm-strong);
+}
+
+.ftm-prof-head .st {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ftm-acc-muted);
+}
+
+.ftm-prof-head .pos {
+  margin-left: auto;
+  flex: none;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.06em;
+  color: var(--ftm-faint);
+}
+
+.ftm-prof-head .x {
+  all: unset;
+  cursor: pointer;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ftm-dim);
+}
+
+.ftm-prof-head .x:hover {
+  color: var(--ftm-acc);
+}
+
+.ftm-profile .addr {
+  all: unset;
+  display: block;
+  cursor: pointer;
+  margin-top: 4px;
+  font-size: 11.5px;
+  color: var(--ftm-dim);
+  word-break: break-all;
+}
+
+.ftm-profile .addr:hover {
+  color: var(--ftm-acc);
+}
+
+.ftm-prof-read {
+  margin-top: 8px;
+  font-size: 11.5px;
+  color: var(--ftm-desc);
+}
+
+.ftm-prof-op {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--ftm-desc);
+}
+
+.ftm-prof-op .g {
+  color: var(--ftm-acc);
+  margin-right: 4px;
+}
+
+.ftm-prof-think {
+  margin-top: 6px;
+  font-size: 12px;
+  font-style: italic;
+  color: var(--ftm-desc);
+}
+
+.ftm-prof-rows {
+  margin-top: 10px;
+  border-top: 0.5px solid var(--ftm-ink);
+  padding-top: 4px;
+}
+
+/* One profile line, stepped by the profile cursor. The cursor row carries a left bar in the accent — the one mark
+   that says "you are here" — and a tie that leads somewhere says so with the arrow. */
+.ftm-prow {
+  all: unset;
+  box-sizing: border-box;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  cursor: pointer;
+  padding: 5px 6px 5px 8px;
+  border-left: 1.5px solid transparent;
+  font-size: 12px;
+  color: var(--ftm-desc);
+}
+
+.ftm-prow:hover {
+  background: #161613;
+}
+
+.ftm-prow.cur {
+  border-left-color: var(--ftm-acc);
+  background: #141a17;
+  color: var(--ftm-strong);
+}
+
+.ftm-prow .mk {
+  flex: none;
+  width: 1.1em;
+  text-align: center;
+  color: var(--ftm-faint);
+}
+
+.ftm-prow.cur .mk {
+  color: var(--ftm-acc);
+}
+
+.ftm-prow .tx {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ftm-prow .dt {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10.5px;
+  color: var(--ftm-faint);
+}
+
+.ftm-prow .go {
+  margin-left: auto;
+  flex: none;
+  color: var(--ftm-acc-muted);
+}
+
+.ftm-prow.leads .tx {
+  color: var(--ftm-name);
+}
+
+.ftm-prow.held .mk,
+.ftm-prow.held .tx {
+  color: var(--ftm-warn);
+}
+
+.ftm-prof-foot {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-top: 10px;
+  border-top: 0.5px solid var(--ftm-ink);
+  padding-top: 8px;
+}
+
+.ftm-prof-foot button {
+  all: unset;
+  cursor: pointer;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ftm-acc-muted);
+}
+
+.ftm-prof-foot button:hover {
+  color: var(--ftm-acc);
+}
+
+.ftm-open {
+  all: unset;
+  cursor: pointer;
+  align-self: flex-start;
+  padding: 6px 10px;
+  font-size: 11px;
+  color: var(--ftm-acc);
+  border: 0.5px solid var(--ftm-acc-muted);
+}
+
+.ftm-open:hover {
+  background: var(--ftm-acc-bg);
+  color: var(--ftm-ink);
+}
+
+.ftm-gaps {
+  border-top: 0.5px solid var(--ftm-ink);
+  padding-top: 8px;
+}
+
+.ftm-gaps .h {
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ftm-warn);
+}
+
+.ftm-gaps .g {
+  padding: 3px 0;
+  font-size: 11.5px;
+  color: var(--ftm-dim);
+}

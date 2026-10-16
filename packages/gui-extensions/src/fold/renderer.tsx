@@ -12,6 +12,7 @@ const setup: Setup<typeof Fold> = (ctx) => {
   const SessionWorkPlans = lazy(() => import("./plans"))
   const SessionRememberPanel = lazy(() => import("./remember"))
   // Compile the panels while the app idles, so the first open renders at once.
+  onCleanup(onIdle(() => void SessionMindTree.preload()))
   onCleanup(onIdle(() => void SessionFoldPanel.preload()))
   onCleanup(onIdle(() => void SessionHolodeckPanel.preload()))
   onCleanup(onIdle(() => void SessionPerceivePanel.preload()))
@@ -60,7 +61,8 @@ const setup: Setup<typeof Fold> = (ctx) => {
     ),
   })
 
-  // Pinned: always a trigger in the side strip. first + fallback: the region's default content.
+  // The Fold tab: the thinking itself, as the work tree. What the turn has touched, how far each thing has walked
+  // the nine operators, and what grew from what. This IS the fold: the tree the work grows on.
   const tab: PanelTab = {
     id: "main",
     get title() {
@@ -73,6 +75,27 @@ const setup: Setup<typeof Fold> = (ctx) => {
     id: "main",
     region: "side",
     list: () => [tab],
+    render: (props) => (
+      <Suspense>
+        <SessionMindTree session={props.session} />
+      </Suspense>
+    ),
+  })
+
+  // The Sent tab: exactly what the model was sent, built from the real request. The audit, split out of the Fold
+  // tab so the Fold tab can be the work itself.
+  const sent: PanelTab = {
+    id: "sent",
+    get title() {
+      return ctx.t("tab.sent")
+    },
+    closable: "compact",
+  }
+
+  ctx.add(Panel, {
+    id: "sent",
+    region: "side",
+    list: () => [sent],
     render: (props) => (
       <Suspense>
         <SessionFoldPanel session={props.session} browser={browser} />
@@ -96,20 +119,6 @@ const setup: Setup<typeof Fold> = (ctx) => {
     render: (props) => (
       <Suspense>
         <SessionHolodeckPanel session={props.session} browser={browser} />
-      </Suspense>
-    ),
-  })
-
-  // The work tree tab: what the turn touched, how far each thing walked the nine operators, what grew from what.
-  const mindTree: PanelTab = { id: "tree", title: "Work tree", closable: "compact" }
-
-  ctx.add(Panel, {
-    id: "tree",
-    region: "side",
-    list: () => [mindTree],
-    render: (props) => (
-      <Suspense>
-        <SessionMindTree session={props.session} />
       </Suspense>
     ),
   })
@@ -150,7 +159,6 @@ const setup: Setup<typeof Fold> = (ctx) => {
     ),
   })
 
-  // The app asks for the work tree (the mind line in the timeline is a button): open it, selected, beside the feed.
   // The Remember tab: what the system knows about you, what it may read, and the
   // system prompts attached to asks. All three stores are read back from the
   // door and appended to here; the door injects an entry only when an ask's own
@@ -174,9 +182,10 @@ const setup: Setup<typeof Fold> = (ctx) => {
     ),
   })
 
+  // The app asks for the work tree (the mind line in the timeline is a button): open the Fold tab, selected, beside the feed.
   const openTree = () => {
     const session = ctx.sessions.current()
-    if (session) ctx.layout.open(`${ctx.id}:tree`, session, { tab: "select" })
+    if (session) ctx.layout.open(`${ctx.id}:main`, session, { tab: "select" })
   }
   window.addEventListener("fold:open-tree", openTree)
   onCleanup(() => window.removeEventListener("fold:open-tree", openTree))
