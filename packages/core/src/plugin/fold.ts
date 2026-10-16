@@ -221,7 +221,7 @@ const formatMeter = (meter: Record<string, unknown>) => {
   const repeats = (meter.repeatAsks ?? {}) as Record<string, unknown>
   return [
     `fold savings · since ${String(savings.since ?? "?")}`,
-    `kept out of the frontier: ${num(savings.foldedChars).toLocaleString()} chars ≈ ${num(savings.savedTokensEst).toLocaleString()} tokens (folds ${num(savings.folds)})`,
+    `kept out of the frontier: ${num(savings.projectedChars).toLocaleString()} chars ≈ ${num(savings.projectedTokensEst).toLocaleString()} tokens (projections ${num(savings.projections)})`,
     `titles served by rule: ${num(meter.titlesServedLocally)} ≈ ${num(savings.titleTokensEst).toLocaleString()} frontier tokens avoided`,
     `estimated saved: $${num(savings.savedUSD).toFixed(4)} (${String(savings.note ?? "")})`,
     `frontier bought: ${num(meter.turns)} turns · first ${num(first.n)} (${num(first.tokens).toLocaleString()} tok) · repeats ${num(repeats.n)}, ${num(repeats.recalled)} recalled`,
@@ -567,7 +567,14 @@ export const Plugin = define({
         if (plan) {
           const task = yield* taskOf(event.sessionID)
           const workspace = yield* workspaceOf(event.sessionID)
-          const answer = yield* post({ event: "surf", sessionID: event.sessionID, task, workspace, ask: lastUserText(event.messages), turns: plan.turns }, askTimeout)
+          // The chars this cut keeps out of the request, measured on the messages
+          // it is about to splice away, so the door's savings ledger (and the
+          // titlebar tally) report the real reduction, not only the title calls.
+          const keptOutChars = JSON.stringify(event.messages.slice(0, plan.cut)).length
+          const answer = yield* post(
+            { event: "surf", sessionID: event.sessionID, task, workspace, ask: lastUserText(event.messages), turns: plan.turns, keptOutChars, priceIn: priceIn(event.model) },
+            askTimeout,
+          )
           surfApply(event.messages, plan.cut, typeof answer?.note === "string" && answer.note.length > 0 ? answer.note : surfLocal(plan.turns))
         }
         yield* foldMessages(event)
