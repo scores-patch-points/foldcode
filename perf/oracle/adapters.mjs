@@ -94,8 +94,10 @@ const once = (model, prompt, timeoutMs) => {
       if (part.type === "text" && typeof part.text === "string") text += part.text
       if (j.type === "error") provider = `${j.error?.type ?? "provider error"}: ${String(j.error?.message ?? "").slice(0, 160)}`
       if (part.type === "tool") toolCalls++
-      const t = part.tokens
-      if (t) tokens += (t.input ?? 0) + (t.cache?.read ?? 0) + (t.cache?.write ?? 0)
+      // usage rides a `step-finish` part (cli/run/noninteractive.ts:496) whose emission races the execution
+      // boundary, so read every shape it can arrive in and never count a silent 0 as a real measurement.
+      const t = part.tokens ?? j.tokens ?? j.usage
+      if (t) tokens += (t.input ?? t.promptTokens ?? 0) + (t.cache?.read ?? 0) + (t.cache?.write ?? 0)
     }
     if (process.env.ORACLE_DUMP) { try { fs.writeFileSync(process.env.ORACLE_DUMP, r.stdout ?? "") } catch { /* debug only */ } }
     const error = provider ?? (r.error ? String(r.error.message ?? r.error) : r.status !== 0 ? `exit ${r.status}: ${(r.stderr ?? "").slice(0, 300)}` : !text.trim() ? "empty reply" : toolCalls ? `model used ${toolCalls} tools` : undefined)
