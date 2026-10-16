@@ -15,6 +15,20 @@ type Meter = { tokens: number; usd: number }
 
 const money = (usd: number) => `$${usd.toFixed(4)}`
 
+// The counter reads out tokens the fold KEPT OUT, in the compact form a person reads at a glance:
+// 3130000 -> "3.13M". Two decimals from K up, a plain integer below.
+const compact = (n: number) => {
+  const abs = Math.abs(n)
+
+  if (abs >= 1e9) return `${(n / 1e9).toFixed(2)}B`
+
+  if (abs >= 1e6) return `${(n / 1e6).toFixed(2)}M`
+
+  if (abs >= 1e3) return `${(n / 1e3).toFixed(2)}K`
+
+  return String(Math.round(n))
+}
+
 export default function FoldTally() {
   const ctx = useExtension<typeof Fold>()
 
@@ -25,7 +39,9 @@ export default function FoldTally() {
     void fetch(`${FOLD_URL}/v1/hooks/opencode/meter`)
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`meter ${r.status}`))))
       .then((data) => {
-        const savings = (data?.savings ?? {}) as Record<string, unknown>
+        // SAFETY: this is the fold door's own JSON; we read only these three numeric savings fields and
+        // coerce each through Number, so a wrong shape yields 0 rather than a thrown read.
+        const savings = (data?.savings ?? {}) as { projectedTokensEst?: number; titleTokensEst?: number; savedUSD?: number }
         const projected = Number(savings.projectedTokensEst ?? 0) || 0
         const titles = Number(savings.titleTokensEst ?? 0) || 0
         const usd = Number(savings.savedUSD ?? 0) || 0
@@ -48,7 +64,9 @@ export default function FoldTally() {
 
   const reset = () => {
     const now = meter()
+
     if (!now) return
+
     tally.update((draft) => {
       draft.baseline = { tokens: now.tokens, usd: now.usd }
     })
@@ -74,14 +92,12 @@ export default function FoldTally() {
       }
     >
       <div class="flex h-5 shrink-0 items-center gap-0.5 rounded-full bg-v2-background-bg-layer-02 ps-2 pe-1 [app-region:no-drag]">
-        <Tooltip placement="bottom" value={ctx.t("tally.title")}>
+        <Tooltip placement="bottom" value={`${ctx.t("tally.title")} (${money(usd())})`}>
           <span
             class="shrink-0 whitespace-nowrap text-[11px] leading-4 text-v2-text-text-muted"
             classList={{ "opacity-60": offline() }}
           >
-            {offline()
-              ? ctx.t("tally.offline")
-              : `${tokens().toLocaleString()} tokens · ${money(usd())} saved`}
+            {offline() ? ctx.t("tally.offline") : `${compact(tokens())} ${ctx.t("tally.saved")}`}
           </span>
         </Tooltip>
         <button

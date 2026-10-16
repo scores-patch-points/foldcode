@@ -23,6 +23,7 @@ export default {
   "panel.retry": "Retry",
   "panel.empty": "No turns recorded yet.",
   "tally.title": "fold savings — tokens and money the fold kept out of the frontier",
+  "tally.saved": "Tokens Saved",
   "tally.offline": "fold: offline",
   "tally.reset": "Reset the savings tally",
   "tally.hide": "Hide the savings tally",
