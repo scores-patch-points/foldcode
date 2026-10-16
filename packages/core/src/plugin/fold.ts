@@ -30,6 +30,9 @@ const off = process.env.FOLD_OFF === "1"
 // stalling the frontier. FOLD_TIMEOUT_MS raises it if a door legitimately needs longer.
 const askTimeout = Number(process.env.FOLD_TIMEOUT_MS ?? 250)
 const foldTimeout = Number(process.env.FOLD_FOLD_TIMEOUT_MS ?? 20_000)
+// The swarm is model-free but reads the material through the door's capacity
+// organs; it gets a longer budget than a recall note while still failing open.
+const swarmTimeout = Number(process.env.FOLD_SWARM_TIMEOUT_MS ?? 60_000)
 const minChars = Number(process.env.FOLD_MIN_CHARS ?? 4000)
 const coolDown = 30_000
 const debug = process.env.FOLD_DEBUG === "1"
@@ -639,6 +642,11 @@ export const Plugin = define({
           // projected through Houdini by the door against this ask.
           const commons = answer?.commons
           if (typeof commons === "string" && commons.length > 0) event.system.push({ type: "text", text: commons })
+          // The swarm's learning: what the ants already measured on this task, injected when
+          // the ask's own words bear on it. Mechanical read of the door's own marks; the fork
+          // carries no swarm logic and injects the note only when it arrives.
+          const swarm = answer?.swarm
+          if (typeof swarm === "string" && swarm.length > 0) event.system.push({ type: "text", text: swarm })
           // Step 1 of the doorway plan: the archon ground note rides only
           // when the door computed and injected it (FOLD_ARCHONS=1 on the
           // door; default is shadow — recorded, never injected). The fork
@@ -959,6 +967,65 @@ export const Plugin = define({
               metadata: { schema: "EOTSnip@1", ref: input.ref, standing, from, origin: standing === "witnessed" ? "mechanical" : "model" },
             }
           }).pipe(Effect.mapError((error) => (error instanceof ToolFailure ? error : new ToolFailure({ message: "snip failed", error })))),
+      }),
+    )
+
+    // SWARM: deploy the ants on hard meaning. The door runs the model-free capacity-swarm (independent
+    // mechanical readings, their contention, the surviving read with its named holes) and returns its own
+    // report — a measurement, never a guess. The result is the door's verbatim bytes, and the same reading
+    // is rendered as its own notice row, so the model relays it and cannot author a finding the swarm did
+    // not measure. The finding also enters the task medium and the cross-session ledger — the app learns.
+    yield* ctx.tool.transform((editor) =>
+      editor.add({
+        name: "swarm",
+        options: { codemode: false },
+        description:
+          "Deploy the ant-swarm on hard meaning: independent mechanical readings of the material, their contention, and the surviving read with its named holes. Reads any language and any modality (text, or a path to an image/audio/PDF/code file, resolved by the local senses first) by the material's own referent-physics — model-free, a measurement, never a guess. Returns the door's own report; relay it, and add no finding the swarm did not measure.",
+        input: Schema.Struct({
+          ask: Schema.String.annotate({ description: "What to read for (the pointing or question)" }),
+          text: Schema.optionalKey(Schema.String).annotate({
+            description: "The material to read; omit to read the session's own recent turns",
+          }),
+          path: Schema.optionalKey(Schema.String).annotate({
+            description: "A file of any modality (image, audio, PDF, code) the door reads with its local senses before swarming",
+          }),
+          ref: Schema.optionalKey(Schema.String).annotate({
+            description: "An address whose bytes become the material (path#L10-L20, or a <fold-commons> ref)",
+          }),
+          lang: Schema.optionalKey(Schema.String).annotate({ description: "OCR language for image/PDF (ISO code); omit for the door's default" }),
+        }),
+        output: Schema.Struct({ reading: Schema.String, standing: Schema.String, holes: Schema.String, giver: Schema.String }),
+        execute: (input, context) =>
+          Effect.gen(function* () {
+            const sessionID = context.sessionID
+            const workspace = yield* workspaceOf(sessionID)
+            const answer = yield* post(
+              { event: "swarm", sessionID, agent: sessionID, workspace, ask: input.ask, text: input.text, path: input.path, ref: input.ref, lang: input.lang },
+              swarmTimeout,
+            )
+            if (answer === undefined) return yield* Effect.fail(new ToolFailure({ message: `swarm: the fold door is unreachable at ${base}` }))
+            if (answer.ok !== true)
+              return yield* Effect.fail(new ToolFailure({ message: `swarm ${String(answer.gap ?? "failed")}: ${input.ask}` }))
+            const reading = String(answer.reading ?? "")
+            const standing = String(answer.standing ?? "unresolved")
+            const holes = String(answer.holes ?? "")
+            const giver = String(answer.giver ?? "ant-swarm")
+            const modality = String(answer.modality ?? "")
+            // The ground the ants read is disclosed when a sense derived it: the model must
+            // see that the material was measured (which modality, by whom), not handed raw.
+            const ground = modality && modality !== "text/plain" ? `ground: ${giver} (${modality})\n` : ""
+            const report = [`${ground}${reading}`, holes ? `anti-matter: ${holes}` : "", `standing: ${standing}`].filter(Boolean).join("\n")
+            // The reading as its own notice row, physically separate from the assistant's text — the door's
+            // measurement the model must not reword. Failure-silent: the tool result already carries it.
+            yield* ctx.session
+              .synthetic({ sessionID, text: report, description: "the swarm — the ants' reading, measured", resume: false })
+              .pipe(Effect.catchCause(() => Effect.void))
+            return {
+              output: { reading, standing, holes, giver },
+              content: report,
+              metadata: { schema: "EOSwarm@1", reading, standing, holes, giver, modality, origin: "mechanical" },
+            }
+          }).pipe(Effect.mapError((error) => (error instanceof ToolFailure ? error : new ToolFailure({ message: "swarm failed", error })))),
       }),
     )
 
