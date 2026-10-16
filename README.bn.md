@@ -1,9 +1,9 @@
 <p align="center">
   <a href="https://opencode.ai">
     <picture>
-      <source srcset="packages/console/app/src/asset/logo-ornate-dark.svg" media="(prefers-color-scheme: dark)">
-      <source srcset="packages/console/app/src/asset/logo-ornate-light.svg" media="(prefers-color-scheme: light)">
-      <img src="packages/console/app/src/asset/logo-ornate-light.svg" alt="OpenCode logo">
+      <source srcset="brand/opencode-x-the-fold-for-dark.svg" media="(prefers-color-scheme: dark)">
+      <source srcset="brand/opencode-x-the-fold-for-light.svg" media="(prefers-color-scheme: light)">
+      <img src="brand/opencode-x-the-fold-for-light.svg" alt="OpenCode logo">
     </picture>
   </a>
 </p>
