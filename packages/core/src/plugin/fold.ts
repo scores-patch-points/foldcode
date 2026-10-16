@@ -20,8 +20,6 @@ import { Message, ToolFailure } from "@opencode/ai"
 import { define, type Context } from "@opencode/plugin/effect/plugin"
 import type { SessionHooks } from "@opencode/plugin/effect/session"
 import { Effect, Schema, Stream } from "effect"
-import { Model } from "../model.js"
-import { Provider } from "../provider.js"
 import { record as rulerRecord, recordTokens as rulerTokens } from "./fold-ruler.js"
 
 const base = (process.env.FOLD_URL ?? "http://127.0.0.1:11436").replace(/\/+$/, "")
@@ -333,38 +331,6 @@ export const Plugin = define({
       )
     })
     const priceIn = (model: { providerID: string; id: string }) => prices.get(`${model.providerID}/${model.id}`)
-
-    // HEIMDALL BY THE FOLD — register the fold's own routing as a selectable model.
-    // The bridge serves `heimdall-by-the-fold` on an OpenAI-compatible wire whose
-    // /v1/chat/completions runs the void loop (heimdall src/void.js, src/compose.js).
-    // Keyless and local: FOLD_HEIMDALL_URL picks the bridge (default :8790),
-    // FOLD_HEIMDALL_OFF=1 removes it. Fails open — a down bridge is a model that
-    // errors when used, never a broken opencode.
-    if (process.env.FOLD_HEIMDALL_OFF !== "1") {
-      const heimdallBase = (process.env.FOLD_HEIMDALL_URL ?? process.env.HEIMDALL_URL ?? "http://127.0.0.1:8790").replace(/\/+$/, "")
-      yield* ctx.provider.transform((editor) => {
-        const providerID = Provider.ID.make("heimdall")
-        const base = Model.Info.default(providerID, Model.ID.make("heimdall-by-the-fold"))
-        editor.add({
-          info: {
-            ...Provider.Info.empty(providerID),
-            name: "Heimdall By The Fold",
-            activation: "enabled",
-            package: "@opencode/ai/providers/openai-compatible",
-            settings: { baseURL: heimdallBase + "/v1", apiKey: "" },
-          },
-          models: [
-            {
-              ...base,
-              name: "Heimdall By The Fold",
-              package: "@opencode/ai/providers/openai-compatible",
-              capabilities: { ...base.capabilities, tools: true, input: ["text"], output: ["text"] },
-              limit: { context: 131072, output: 8192 },
-            },
-          ],
-        })
-      })
-    }
 
     // The contract check: the fork speaks events the door's handshake lists.
     // A drifted door logs; it never blocks (everything here fails open).
