@@ -104,27 +104,34 @@ export function terrainOf(input, { key = '' } = {}) {
   const units = new Map();
   for (const st of sts) for (const f of st.figs || []) {
     const u = f.unit || f.label || '?'; const x = units.get(u) || units.set(u, { unit: u, values: new Map() }).get(u);
-    const vk = String(f.value); const v = x.values.get(vk) || x.values.set(vk, { raw: f.raw, value: f.value, docs: new Set(), at: [], refs: new Set() }).get(vk);
+    const vk = String(f.value); const v = x.values.get(vk) || x.values.set(vk, { raw: f.raw, value: f.value, docs: new Set(), at: [], refs: new Set(), yearLike: true }).get(vk);
     v.docs.add(st.doc);
+    // A value is yearLike only if EVERY occurrence of it is yearLike: one comma-formatted or currency occurrence
+    // ("1,200 cameras") proves it is a count, not a year.
+    v.yearLike = v.yearLike && !!f.yearLike;
     // LOCAL PATCH (openfold): the EARNED referents the statement carrying this value names — the anchor the
     // referent gate below uses to tell a real contradiction from a mere unit-string collision.
     for (const n of st.names || []) { const k = referentKey(n); if (k && earnedKeys.has(k)) v.refs.add(k); }
     if (v.at.length < 20) { const a = { ...addr(st), raw: f.raw }; a.window = windowOf(a, f.raw); v.at.push(a); }
   }
   const fieldRows = [...units.values()].map(x => {
-    const vals = [...x.values.values()].map(v => ({ raw: v.raw, value: v.value, sources: [...v.docs].sort(), at: v.at, refs: [...v.refs].sort() })).sort((a, b) => b.sources.length - a.sources.length || a.value - b.value);
+    const vals = [...x.values.values()].map(v => ({ raw: v.raw, value: v.value, sources: [...v.docs].sort(), at: v.at, refs: [...v.refs].sort(), yearLike: v.yearLike })).sort((a, b) => b.sources.length - a.sources.length || a.value - b.value);
     const bySource = new Set(vals.flatMap(v => v.sources));
     const differs = bySource.size >= 2 && vals.length >= 2 && !vals.some(v => v.sources.length === bySource.size);
+    // A collision of numbers that are ALL year-like (1000-2099, unformatted) is ambiguous — a count or a year
+    // plus a noun — so it can be NOMINATED but never ASSERTED as a contradiction. Falsifier: a false break on
+    // "Metro Nashville published the 2026 report" vs "…the 2027 report" (unit "report").
+    const allYearLike = vals.every(v => v.yearLike);
     // THE REFERENT GATE (LOCAL PATCH, openfold): a unit-string collision is only a CONTRADICTION when the
-    // differing values share a referent BOTH sources witness — "1200 cameras" vs "1500 cameras" about one city.
+    // differing values share a referent BOTH sources witness — "1,200 cameras" vs "1,500 cameras" about one city.
     // Two unrelated subjects that happen to share a unit ("library budget 120 dollars" vs "ticket sales 340
     // dollars") share no earned referent, so the collision is NOMINATED, never asserted. This is the mechanical
     // half of the identity law the terrain lacked; the full for-whom decision remains the door's (holodeck-
-    // contradiction.js). Falsifier: discover/falsify.test.mjs cases D and E.
+    // contradiction.js).
     const anchored = new Map();
     for (const v of vals) for (const k of v.refs) anchored.set(k, (anchored.get(k) || 0) + 1);
     const referentHeld = [...anchored.values()].some(n => n >= 2);
-    const row = { unit: x.unit, values: vals, sources: [...bySource].sort(), witnessedTwice: vals.filter(v => v.sources.length >= 2).length, differs, referentHeld, contradicts: differs && referentHeld, anchors: [...anchored].filter(([, n]) => n >= 2).map(([k]) => ref.get(k)?.name ?? k) };
+    const row = { unit: x.unit, values: vals, sources: [...bySource].sort(), witnessedTwice: vals.filter(v => v.sources.length >= 2).length, differs, referentHeld, yearLike: allYearLike, contradicts: differs && referentHeld && !allYearLike, anchors: [...anchored].filter(([, n]) => n >= 2).map(([k]) => ref.get(k)?.name ?? k) };
     // THE SEAM, OPT-IN: when the caller declares an observer (input.forWhom) AND the rows carry the holograph's
     // own referent (a being `anchor` and/or a `measure`), the unit-string `differs` above is nominated, never
     // decided — the contradiction is the identity law's, read for that observer (holodeck-contradiction.js).
@@ -263,8 +270,8 @@ export function terrainOf(input, { key = '' } = {}) {
       } : null,
     })),
   ];
-  const nominated = fieldRows.filter(f => f.differs && !f.referentHeld).map(f => ({
-    kind: 'unit collision (nominated — no shared referent)', unit: f.unit,
+  const nominated = fieldRows.filter(f => f.differs && !f.contradicts).map(f => ({
+    kind: f.yearLike ? 'year-like collision (ambiguous — nominated, never asserted)' : 'unit collision (nominated — no shared referent)', unit: f.unit,
     values: f.values.slice(0, 6).map(v => ({ raw: v.raw, sources: v.sources, at: v.at.slice(0, 2) })),
   }));
   const paradigm = { groups: paradigmGroups, stray, ties, recurs: echoes.slice(0, 20), echoFloor: +echoFloor.toFixed(3), breaks, nominated };

@@ -57,15 +57,20 @@ export function figuresIn(t) {
   while ((m = re.exec(t))) {
     if (m.index > 0 && /[A-Za-z0-9:.]/.test(t[m.index - 1])) continue;
     const cur = m[1], num = parseFloat(m[2].replace(/,/g, '')), mult = m[4]; let unit = m[6] || '';
-    if (!cur && !mult && !m[6] && /^\d{4}$/.test(m[2]) && num >= 1000 && num <= 2099) continue;   // a BARE year is a date, not a figure. LOCAL PATCH (openfold): the upstream test dropped any 4-digit number 1000-2099 even when a unit word followed, so "1200 cameras" vanished as if it were a year. Now only a bare year (no following unit word) is dropped; "1200 cameras" is the count it is. Falsifier: discover/falsify.test.mjs case B.
+    if (!cur && !mult && !m[6] && /^\d{4}$/.test(m[2]) && num >= 1000 && num <= 2099) continue;   // a BARE year is a date, not a figure.
+    // LOCAL PATCH (openfold): upstream dropped a 4-digit number 1000-2099 even when a unit word followed, so
+    // "1200 cameras" vanished as if it were a year. It is kept now — but tagged `yearLike` (it may be a count OR a
+    // year plus a noun, "2026 report"), UNLESS comma-formatted or carrying a currency/multiplier, which a year
+    // never is. The terrain reports a yearLike collision as a NOMINATION, never as an asserted contradiction.
+    const yearLike = !cur && !mult && /^\d{4}$/.test(m[2]) && num >= 1000 && num <= 2099;
     let end = m.index + m[0].length;
-    if (unit && /^[A-Z]/.test(unit)) { end -= (m[5] || '').length; unit = ''; }
-    if (cur) unit = cur === '$' ? 'dollars' : cur === '£' ? 'pounds' : 'euros';
+    if (cur) { end -= (m[5] || '').length; unit = cur === '$' ? 'dollars' : cur === '£' ? 'pounds' : 'euros'; }
+    else if (unit && /^[A-Z]/.test(unit)) continue;   // a capitalised word after a number is not a unit
     else if (unit === '%' || unit === 'percent') unit = 'percent';
     else if (!unit || /^(am|pm|a|an|the|and|or|of|in|on|at|to|by|for|was|were|is|are|th|st|nd|rd|s|times?)$/i.test(unit)) continue;
     else unit = unit.toLowerCase().replace(/s$/, '');
     const val = num * ({ million: 1e6, billion: 1e9, bn: 1e9, thousand: 1e3, k: 1e3 }[mult] || 1);
-    out.push({ raw: t.slice(m.index, end).trim(), value: val, unit, s: m.index, e: end });
+    out.push({ raw: t.slice(m.index, end).trim(), value: val, unit, yearLike, s: m.index, e: end });
   }
   return out;
 }

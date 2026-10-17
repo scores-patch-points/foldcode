@@ -152,6 +152,7 @@
     "**/*.d.ts",
     "**/sdk.gen.ts",
     "packages/plugins/figma/skills/**",
+    "packages/gui-extensions/src/fold/engine/**",
     ".agent/**",
     ".agents/**",
     ".claude/**",

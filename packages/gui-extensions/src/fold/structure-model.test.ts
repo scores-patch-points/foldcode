@@ -26,13 +26,39 @@ test("a unit collision with unrelated subjects is nominated, never a break", () 
   expect(t.seeing.paradigm.nominated.map((n: { unit: string }) => n.unit)).toContain("dollar")
 })
 
-test("an unformatted 4-digit count is a figure, not a year", () => {
+test("a comma-formatted 4-digit count is a break (a year is never 1,200)", () => {
+  const t = structureOf([
+    { id: "a", title: "a", text: "Metro Nashville operates 1,200 cameras." },
+    { id: "b", title: "b", text: "Metro Nashville operates 1,500 cameras." },
+  ])
+
+  expect(t.seeing.paradigm.breaks.map((b: { unit: string }) => b.unit)).toContain("camera")
+})
+
+test("an unformatted in-range count is ambiguous — nominated, never asserted", () => {
   const t = structureOf([
     { id: "a", title: "a", text: "Metro Nashville operates 1200 cameras." },
     { id: "b", title: "b", text: "Metro Nashville operates 1500 cameras." },
   ])
 
-  expect(t.seeing.paradigm.breaks.map((b: { unit: string }) => b.unit)).toContain("camera")
+  expect(t.seeing.paradigm.breaks.length).toBe(0)
+  expect(t.seeing.paradigm.nominated.map((n: { unit: string }) => n.unit)).toContain("camera")
+})
+
+test("a year plus a noun is not a contradiction (was a false break on 'report')", () => {
+  const t = structureOf([
+    { id: "a", title: "a", text: "Metro Nashville published the 2026 report." },
+    { id: "b", title: "b", text: "Metro Nashville published the 2027 report." },
+  ])
+
+  expect(t.seeing.paradigm.breaks.length).toBe(0)
+})
+
+test("a currency figure's span does not swallow the next word", () => {
+  const t = structureFromText("The budget was $1,200 for the project.")
+  const raw = t.seen.field.units[0]?.values[0]?.raw
+
+  expect(raw).toBe("$1,200")
 })
 
 test("buildReading cuts statements with their spans, and structure is deterministic", () => {
