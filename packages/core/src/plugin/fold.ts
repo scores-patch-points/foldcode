@@ -511,6 +511,51 @@ export const Plugin = define({
       return { priceCacheRead: price?.read, priceCacheWrite: price?.write }
     }
 
+    // WEB SEARCH, NATIVELY. Registered the way opencode's own search providers are
+    // (ctx.websearch.transform, the same transform the Exa/Tavily/… plugins use), but the
+    // engine is this machine: heimdall's keyless /api/search — Brave then DuckDuckGo from the
+    // operator's own address, no third-party key and no relay. It joins the built-in providers,
+    // so the first search selects one (the upstream flow) and remembers it; the doorway never
+    // forces a default, so an explicit choice always wins. FOLD_WEBSEARCH=0 removes it;
+    // FOLD_HEIMDALL_URL picks the bridge (default :8790). Fails open: a down bridge is one
+    // provider erroring, never a broken opencode.
+    if (process.env.FOLD_WEBSEARCH !== "0") {
+      const heimdall = (process.env.FOLD_HEIMDALL_URL ?? process.env.HEIMDALL_URL ?? "http://127.0.0.1:8790").replace(
+        /\/+$/,
+        "",
+      )
+      yield* ctx.websearch.transform((editor) => {
+        editor.add({
+          id: "this-machine",
+          name: "This machine",
+          execute: (input) =>
+            Effect.gen(function* () {
+              const response = yield* Effect.tryPromise(() =>
+                fetch(`${heimdall}/api/search?${new URLSearchParams({ q: input.query })}`, {
+                  signal: AbortSignal.timeout(20_000),
+                }),
+              )
+              if (!response.ok) return yield* Effect.fail(new Error(`heimdall search answered ${response.status}`))
+              const data = (yield* Effect.tryPromise(() => response.json())) as {
+                results?: ReadonlyArray<{ url?: unknown; title?: unknown; snippet?: unknown }>
+              }
+              return (data.results ?? []).flatMap((item) =>
+                typeof item.url === "string"
+                  ? [
+                      {
+                        url: item.url,
+                        ...(typeof item.title === "string" ? { title: item.title } : {}),
+                        ...(typeof item.snippet === "string" ? { content: item.snippet } : {}),
+                        time: {},
+                      },
+                    ]
+                  : [],
+              )
+            }),
+        })
+      })
+    }
+
     // The contract check: the fork speaks events the door's handshake lists.
     // A drifted door logs; it never blocks (everything here fails open).
     yield* Effect.tryPromise(async () => {

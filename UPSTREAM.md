@@ -23,7 +23,8 @@ honesty is one diff check.
 
 | File | What it is |
 |---|---|
-| `packages/core/src/plugin/fold.ts` | the doorway client — a thin forwarder to the fold stack's `POST /v1/hooks/opencode` (khora's `opencode-doorway.mjs`). No fold logic lives here, so it does not change when the fold does. |
+| `packages/core/src/plugin/fold.ts` | the doorway client — a thin forwarder to the fold stack's `POST /v1/hooks/opencode` (khora's `opencode-doorway.mjs`). No fold logic lives here, so it does not change when the fold does. It also registers web search the way opencode's own provider plugins do (`ctx.websearch.transform`): a keyless `This machine` provider whose engine is heimdall's `/api/search` (Brave then DuckDuckGo, from the operator's own address), selected by the normal first-search flow. `FOLD_WEBSEARCH=0` removes it; a down bridge is one provider erroring, never a broken opencode. |
+| `packages/core/test/fold-websearch.test.ts` | proves the doorway's web search provider registers alongside the built-ins without forcing a default, and maps the machine's own results. |
 | `packages/core/src/plugin/internal.ts` | its registration: one import, one entry, added last so it sees the context every other plugin has already shaped. |
 | `packages/app/src/session/timeline/session-mind.tsx` | the mind: says in words what the model is doing while a turn runs (stage, step count, polite live announcement, no reliance on motion or colour). The stages are the nine operators (NUL SIG INS SEG CON SYN DEF EVA REC); the one table mapping tool actions to operators is `session-mind-stage.ts`, tested by `session-mind.test.ts`. Mounted by a few added lines in `message-timeline.tsx`; nothing upstream is removed. |
 | `packages/gui-extensions/src/fold/remember.tsx` (+ `remember-model.ts`, tested by `remember-model.test.ts`) | the Remember window — a side tab over the operator's three standing stores: **facts** (memory), **access** (refs), and **system prompts**. It reads each store back from the door and appends to it. Its door backend is `khora/opencode-remember.mjs`; the door injects an entry into a prompt only when an ask's own words bear on it, so nothing here is loaded wholesale (see the `memory` bullet below). |
@@ -148,7 +149,7 @@ upstream commit the branch sits on) touches any file outside its allowed list �
 the doorway (`packages/core/src/plugin/fold.ts`, its registration in
 `internal.ts`), the fold UI extensions under `packages/gui-extensions/src/fold/`
 (including `remember.tsx`, `remember-model.ts`, `remember-model.test.ts`), the
-mind and its mount, `UPSTREAM.md`, `fold-sync.sh`, `fold-install.sh` — or if
-the delta deletes any upstream line. The authoritative allowed list is the
+mind and its mount, `UPSTREAM.md`, `fold-sync.sh`, `fold-install.sh`, the doorway's web search test
+(`packages/core/test/fold-websearch.test.ts`) — or if the delta deletes any upstream line. The authoritative allowed list is the
 `case` in `fold-sync.sh`. The fork only ever adds. If it ever needs another
 patch, that is a contract change: extend the allowed list first, deliberately.
