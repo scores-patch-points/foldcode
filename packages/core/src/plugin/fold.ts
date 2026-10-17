@@ -19,6 +19,7 @@ export * as FoldPlugin from "./fold.js"
 import { Message, ToolFailure } from "@opencode/ai"
 import { define, type Context } from "@opencode/plugin/effect/plugin"
 import type { SessionHooks } from "@opencode/plugin/effect/session"
+import { money } from "@opencode/util/savings"
 import { Effect, Schema, Stream } from "effect"
 import { record as rulerRecord, recordTokens as rulerTokens } from "./fold-ruler.js"
 
@@ -38,6 +39,10 @@ const coolDown = 30_000
 const debug = process.env.FOLD_DEBUG === "1"
 // FOLD_RULER_FILE=<path.jsonl> measures every primary request by segment (measurement only; see fold-ruler.ts).
 const rulerFile = process.env.FOLD_RULER_FILE
+// FOLD_TRAIL=1: stale tool results become opaque handles except the ones the decayed trail keeps (decided by the door, see
+// khora/opencode-trail.mjs; only when the prompt cache is cold or the window is under pressure, so it never costs a warm cache).
+const trailOn = process.env.FOLD_TRAIL === "1"
+const trailMinChars = Number(process.env.FOLD_TRAIL_MIN_CHARS ?? 1500)
 // Local-first perception: attachments are transcribed by the khora on the
 // box (tesseract, ffmpeg, poppler, whisper.cpp when installed) before the
 // frontier is sent them, so vision and transcription default to local
@@ -139,11 +144,27 @@ const priorTurns = (messages: SessionHooks["context"]["messages"]) => {
   })
 }
 
-const surfLocal = (turns: NonNullable<ReturnType<typeof surfPlan>>["turns"]) =>
-  `[fold: ${turns.length} earlier turn(s) kept out of this context; the full history remains in the session]\n` +
-  turns
-    .map((t) => `- ask: ${short(t.ask, 300)}\n  outcome: ${t.answer ? short(t.answer, 400) : "(no text reply)"}`)
-    .join("\n")
+// CLIPPY'S PRESENT, mechanically. The fold is not a transcript tail — it is the THREAD: DISCOURSE (the beings
+// the current ask SHARES with the folded turns, computed from the words, never drawn) and what is already
+// SETTLED (DMD, last-wins per ask). The frontier is handed the present — what the conversation is ABOUT and
+// what is done — so a trimmed window cannot lose the thread and re-answer. No model; a fact to reason from.
+const wordsOf = (t: string) => new Set(String(t ?? "").toLowerCase().match(/[\p{L}\p{N}_]{4,}/gu) ?? [])
+export const surfLocal = (turns: NonNullable<ReturnType<typeof surfPlan>>["turns"], ask = "") => {
+  const byAsk = new Map<string, (typeof turns)[number]>()
+  for (const t of turns) byAsk.set(short(t.ask, 300), t) // last-wins per ask (the DMD)
+  const kept = [...byAsk.values()]
+  const askW = wordsOf(ask)
+  const about = [
+    ...new Set(kept.flatMap((t) => [...wordsOf(`${t.ask} ${t.answer}`)].filter((w) => askW.has(w)))),
+  ].slice(0, 6)
+  return [
+    `[fold: the thread — ${kept.length} earlier ask(s) settled (of ${turns.length} turns); the full history remains in the session]`,
+    ...(about.length ? [`about: ${about.join(", ")}`] : []),
+    ...kept.map(
+      (t) => `- asked: ${short(t.ask, 300)} → ${t.answer ? `settled: ${short(t.answer, 400)}` : "(open, no reply)"}`,
+    ),
+  ].join("\n")
+}
 
 const surfApply = (messages: SessionHooks["context"]["messages"], cut: number, note: string) => {
   const head = messages[cut]
@@ -156,6 +177,33 @@ const surfApply = (messages: SessionHooks["context"]["messages"], cut: number, n
     providerMetadata: head.providerMetadata,
     native: head.native,
   })
+}
+
+// THE HARD CAP — the frontier's window NEVER grows past FOLD_MAX_CHARS. The local model does a lot with
+// 8,000 chars; the frontier gets one comfortable ceiling and no more. Folding bounds it per turn; this bounds
+// it absolutely: after folding, drop the OLDEST whole turn until the assembly fits, always keeping the last
+// (the current ask) and the head. A filed ceiling, not a hope — no turn, tool output or runaway can pass it.
+const messageChars = (m: SessionHooks["context"]["messages"][number]) =>
+  m.content.reduce(
+    (k, p) =>
+      k +
+      (p.type === "text"
+        ? p.text.length
+        : p.type === "tool-call"
+          ? JSON.stringify(p.input ?? {}).length
+          : p.type === "tool-result"
+            ? JSON.stringify(p.result ?? {}).length
+            : 0),
+    0,
+  )
+export const contextChars = (messages: SessionHooks["context"]["messages"]) => messages.reduce((n, m) => n + messageChars(m), 0)
+export const capContext = (messages: SessionHooks["context"]["messages"]) => {
+  const max = Number(process.env.FOLD_MAX_CHARS ?? 32_000)
+  if (!(max > 0)) return
+  // Drop the OLDEST message after the head, one at a time, while over the ceiling. The head (index 0, which
+  // carries the fold note) and the last (the current ask) are pinned — the window shrinks from the middle of
+  // its own history, and can never exceed the filed max however long the session runs.
+  for (let guard = 0; guard < 5000 && messages.length > 2 && contextChars(messages) > max; guard++) messages.splice(1, 1)
 }
 
 const isNewAsk = (messages: SessionHooks["context"]["messages"]) => messages.at(-1)?.role === "user"
@@ -247,7 +295,7 @@ const formatMeter = (meter: Record<string, unknown>) => {
     `fold savings · since ${String(savings.since ?? "?")}`,
     `kept out of the frontier: ${num(savings.projectedChars).toLocaleString()} chars ≈ ${num(savings.projectedTokensEst).toLocaleString()} tokens (projections ${num(savings.projections)})`,
     `titles served by rule: ${num(meter.titlesServedLocally)} ≈ ${num(savings.titleTokensEst).toLocaleString()} frontier tokens avoided`,
-    `estimated saved: $${num(savings.savedUSD).toFixed(4)} (${String(savings.note ?? "")})`,
+    `estimated saved: ${money(num(savings.savedUSD))} (${String(savings.note ?? "")})`,
     `frontier bought: ${num(meter.turns)} turns · first ${num(first.n)} (${num(first.tokens).toLocaleString()} tok) · repeats ${num(repeats.n)}, ${num(repeats.recalled)} recalled`,
     `meter: ${base}/v1/hooks/opencode/meter`,
   ].join("\n")
@@ -322,15 +370,27 @@ export const Plugin = define({
 
     // The price of the model actually in use, from the operator's own catalog;
     // sent with each fold so the door's dollars are the running model's dollars.
-    let prices = new Map<string, number>()
+    let prices = new Map<string, { input: number; read: number; write: number }>()
     yield* ctx.model.transform((editor) => {
       prices = new Map(
         editor.list().flatMap((model) =>
-          model.cost.length > 0 ? [[`${model.providerID}/${model.id}`, model.cost[0].input] as const] : [],
+          model.cost.length > 0
+            ? [
+                [
+                  `${model.providerID}/${model.id}`,
+                  { input: model.cost[0].input, read: model.cost[0].cache.read, write: model.cost[0].cache.write },
+                ] as const,
+              ]
+            : [],
         ),
       )
     })
-    const priceIn = (model: { providerID: string; id: string }) => prices.get(`${model.providerID}/${model.id}`)
+    const priceIn = (model: { providerID: string; id: string }) => prices.get(`${model.providerID}/${model.id}`)?.input
+    // The cache prices let the door price a cut against the cached prefix it would burn; the door decides.
+    const priceCache = (model: { providerID: string; id: string }) => {
+      const price = prices.get(`${model.providerID}/${model.id}`)
+      return { priceCacheRead: price?.read, priceCacheWrite: price?.write }
+    }
 
     // The contract check: the fork speaks events the door's handshake lists.
     // A drifted door logs; it never blocks (everything here fails open).
@@ -356,6 +416,12 @@ export const Plugin = define({
     // further door traffic. The cache is keyed by part id and scoped to the
     // session's plugin lifetime.
     const folded = new Map<string, string>()
+    // trail: handle -> the exact bytes the tool returned (the durable session keeps them too); the ids already pointerized
+    // per session (monotone: a stub never turns back into bytes, so the prompt prefix flips at most once per result);
+    // when each session last asked, for the door's idle gate.
+    const trailStore = new Map<string, string>()
+    const trailDone = new Map<string, Map<string, string>>()
+    const lastCall = new Map<string, number>()
 
     // The precompute: a tool result is folded the moment it lands (event-time,
     // off the request path) and cached by part id; the context hook reads the
@@ -609,8 +675,63 @@ export const Plugin = define({
         }
       })
 
+    const trailMessages = (event: SessionHooks["context"]) =>
+      Effect.gen(function* () {
+        const now = Date.now()
+        const idleMs = now - (lastCall.get(event.sessionID) ?? now)
+        lastCall.set(event.sessionID, now)
+        const done = trailDone.get(event.sessionID) ?? new Map<string, string>()
+        trailDone.set(event.sessionID, done)
+        // what each result is ABOUT: the path (or pattern/command) its call named
+        const keyOf = new Map<string, string>()
+        const results: Array<{ id: string; key: string; step: number }> = []
+        let step = 0
+        for (const message of event.messages) {
+          if (message.role === "user" && message.content.some((part) => part.type === "text")) step++
+          for (const part of message.content) {
+            if (part.type === "tool-call") {
+              const input = (part.input ?? {}) as Record<string, unknown>
+              const arg = input.filePath ?? input.path ?? input.file ?? input.pattern ?? input.command ?? input.url ?? ""
+              keyOf.set(part.id, `${part.name}:${String(arg).slice(0, 200)}`)
+            }
+            const target = foldable(part)
+            if (target && target.text.length >= trailMinChars) results.push({ id: target.id, key: keyOf.get(target.id) ?? `${target.name}:${target.id}`, step })
+          }
+        }
+        if (!results.length && done.size === 0) return
+        // a result already pointerized stays pointerized on every later call; new ones only when the door says go
+        let point = new Map<string, string>(done)
+        const tokens = Math.round(event.messages.reduce((n, m) => n + m.content.reduce((k, p) => k + (p.type === "text" ? p.text.length : p.type === "tool-result" ? JSON.stringify(p.result).length : 0), 0), 0) / 4)
+        const answer = yield* post({ event: "trail", sessionID: event.sessionID, results, already: [...done.keys()], idleMs, tokens, window: 200_000 }, askTimeout)
+        if (answer?.go === true && answer.point && typeof answer.point === "object") for (const [id, handle] of Object.entries(answer.point as Record<string, string>)) if (!point.has(id)) point.set(id, String(handle))
+        if (point.size === 0) return
+        for (const [index, message] of event.messages.entries()) {
+          let changed = false
+          const content = message.content.map((part) => {
+            const target = foldable(part)
+            const handle = target ? point.get(target.id) : undefined
+            if (!target || !handle || target.text.startsWith("[") && target.text.includes("kept out; SNIP")) return part
+            trailStore.set(handle, target.text)
+            done.set(target.id, handle)
+            changed = true
+            return { ...part, result: { type: "text" as const, value: `[${target.text.length} chars kept out; SNIP ${handle}]` } }
+          })
+          if (changed)
+            event.messages[index] = Message.make({ id: message.id, role: message.role, content, metadata: message.metadata, providerMetadata: message.providerMetadata, native: message.native })
+        }
+      })
+
     const context = (event: SessionHooks["context"]) =>
       Effect.gen(function* () {
+        // THE NOTICES ARE OUTPUT, NEVER INPUT. A `synthetic` notice still rides in the session, so a fold
+        // notice rendered for the PERSON (facing, chase, matrix, view, savings, audit) is stripped here before
+        // anything is sent — otherwise the model ANSWERS the notice itself. Measured without this: over two
+        // turns the model replied to the facing text and the window inflated to 219k tokens.
+        for (let i = event.messages.length - 1; i >= 0; i--) {
+          const text = event.messages[i].content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n")
+          if (/^(?:fold facing ·|fold chase|fold matrix|fold view |fold savings|fold audit|fold door unreachable)/m.test(text))
+            event.messages.splice(i, 1)
+        }
         // Remember the turn's ask and model so a tool result that lands mid-turn
         // can be folded at event time without re-reading the message list.
         lastAsk.set(event.sessionID, lastUserText(event.messages))
@@ -684,13 +805,31 @@ export const Plugin = define({
           // it is about to splice away, so the door's savings ledger (and the
           // titlebar tally) report the real reduction, not only the title calls.
           const keptOutChars = JSON.stringify(event.messages.slice(0, plan.cut)).length
+          // THE FLOOR: the door's answer never decides whether the window is trimmed. The post is bounded by a
+          // HARD client timeout, so a wedged door (accepts the connection, never answers) resolves to
+          // `undefined` and the cut below still runs. The door supplies the NOTE; the CLIENT holds the window
+          // flat — the window floor must not depend on the door.
           const answer = yield* post(
-            { event: "surf", sessionID: event.sessionID, task, workspace, ask: lastUserText(event.messages), turns: plan.turns, keptOutChars, priceIn: priceIn(event.model) },
+            { event: "surf", sessionID: event.sessionID, task, workspace, ask: lastUserText(event.messages), turns: plan.turns, keptOutChars, priceIn: priceIn(event.model), ...priceCache(event.model) },
             askTimeout,
-          )
-          surfApply(event.messages, plan.cut, typeof answer?.note === "string" && answer.note.length > 0 ? answer.note : surfLocal(plan.turns))
+          ).pipe(Effect.timeout(askTimeout + 100), Effect.catch(() => Effect.succeed(undefined)))
+          // not cut when the history is shorter than its own ladder, or when the door's cost gate prices the cut above
+          // the cached prefix it would burn (the door says `uncut`): the turns stay, only the note rides
+          if (answer?.uncut === true) {
+            if (typeof answer.note === "string" && answer.note.length > 0) event.system.push({ type: "text", text: answer.note })
+          } else
+            surfApply(
+              event.messages,
+              plan.cut,
+              typeof answer?.note === "string" && answer.note.length > 0
+                ? answer.note
+                : surfLocal(plan.turns, lastUserText(event.messages)),
+            )
         }
         yield* foldMessages(event)
+        if (trailOn) yield* trailMessages(event)
+        // THE HARD CAP: after every fold, the frontier's window is bounded absolutely (FOLD_MAX_CHARS).
+        capContext(event.messages)
       })
 
     const title = (event: SessionHooks["title"]) =>
@@ -968,6 +1107,12 @@ export const Plugin = define({
           Effect.gen(function* () {
             const sessionID = String((context as { sessionID?: unknown }).sessionID ?? "")
             const workspace = yield* workspaceOf(sessionID)
+            // an opaque trail handle is resolved here, from the bytes the tool returned; no door round trip
+            if (/^r[0-9a-z]{4,16}$/.test(input.ref.trim())) {
+              const kept = trailStore.get(input.ref.trim())
+              if (kept === undefined) return yield* Effect.fail(new ToolFailure({ message: `snip: handle ${input.ref} is not held by this session (the full output remains in the session history)` }))
+              return { output: { bytes: kept, standing: "witnessed", from: "tool result" }, content: kept, metadata: { schema: "EOTSnip@1", ref: input.ref, standing: "witnessed", from: "tool result", origin: "mechanical" } }
+            }
             const answer = yield* post({ event: "snip", sessionID, agent: sessionID, workspace, ref: input.ref }, askTimeout * 4)
             if (answer === undefined) return yield* Effect.fail(new ToolFailure({ message: `snip: the fold door is unreachable at ${base}` }))
             if (answer.ok !== true)
