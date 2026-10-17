@@ -10,11 +10,13 @@
 # process" — the Desktop IPC error. The app cannot clean this up alone; its own
 # cleanStages removes stale staged binaries, not running orphans from other builds.
 #
-# Reap rule: a `serve --service` process whose parent is gone (PPID 1), older than the
-# grace period, with no ESTABLISHED client connections to any port it listens on, and not
-# the CURRENT staged CLI (that one the next boot adopts on purpose — never killed). A
-# service someone is actually using, or one whose parent is alive, is never touched.
-# An intentional unattended service defeats the reaper with:
+# Reap rule: a `serve --service` process whose parent is gone (PPID 1), with no
+# ESTABLISHED client connections to any port it listens on, and not one the next boot
+# adopts — the CURRENT staged CLI, or the service the state file registers for adoption
+# with a matching pid, version and port (client service-probe.ts). No age minimum by
+# default (FOLD_REAP_GRACE overrides): a fresh orphan at a boot must die before the
+# boot's own service start. A service someone is actually using, or one whose parent
+# is alive, is never touched. An intentional unattended service defeats the reaper with:
 #   touch ~/.config/opencode/keep-managed-service
 #
 #   ./fold-reaper.sh reap       reap once and exit (what launchd runs)
@@ -27,7 +29,7 @@ set -eu
 label="ai.opencode.fold.reaper"
 home_dir="$HOME/.local/share/fold-reaper"
 log="$HOME/Library/Logs/fold-reaper.log"
-grace="${FOLD_REAP_GRACE:-5}"
+grace="${FOLD_REAP_GRACE:-0}"
 
 # launchd starts this with a near-empty PATH; ps, pgrep and lsof live in the system bins.
 PATH="/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
@@ -69,6 +71,25 @@ service_cmd() {
   esac
 }
 
+# The registration file is the boot's discovery contract: a boot reuses a registered
+# service only when pid, version and listening port all match. Spare exactly that
+# class; any other service holding the port is a collider the boot cannot use.
+registered_for_boot() {
+  rpid="$1"
+  f="${XDG_STATE_HOME:-$HOME/.local/state}/opencode/service.json"
+  [ -f "$f" ] || return 1
+  rf=$(cat "$f" 2>/dev/null) || return 1
+  p=$(printf '%s' "$rf" | sed -n 's/.*"pid":\([0-9]*\).*/\1/p')
+  v=$(printf '%s' "$rf" | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')
+  u=$(printf '%s' "$rf" | sed -n 's/.*"url":"[^"]*:\([0-9]*\)".*/\1/p')
+  [ -n "$p" ] && [ "$p" = "$rpid" ] || return 1
+  rv=0
+  for x in $2; do [ "$v" = "$x" ] && rv=1; done
+  [ "$rv" = 1 ] || return 1
+  for lp in $(listen_ports "$rpid"); do [ "$lp" = "$u" ] && return 0; done
+  return 1
+}
+
 reap() {
   if [ -f "$HOME/.config/opencode/keep-managed-service" ]; then
     [ "${FOLD_REAP_DRY:-0}" = 1 ] && echo "keep marker present; nothing reaped"
@@ -95,6 +116,10 @@ reap() {
     done
     if [ "$adoptable" = 1 ]; then
       [ "${FOLD_REAP_DRY:-0}" = 1 ] && echo "keep pid $pid (current staged CLI; the next boot adopts it)"
+      continue
+    fi
+    if registered_for_boot "$pid" "$versions"; then
+      [ "${FOLD_REAP_DRY:-0}" = 1 ] && echo "keep pid $pid (registered service the next boot adopts)"
       continue
     fi
     if [ "$age" -lt "$grace" ]; then
@@ -138,6 +163,7 @@ status() {
     done
     if [ "$ppid" != 1 ]; then verdict="owned (parent $ppid alive)"
     elif [ "$adoptable" = 1 ]; then verdict="adoptable (current staged CLI)"
+    elif registered_for_boot "$pid" "$versions"; then verdict="adoptable (registered for the next boot)"
     else
       busy=0
       for p in $ports; do [ "$(clients_on "$p")" -gt 0 ] && busy=1; done
@@ -162,6 +188,7 @@ agent_plist() {
   </array>
   <key>RunAtLoad</key><true/>
   <key>StartInterval</key><integer>10</integer>
+  <key>ThrottleInterval</key><integer>1</integer>
   <key>WatchPaths</key><array>
     <string>$HOME/Library/Application Support/ai.opencode.desktop.dev/logs</string>
   </array>

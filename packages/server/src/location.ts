@@ -14,7 +14,7 @@ export type LocationServices = Layer.Success<ReturnType<(typeof LocationServiceM
 
 export class LocationMiddleware extends HttpApiMiddleware.Service<LocationMiddleware, { provides: LocationServices }>()(
   "@opencode/HttpApiLocation",
-  { error: [LocationNotFoundError] },
+  { error: [LocationNotFoundError, ServiceUnavailableError] },
 ) {}
 
 export function locationErrors<A, E, R>(effect: Effect.Effect<A, E, R>) {
@@ -29,6 +29,17 @@ export function locationErrors<A, E, R>(effect: Effect.Effect<A, E, R>) {
             message: `Location not found: ${error.directory}`,
           }),
         ),
+    ),
+    // An unreadable directory — macOS Files-and-Folders answers EPERM (a rebuild of the app invalidates
+    // its grant), a mode bit answers EACCES — dies in the resolution layer (FSUtil.resolve's orDie) and
+    // must arrive as a typed 503 with its cause disclosed, never a bare 500 that swallows it.
+    Effect.catchDefect((defect) =>
+      Effect.fail(
+        new ServiceUnavailableError({
+          message: defect instanceof Error ? defect.message : String(defect),
+          service: "location",
+        }),
+      ),
     ),
   )
 }
