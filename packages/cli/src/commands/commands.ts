@@ -412,6 +412,10 @@ const Root = Spec.make(typeof OPENCODE_CLI_NAME === "string" ? OPENCODE_CLI_NAME
         ),
         title: Flag.String("title").pipe(Flag.withDescription("Session title"), Flag.optional),
         thinking: Flag.Boolean("thinking").pipe(Flag.withDescription("Show thinking blocks"), Flag.withDefault(false)),
+        steps: Flag.Int("steps").pipe(
+          Flag.withDescription("Maximum model steps before the run stops (default: 16)"),
+          Flag.optional,
+        ),
         ...PermissionParams,
       },
     }),

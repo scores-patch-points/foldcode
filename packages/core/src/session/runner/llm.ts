@@ -240,8 +240,11 @@ const layer = Layer.effect(
           messages: stepLimitReached
             ? [...transcript.messages, Message.assistant(MAX_STEPS_PROMPT)]
             : transcript.messages,
-          // Keep tool definitions on the final Step to preserve the provider's cached prefix.
-          toolChoice: stepLimitReached ? "none" : undefined,
+          // Keep tool definitions on the final Step to preserve the provider's cached prefix. A request with NO
+          // tool definitions is also a "none": a tool call the model emits anyway (from its own prior — measured
+          // on deepseek-v4.1-flash, which asked for tools that were not offered) is recorded as unsettled, and the
+          // runner's continuation recovery then re-invokes the model forever with no tool left to run.
+          toolChoice: stepLimitReached || loaded.tools.definitions.length === 0 ? "none" : undefined,
           webSocket: "session",
           inputTokens: SessionCompaction.estimatePrompt(loaded),
         })

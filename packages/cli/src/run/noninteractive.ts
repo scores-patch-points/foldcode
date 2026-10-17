@@ -38,6 +38,8 @@ type Input = {
   auto: boolean
   /** True when the client is attached to a shared server rather than an exclusive in-process one. */
   attached: boolean
+  /** Hard cap on model steps for this run; overrides DEFAULT_STEPS. */
+  steps?: number
   compatibility?: "v1"
   renderTool: (part: SessionMessageAssistantTool) => Promise<void>
   renderToolError: (part: SessionMessageAssistantTool) => Promise<void>
@@ -73,6 +75,11 @@ const QUESTION_CANCELLED_FEEDBACK =
 const PERMISSION_REJECTED_FEEDBACK =
   "This non-interactive run cannot ask the user for permission, so the request was rejected. Continue without this action."
 
+// A non-interactive run answers ONE message with no human present to break a loop. Cap the model steps so a model
+// that oscillates (for example, retrying a tool the door denied) fails fast instead of re-sending the whole window
+// dozens of times. `--steps` raises it for a genuinely long task.
+const DEFAULT_STEPS = 16
+
 export async function runNonInteractivePrompt(input: Input) {
   const controller = new AbortController()
   const stream = input.client.event.subscribe({ signal: controller.signal })[Symbol.asyncIterator]()
@@ -96,6 +103,8 @@ export async function runNonInteractivePrompt(input: Input) {
   let finalizing = false
   let admission: AbortController | undefined
   let pendingStep: { timestamp: number; part: Record<string, unknown>; label: string } | undefined
+  let stepCount = 0
+  const stepCap = input.steps ?? DEFAULT_STEPS
 
   const emit = (type: string, timestamp: number, data: Record<string, unknown>) => {
     if (input.format !== "json") return false
@@ -268,6 +277,18 @@ export async function runNonInteractivePrompt(input: Input) {
       if (finalizing && !event.type.startsWith("session.execution.") && event.type !== "session.step.ended") continue
 
       if (event.type === "session.step.started") {
+        stepCount += 1
+        if (stepCount > stepCap) {
+          emittedError = true
+          process.exitCode = 1
+          const error = {
+            type: "step_limit",
+            message: `Step limit reached (${stepCap}); a non-interactive run is capped so a loop fails instead of burning the window. Raise it with --steps.`,
+          }
+          if (!emit("error", time, { error })) UI.error(error.message)
+          await input.client.session.interrupt({ sessionID: input.sessionID }).catch(() => {})
+          continue
+        }
         const part = {
           id: partID(event.id),
           sessionID: input.sessionID,

@@ -25,6 +25,7 @@ export type RunCommandInput = {
   title?: string
   thinking?: boolean
   auto?: boolean
+  steps?: number
 }
 
 type FilePart = {
@@ -146,6 +147,7 @@ async function execute(input: RunCommandInput, prepared: Prepared, endpoint: End
     thinking: input.thinking ?? false,
     format: input.format,
     auto: input.auto ?? false,
+    steps: input.steps,
     attached: options.attached ?? true,
     compatibility: options.compatibility,
     renderTool: (part) => renderTool(part, target.location.directory),

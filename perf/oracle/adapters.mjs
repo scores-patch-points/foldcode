@@ -76,12 +76,23 @@ const once = (model, prompt, timeoutMs, standalone = STANDALONE) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "oracle-"))
   const file = path.join(dir, "prompt.txt")
   fs.writeFileSync(file, prompt)
-  // THE MOUTH IS TEXT: no tools, ever (the fold's own second-mouth rule). Without this the model, given a reduced
-  // arm, reaches for read/bash to get the hidden bytes instead of following the SNIP protocol, and the measurement
-  // is contaminated — measured on deepseek-v4.1-flash: handles6 needle@10 -> "model used 9 tools", 161k tokens,
-  // wrong. A deny-all permission rule disables every tool at the door (verified: provoked a tool, got 0).
-  fs.writeFileSync(path.join(dir, "opencode.json"), JSON.stringify({ $schema: "https://opencode.ai/config.json", permission: "deny" }))
-  const args = ["run", ...(standalone ? ["--standalone"] : []), "-m", model, "--format", "json", "-f", file, "Follow the instructions in the attached file."]
+  // THE MOUTH IS TEXT: no tools, ever (the fold's own second-mouth rule). The deny has to be the AGENT's permission
+  // ruleset: the tool snapshot is filtered by Permission.merge(agent.info.permissions, session.permissions)
+  // (session/context.ts), NOT by the top-level config, so the previous `permission:"deny"` (and `tools:false`) were
+  // silently ignored — no such top-level keys — and the model was offered the FULL tool list, the fold's own `snip`
+  // tool included. Measured on deepseek-v4.1-flash: asked to list its tools it named snip/swarm/perceive/execute;
+  // given a reduced arm it called `execute` with tools.snip(ref) (snip is codemode:false, so the sandbox has no such
+  // tool) -> "Unknown tool 'snip'" -> a 22-step loop at 427k tokens. With the agent ruleset the surface is empty and
+  // the model follows the TEXT SNIP protocol the arms are built around.
+  fs.writeFileSync(
+    path.join(dir, "opencode.json"),
+    JSON.stringify({
+      $schema: "https://opencode.ai/config.json",
+      agents: { build: { permissions: [{ action: "*", resource: "*", effect: "deny" }] } },
+    }),
+  )
+  const steps = process.env.OPENCODE_STEPS
+  const args = ["run", ...(standalone ? ["--standalone"] : []), ...(steps ? ["--steps", steps] : []), "-m", model, "--format", "json", "-f", file, "Follow the instructions in the attached file."]
   const started = Date.now()
   try {
     const r = spawnSync(BIN, args, {
