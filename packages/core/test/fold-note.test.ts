@@ -24,6 +24,18 @@ test("the fold's note carries the thread (clippy's present): about + settled, la
   expect(note).not.toContain("03:00")
 })
 
+test("the fold composes a chain (BOX computes): the derivation survives a minimal window", () => {
+  const turns = [
+    { n: 1, ask: "Define the base B.", answer: "B = 7." },
+    { n: 2, ask: "Define the shard count S.", answer: "S = B * 3." },
+    { n: 3, ask: "Define the fanout F.", answer: "F = S - 5." },
+    { n: 4, ask: "Define the quota Q.", answer: "Q = F - 6." },
+  ]
+  const note = surfLocal(turns, "what is the quota Q?")
+  expect(note).toContain("derived") // the machine composed the chain
+  expect(note).toContain("Q=10") // 7*3=21, 21-5=16, 16-6=10 — the RESULT, not the links
+})
+
 test("the fold's note is deterministic (pure — no model, no clock)", () => {
   const turns = [turn(1, "a question about the parser", "the parser lives in lib/p.js")]
   expect(surfLocal(turns, "where is the parser?")).toBe(surfLocal(turns, "where is the parser?"))

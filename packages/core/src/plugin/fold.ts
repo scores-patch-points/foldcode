@@ -149,6 +149,86 @@ const priorTurns = (messages: SessionHooks["context"]["messages"]) => {
 // SETTLED (DMD, last-wins per ask). The frontier is handed the present — what the conversation is ABOUT and
 // what is done — so a trimmed window cannot lose the thread and re-answer. No model; a fact to reason from.
 const wordsOf = (t: string) => new Set(String(t ?? "").toLowerCase().match(/[\p{L}\p{N}_]{4,}/gu) ?? [])
+
+// ── THE DERIVATION — BOX computes the chain ─────────────────────────────────
+// A turn that DEFINES a value in terms of earlier ones (`NAME = expression`) is a link. The machine COMPOSES the
+// chain to its values, so the note carries the RESULT of the derivation, not its links — a complex, interdependent
+// thread survives a minimal window. Only arithmetic over the chain is composed; anything not computable is left
+// in the mouth's own words. No model, deterministic, zero tokens.
+const DEF_RE = /^\s*([A-Za-z][A-Za-z0-9_]*)\s*=\s*([^.\n]+?)\s*\.?\s*$/
+export function evalArith(expr: string, lookup: (n: string) => number | null): number | null {
+  const s = String(expr)
+  let i = 0
+  const ws = () => {
+    while (i < s.length && /\s/.test(s[i])) i++
+  }
+  function primary(): number | null {
+    ws()
+    if (s[i] === "(") {
+      i++
+      const v = add()
+      ws()
+      if (s[i] === ")") i++
+      return v
+    }
+    const ns = i
+    while (i < s.length && /[0-9.]/.test(s[i])) i++
+    if (i > ns) return Number(s.slice(ns, i))
+    const is = i
+    while (i < s.length && /[A-Za-z0-9_]/.test(s[i])) i++
+    if (i > is) return lookup(s.slice(is, i))
+    return null
+  }
+  function mul(): number | null {
+    let v = primary()
+    if (v === null) return null
+    for (;;) {
+      ws()
+      const op = s[i]
+      if (op !== "*" && op !== "/") return v
+      i++
+      const r = primary()
+      if (r === null) return null
+      v = op === "*" ? v * r : v / r
+    }
+  }
+  function add(): number | null {
+    let v = mul()
+    if (v === null) return null
+    for (;;) {
+      ws()
+      const op = s[i]
+      if (op !== "+" && op !== "-") return v
+      i++
+      const r = mul()
+      if (r === null) return null
+      v = op === "+" ? v + r : v - r
+    }
+  }
+  const v = add()
+  ws()
+  return i === s.length ? v : null
+}
+/** The chain a session defined, composed: every `NAME = expression` turn resolved to its value where it is arithmetic. */
+export function derivationFor(turns: NonNullable<ReturnType<typeof surfPlan>>["turns"]): Map<string, number> {
+  const defs = new Map<string, string>()
+  for (const t of turns) {
+    const m = DEF_RE.exec(String(t.answer ?? "").trim())
+    if (m) defs.set(m[1], m[2])
+  }
+  const val = new Map<string, number>()
+  const resolve = (n: string, seen: Set<string>): number | null => {
+    if (val.has(n)) return val.get(n) ?? null
+    if (!defs.has(n) || seen.has(n)) return null
+    seen.add(n)
+    const v = evalArith(defs.get(n) ?? "", (x) => resolve(x, seen))
+    if (typeof v === "number" && Number.isFinite(v)) val.set(n, v)
+    return val.has(n) ? (val.get(n) ?? null) : null
+  }
+  for (const n of defs.keys()) resolve(n, new Set())
+  return val
+}
+
 export const surfLocal = (turns: NonNullable<ReturnType<typeof surfPlan>>["turns"], ask = "") => {
   const byAsk = new Map<string, (typeof turns)[number]>()
   for (const t of turns) byAsk.set(short(t.ask, 300), t) // last-wins per ask (the DMD)
@@ -157,9 +237,15 @@ export const surfLocal = (turns: NonNullable<ReturnType<typeof surfPlan>>["turns
   const about = [
     ...new Set(kept.flatMap((t) => [...wordsOf(`${t.ask} ${t.answer}`)].filter((w) => askW.has(w)))),
   ].slice(0, 6)
+  // THE DERIVATION, composed: the chain resolved to its values, so a trimmed window still holds the result.
+  const derived = derivationFor(kept)
+  const derivedLine = [...derived]
+    .map(([n, v]) => `${n}=${Number.isInteger(v) ? v : v.toFixed(2)}`)
+    .join(", ")
   return [
     `[fold: the thread — ${kept.length} earlier ask(s) settled (of ${turns.length} turns); the full history remains in the session]`,
     ...(about.length ? [`about: ${about.join(", ")}`] : []),
+    ...(derived.size ? [`derived (the machine composed the chain): ${derivedLine}`] : []),
     ...kept.map(
       (t) => `- asked: ${short(t.ask, 300)} → ${t.answer ? `settled: ${short(t.answer, 400)}` : "(open, no reply)"}`,
     ),
