@@ -11,9 +11,9 @@
 # cleanStages removes stale staged binaries, not running orphans from other builds.
 #
 # Reap rule: a `serve --service` process whose parent is gone (PPID 1), with no
-# ESTABLISHED client connections to any port it listens on, and not one the next boot
-# adopts — the CURRENT staged CLI, or the service the state file registers for adoption
-# with a matching pid, version and port (client service-probe.ts). No age minimum by
+# ESTABLISHED client connections to any port it listens on, and not the service the state
+# file registers for adoption — pid, version, listening port AND a live /api/info answer
+# must all match the boot's own discover() contract (client service-probe.ts). No age minimum by
 # default (FOLD_REAP_GRACE overrides): a fresh orphan at a boot must die before the
 # boot's own service start. A service someone is actually using, or one whose parent
 # is alive, is never touched. An intentional unattended service defeats the reaper with:
@@ -71,9 +71,21 @@ service_cmd() {
   esac
 }
 
+# A registered service is spared only if it ANSWERS: /api/info must return the registered
+# version and pid (the boot's own discover() contract, client service-probe.ts). A
+# registered service that cannot answer holds the port and can never be adopted — a collider.
+probe_ok() {
+  body=$(curl -sf -m 2 -u "opencode:$2" "$1/api/info" 2>/dev/null) || return 1
+  pv=$(printf '%s' "$body" | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')
+  pp=$(printf '%s' "$body" | sed -n 's/.*"pid":\([0-9]*\).*/\1/p')
+  [ "$pv" = "$3" ] && [ "$pp" = "$4" ]
+}
+
 # The registration file is the boot's discovery contract: a boot reuses a registered
-# service only when pid, version and listening port all match. Spare exactly that
-# class; any other service holding the port is a collider the boot cannot use.
+# service only when pid, version, listening port AND a live /api/info answer all match.
+# Spare exactly that class; any other service holding the port is a collider the boot
+# cannot use (2026-10-17 17:07: a registered-but-unresponsive orphan was spared,
+# adoption failed, and the boot hit its port).
 registered_for_boot() {
   rpid="$1"
   f="${XDG_STATE_HOME:-$HOME/.local/state}/opencode/service.json"
@@ -86,7 +98,12 @@ registered_for_boot() {
   rv=0
   for x in $2; do [ "$v" = "$x" ] && rv=1; done
   [ "$rv" = 1 ] || return 1
-  for lp in $(listen_ports "$rpid"); do [ "$lp" = "$u" ] && return 0; done
+  url=$(printf '%s' "$rf" | sed -n 's/.*"url":"\([^"]*\)".*/\1/p')
+  pw=$(printf '%s' "$rf" | sed -n 's/.*"password":"\([^"]*\)".*/\1/p')
+  for lp in $(listen_ports "$rpid"); do
+    [ "$lp" = "$u" ] || continue
+    probe_ok "$url" "$pw" "$v" "$rpid" && return 0
+  done
   return 1
 }
 
@@ -110,16 +127,8 @@ reap() {
       [ "${FOLD_REAP_DRY:-0}" = 1 ] && echo "keep pid $pid (parent $ppid alive): $cmd"
       continue
     fi
-    adoptable=0
-    for v in $versions; do
-      case "$cmd" in *"/cli/$v-arm64/opencode-cli"*) adoptable=1 ;; esac
-    done
-    if [ "$adoptable" = 1 ]; then
-      [ "${FOLD_REAP_DRY:-0}" = 1 ] && echo "keep pid $pid (current staged CLI; the next boot adopts it)"
-      continue
-    fi
     if registered_for_boot "$pid" "$versions"; then
-      [ "${FOLD_REAP_DRY:-0}" = 1 ] && echo "keep pid $pid (registered service the next boot adopts)"
+      [ "${FOLD_REAP_DRY:-0}" = 1 ] && echo "keep pid $pid (registered and answering; the next boot adopts it)"
       continue
     fi
     if [ "$age" -lt "$grace" ]; then
@@ -157,13 +166,8 @@ status() {
     etime=$(ps -o etime= -p "$pid" 2>/dev/null | tr -d ' ')
     age=$(age_seconds "$etime")
     ports=$(listen_ports "$pid" | tr '\n' ' ')
-    adoptable=0
-    for v in $versions; do
-      case "$cmd" in *"/cli/$v-arm64/opencode-cli"*) adoptable=1 ;; esac
-    done
     if [ "$ppid" != 1 ]; then verdict="owned (parent $ppid alive)"
-    elif [ "$adoptable" = 1 ]; then verdict="adoptable (current staged CLI)"
-    elif registered_for_boot "$pid" "$versions"; then verdict="adoptable (registered for the next boot)"
+    elif registered_for_boot "$pid" "$versions"; then verdict="adoptable (registered and answering for the next boot)"
     else
       busy=0
       for p in $ports; do [ "$(clients_on "$p")" -gt 0 ] && busy=1; done
