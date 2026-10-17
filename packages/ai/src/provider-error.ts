@@ -251,7 +251,10 @@ export function classifyProviderFailure(input: ProviderFailure): AIError["reason
     (codes.includes("context_length_exceeded") ||
       codes.includes("model_context_window_exceeded") ||
       codes.includes("request_too_large") ||
-      isContextOverflow(text))
+      isContextOverflow(text) ||
+      // Gateways reject oversized prompts with a bare 400 and no body (OpenCode Zen free tiers); with nothing
+      // to go on, compaction is the only recovery that can change the outcome.
+      (input.status === 400 && body.trim() === ""))
   )
     return new InvalidRequestError({ ...details, classification: "context-overflow" })
   if (input.status === 413 || isPayloadTooLarge(text))

@@ -36,7 +36,7 @@ const sealedLine = (rs) => {
 }
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const which = arg("adapter", "mock")
-  const adapter = which === "mock" ? mock : which === "mechanical" ? mechanicalStack : which === "ollama" ? ollama(arg("model", "gemma2:2b"), { numCtx: Number(arg("ctx", 8192)) }) : which === "ollama" ? ollama(arg("model", "gemma2:2b"), { numCtx: Number(arg("ctx", 8192)) }) : opencode(arg("model", "opencode-go/deepseek-v4.1-flash"))
+  const adapter = which === "mock" ? mock : which === "mechanical" ? mechanicalStack : which === "ollama" || /^ollama\//.test(arg("model", "")) ? ollama(arg("model", "gemma2:2b").replace(/^ollama\//, ""), { numCtx: Number(arg("ctx", 8192)) }) : opencode(arg("model", "opencode-go/deepseek-v4.1-flash"))
   const makeSealed = () => {
     const sel = arg("selector", "mech")
     const selector = sel === "mech" ? mechanicalSelector() : sel === "resonant" ? resonantSelector() : modelSelector(ollama(sel.replace(/^ollama:/, ""), { numCtx: 2048, numPredict: 24 }), { maxCalls: Number(arg("max-local-calls", 200)), pauseMs: Number(arg("local-pause-ms", 250)) })

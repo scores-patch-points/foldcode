@@ -32,6 +32,15 @@ describe("provider error classification", () => {
     expect(isContextOverflow("413 status code (no body)")).toBe(true)
   })
 
+  test("classifies an empty-body 400 as recoverable overflow", () => {
+    expect(
+      classifyProviderFailure({ message: "Provider request failed with HTTP 400", status: 400, rawBody: "" }),
+    ).toMatchObject({ _tag: "InvalidRequest", classification: "context-overflow" })
+    expect(
+      classifyProviderFailure({ message: "Provider request failed with HTTP 400: bad param", status: 400, rawBody: "bad param" }),
+    ).not.toMatchObject({ classification: "context-overflow" })
+  })
+
   test("classifies generic request size failures separately from context overflow", () => {
     const failures = [
       classifyProviderFailure({ message: "request too large", status: 413 }),

@@ -131,8 +131,10 @@ export const opencode = (model, { timeoutMs = 180_000, waits = [20_000, 60_000, 
       // A managed background service already holding its port fails every run before a model call, and a run needs
       // none: fall back to a standalone run once (same model, same config) and measure the same thing, rather than
       // reporting a whole oracle as a wall of ServeError rows.
-      if (out.error && !standalone && /already in use|ServeError/i.test(out.error)) { standalone = true; continue }
-      if (!out.error || !/quota|rate|429|overload/i.test(out.error) || i >= waits.length) return { ...out, ms }
+      if (out.error && !standalone && /already in use|ServeError|Managed service port|Server process exited/i.test(out.error)) { standalone = true; continue }
+      // Transient failures (quota/rate, a dropped socket, a timed-out spawn, a model that reached for a tool this once)
+      // are retried; an empty-body 400 is a gateway rejection of this prompt and would fail the same way again.
+      if (!out.error || !/quota|rate|429|overload|ETIMEDOUT|ECONNRESET|Transport|model used \d+ tools/i.test(out.error) || i >= waits.length) return { ...out, ms }
       await new Promise((res) => setTimeout(res, waits[i++]))
     }
   },
