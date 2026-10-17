@@ -170,3 +170,59 @@ test("the selector prompt is tiny, shows names only, and passes Gary on the smal
   assert.deepEqual(parseSelection("NONE", 24), [])
   assert.deepEqual(beingsOf("export const FOO_BAR = 1\nconst x = LEASE_BYTES"), ["FOO_BAR", "LEASE_BYTES"])
 })
+
+import * as TR from "../../../khora/opencode-trail.mjs"
+import { trailArm } from "./arms.mjs"
+
+test("trail: a key read again and again outranks a one-off, which plain age would not", () => {
+  const results = [{ id: "x", key: "old.js", step: 5 }, ...[6, 7, 8, 9].map((s) => ({ id: `a${s}`, key: "a.js", step: s })), { id: "z", key: "z.js", step: 4 }]
+  const p = TR.plan({ results, now: 10, keep: 1 })
+  assert.deepEqual([...p.keep], ["a9"], "the reinforced key's latest result stands; its older reads and the one-offs become handles")
+  assert.equal(p.point.size, 5)
+})
+test("trail: handles are opaque (nothing of turn, path or bytes), deterministic, and unique", () => {
+  const h = TR.handleOf("tool_call_abc123")
+  assert.match(h, /^r[0-9a-z]{5,}$/)
+  assert.equal(h, TR.handleOf("tool_call_abc123"))
+  assert.notEqual(h, TR.handleOf("tool_call_abc124"))
+  const taken = new Set([h])
+  assert.notEqual(TR.handleOf("tool_call_abc123", taken), h)
+})
+test("trail: monotone - a result already pointerized never comes back verbatim", () => {
+  const results = [{ id: "a", key: "k", step: 1 }, { id: "b", key: "k", step: 2 }]
+  const p = TR.plan({ results, now: 2, keep: 5, already: new Set(["b"]) })
+  assert.ok(!p.keep.has("b") && p.point.has("b"))
+})
+test("trail: the cost gate - no compaction while the cache is warm and the prompt small; yes when cold or near the window", () => {
+  assert.deepEqual(TR.shouldCompact({ idleMs: 1000, tokens: 20_000, env: {} }), { go: false, why: "cache_warm" })
+  assert.equal(TR.shouldCompact({ idleMs: 400_000, tokens: 20_000, env: {} }).why, "cache_cold")
+  assert.equal(TR.shouldCompact({ idleMs: 1000, tokens: 120_000, window: 200_000, env: {} }).why, "window_pressure")
+  assert.equal(TR.trailEnabled({ FOLD_TRAIL: "1" }), true)
+  assert.equal(TR.trailEnabled({}), false)
+})
+test("trail arm: toggle off is the identity prompt; on cuts most of it and every pointer resolves", async () => {
+  for (const t of makeTasks({ seed: 1 })) {
+    const off = await trailArm({ enabled: false }).build(t), id = identity.build(t)
+    assert.equal(off.context, id.context)
+    const on = await trailArm({ keep: 5, enabled: true }).build(t)
+    assert.ok(on.context.length < 0.4 * id.context.length, `${t.id}: ${on.context.length} vs ${id.context.length}`)
+    assert.equal(on.meta.kept, 5)
+    for (const h of on.index.keys()) assert.ok(on.resolve(h).length > 100)
+  }
+})
+test("trail arm + mock: facts in the 5 kept results are read directly, the rest are recovered by SNIP", async () => {
+  const rows = []
+  for (const t of makeTasks({ seed: 3 })) {
+    const out = await ask({ adapter: mock, arm: trailArm({ keep: 5, enabled: true }), task: t })
+    rows.push({ pass: t.grade(out.answer).pass, rounds: out.rounds, fabricated: out.fabricated, depth: t.depth })
+  }
+  assert.ok(rows.every((r) => r.pass), JSON.stringify(rows.filter((r) => !r.pass)))
+  assert.ok(rows.every((r) => r.fabricated === 0))
+  assert.ok(rows.filter((r) => r.depth === 0).every((r) => r.rounds === 0), "a fact in the newest results costs no SNIP")
+})
+
+test("non-inferiority never passes on errored rows: no data is not a tie", () => {
+  const bad = [{ task: "a", pass: false, error: "boom" }, { task: "b", pass: false, error: "boom" }]
+  assert.equal(nonInferior(bad, bad).ok, false)
+  assert.equal(nonInferior(bad, bad).tasks, 0)
+})

@@ -6,13 +6,13 @@ import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { makeTasks } from "./tasks.mjs"
-import { identity, truncate, pointerDemo, handles, sealedArm, mechanicalSelector, modelSelector, resonantSelector } from "./arms.mjs"
+import { identity, truncate, pointerDemo, handles, sealedArm, mechanicalSelector, modelSelector, resonantSelector, trailArm } from "./arms.mjs"
 import { gate } from "./gary-gate.mjs"
 import { ask, mock, opencode, mechanicalStack, ollama } from "./adapters.mjs"
 import { summarize, nonInferior, minDetectable } from "./stats.mjs"
 
 const arg = (k, d) => { const i = process.argv.indexOf(`--${k}`); return i > 0 ? process.argv[i + 1] : d }
-const ARMS = { identity, truncate6: truncate(6), truncate3: truncate(3), pointerDemo6: pointerDemo(6), handles6: handles(6), handles3: handles(3) }
+const ARMS = { identity, truncate6: truncate(6), truncate3: truncate(3), pointerDemo6: pointerDemo(6), handles6: handles(6), handles3: handles(3), trail5: trailArm({ keep: 5, enabled: true }), trail3: trailArm({ keep: 3, enabled: true }) }
 export async function evaluate({ adapter, arms, n, seeds, profile = "frontier", widen = [] }) {
   const tasks = seeds.flatMap((s) => makeTasks({ seed: s }))
   const rows = []

@@ -47,7 +47,8 @@ const mockAsk = (fabricate) => async (prompt, { task, index }) => {
   const visible = task.kind === "prose" ? sawProse : task.kind === "twohop" ? consts >= 2 : shown.includes(`= ${task.expect}`)
   if (visible) return { text: `ANSWER: ${task.expect}` }
   if (fabricate && /(?:SNIP |^)r\d{3}\b/m.test(shown) && !shown.includes("SNIP r999 →")) return { text: "SNIP r999" }
-  for (const m of shown.matchAll(/(?:SNIP |^)(r\d{3})\b/gm)) {
+  for (const m of shown.matchAll(/(?:SNIP (r[0-9a-z]{3,12})\b)|(?:^(r\d{3})\s)/gm)) {
+    m[1] = m[1] ?? m[2]
     if (shown.includes(`[SNIP ${m[1]} →]`)) continue
     const e = index?.get(m[1]); if (e?.planted || (e?.ref && /= \d{3,4}\b|\bat \d{3,4}\.|is \d{3,4} for now/.test(e.ref.bytes))) return { text: `SNIP ${m[1]}` }
   }

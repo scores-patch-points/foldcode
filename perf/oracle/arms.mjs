@@ -128,3 +128,27 @@ export const sealedArm = ({ keep = 6, top = 3, selector = mechanicalSelector(top
     return { ...r, meta: { sealed: true, unsealed: r.unsealed, picked: r.selected.length, needOld: old.length, gotOld: got.length, refs: r.refs.length } }
   },
 })
+
+// ── trail: layer 3 (khora/opencode-trail.mjs). Old tool results become opaque deterministic handles, except the keys the
+// decayed trail ranks in its top `keep`; `enabled` is the toggle (FOLD_TRAIL=1), off = the unchanged identity prompt.
+const T = await import(pathToFileURL(path.join(KHORA, "opencode-trail.mjs")).href)
+export const trailArm = ({ keep = 5, enabled = T.trailEnabled() } = {}) => ({
+  name: enabled ? `trail${keep}` : "trail-off",
+  build: (task) => {
+    if (!enabled) return { ...identity.build(task), meta: { trail: false } }
+    const results = task.turns.flatMap((t, i) => t.calls.map((c, j) => ({ id: `t${i}.c${j}`, key: c.path, step: i })))
+    const p = T.plan({ results, now: task.turns.length - 1, keep })
+    const store = new Map(), index = new Map()
+    const turns = task.turns.map((t, i) => ({
+      ...t,
+      calls: t.calls.map((c, j) => {
+        const h = p.point.get(`t${i}.c${j}`)
+        if (!h) return c
+        store.set(h, c.output)
+        index.set(h, { turn: i + 1, planted: c.planted })
+        return { ...c, output: T.stub(h, c.output.length) }
+      }),
+    }))
+    return { context: render(turns), resolve: (h) => store.get(h), index, authored: [...store.keys()].map((h) => `kept out; SNIP ${h}`).join("\n"), meta: { trail: true, kept: results.length - store.size, pointed: store.size } }
+  },
+})

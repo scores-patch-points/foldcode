@@ -30,12 +30,12 @@ export const minDetectable = (p, n) => 2.8 * Math.sqrt((2 * p * (1 - p)) / n)
 export const nonInferior = (base, cand, { margin = 0.05, boot = 4000, seed = 7 } = {}) => {
   const by = (rows) => {
     const m = new Map()
-    for (const r of rows) (m.get(r.task) ?? m.set(r.task, []).get(r.task)).push(r.pass ? 1 : 0)
+    for (const r of rows.filter((x) => !x.error)) // an errored call is not a wrong answer: it is excluded, never paired as a tie (m.get(r.task) ?? m.set(r.task, []).get(r.task)).push(r.pass ? 1 : 0)
     return new Map([...m].map(([k, v]) => [k, mean(v)]))
   }
   const b = by(base), c = by(cand)
   const diffs = [...b.keys()].filter((k) => c.has(k)).map((k) => c.get(k) - b.get(k))
-  if (!diffs.length) return { ok: false, reason: "no shared tasks" }
+  if (!diffs.length) return { ok: false, diff: NaN, lo: NaN, hi: NaN, margin, tasks: 0, reason: "no shared tasks" }
   let s = seed >>> 0
   const rnd = () => ((s = (Math.imul(s, 1664525) + 1013904223) >>> 0) / 2 ** 32)
   const means = Array.from({ length: boot }, () => mean(Array.from({ length: diffs.length }, () => diffs[Math.floor(rnd() * diffs.length)]))).sort((x, y) => x - y)
