@@ -57,7 +57,7 @@ export function LoadingSplash(props: {
             "bg-v2-background-bg-base": !props.deep,
           }}
         >
-          <Wordmark muted={false} class="w-4/5 max-w-[360px] opacity-50 animate-pulse" />
+          <Wordmark muted={false} class="w-24 opacity-50 animate-pulse" />
         </div>
       }
     >
@@ -83,7 +83,7 @@ export function LoadingSplash(props: {
                 outline
                 fade={false}
                 muted={false}
-                class="mx-auto block h-auto w-4/5 text-v2-icon-icon-faint opacity-50"
+                class="mx-auto block w-28 text-v2-icon-icon-faint opacity-50"
               />
             </div>
           </div>

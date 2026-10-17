@@ -1,9 +1,9 @@
 import { createEffect, For, on, onCleanup } from "solid-js"
 import { createStore } from "solid-js/store"
 
-const target = ["o", "p", "e", "n", "c", "o", "d", "e", "x", "f", "o", "l", "d"] as const
+const target = ["o", "p", "e", "n", "f", "o", "l", "d"] as const
 
-const choices = ["o", "p", "e", "n", "c", "d", "x", "f", "l"] as const
+const choices = ["o", "p", "e", "n", "f", "l", "d"] as const
 
 export function AnimatedWordmark(props: { active: boolean }) {
   const [state, setState] = createStore({ letters: [...target] })
@@ -47,7 +47,7 @@ export function AnimatedWordmark(props: { active: boolean }) {
   onCleanup(() => timers.forEach(clearTimeout))
 
   return (
-    <svg class="settings-about-wordmark" viewBox="0 0 384 42" aria-hidden="true">
+    <svg class="settings-about-wordmark" viewBox="0 0 234 42" aria-hidden="true">
       <defs>
         <symbol id="settings-about-letter-o" viewBox="0 0 24 42">
           <path class="settings-about-letter-shadow" d="M18 30H6V18H18V30Z" />
