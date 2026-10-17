@@ -61,6 +61,10 @@ bundled="$(cat "$app/Contents/Resources/opencode-cli.version" 2>/dev/null || ech
 [ "$bundled" = "$version" ] || { echo "bundled CLI version $bundled != fold CLI $version" >&2; exit 1; }
 echo "confirmed bundled fold CLI: $bundled"
 
+# The new build must own the managed port: reap any orphaned service from a previous
+# instance (a crash, a kill, or a rebuild that replaced the running bundle).
+"$here/fold-reaper.sh" reap || true
+
 dest="${FOLD_APP_DIR:-/Applications}/openfold.app"
 echo "installing -> $dest"
 rm -rf "$dest"
