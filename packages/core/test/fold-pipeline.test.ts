@@ -33,3 +33,28 @@ test("the fold pipeline works end to end: plan → cut → note → cap, and the
     else process.env.FOLD_MAX_CHARS = prev
   }
 })
+
+test("the door's stigmergic note REPLACES the full context: the cut turns are gone, the medium's ledger rides", () => {
+  const ask = "what holds the parser?"
+  const turns = Array.from({ length: 12 }, (_, i) => [
+    msg("user", `work on item ${i} — ${"detail ".repeat(30)}`),
+    msg("assistant", `DONE_MARKER_${i} settled item ${i}. ${"more ".repeat(30)}`),
+  ])
+  const messages = [...turns.flat(), msg("user", ask)]
+  const before = contextChars(messages)
+
+  const plan = surfPlan(messages)
+  expect(plan).toBeTruthy()
+  if (!plan) return
+  // what the door answers for an agent that shares the medium: the ledger (mechanical) + the fold
+  const doorNote =
+    "<fold-mechanical>\ntaken: edit src/parser.js [A]\n</fold-mechanical>\n<fold-said>\nfold: 12 earlier ask(s) settled across 2 thread(s)\n</fold-said>"
+  surfApply(messages, plan.cut, doorNote)
+
+  const all = messages.flatMap((m) => m.content.flatMap((p) => (p.type === "text" ? [p.text] : []))).join("\n")
+  expect(all).toContain("taken: edit src/parser.js [A]") // the medium's own ledger is what the frontier got
+  expect(all).not.toContain("DONE_MARKER_0") // no folded turn's bytes ride — the whole context is not prompted
+  expect(all).not.toContain("DONE_MARKER_10")
+  expect(all).toContain(ask) // the current ask always survives
+  expect(contextChars(messages)).toBeLessThan(before) // the window actually shrank
+})

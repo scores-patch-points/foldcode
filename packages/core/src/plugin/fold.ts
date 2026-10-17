@@ -305,6 +305,135 @@ export const surfApply = (messages: SessionHooks["context"]["messages"], cut: nu
   })
 }
 
+// STEP FOLD — surf for the inside of one long turn. `surfPlan` cuts at user prompts, so an agent that runs
+// 60 tool steps under ONE prompt never shrinks. This cuts at steps: the last FOLD_KEEP_STEPS (assistant +
+// its tool results) stay verbatim, older whole steps leave the window as one note of addressed receipts
+// (each `snip`-able to its exact bytes), and a bounded VIEW of the medium rides with it: the latest bytes of
+// the files the collapsed steps read or wrote, as of their last read or write. Measured (regex-engine task,
+// 197 differential cases, phases 1-6): with the view, 37-40 steps and 22k input tokens/step reached 197/197;
+// without it the agent re-read files (329 reads vs 8 writes) and stalled. FOLD_KEEP_STEPS=0 disables (default).
+// SURF IS THE LINEAGE'S WORD, AND IT HAS ALWAYS BEEN ADDRESSED. In khora it began as the surfer (legacy host/
+// surfer.js): the segment a reader's prompt addresses is snipped out of the corpus — byte-accurate, typed gap
+// when unaddressable, never a guess, no model. surf.js (stage 3) seeks material shaped like the void across
+// several sources (queries carry context, candidates carry provenance, failures are typed); hunt.js admits,
+// surf judges nothing. Surf is the general term and its subtypes are the cube's 27 cells — grep is among
+// them (SEG·Figure: each match a Link from a word to a place; khora native/the-fold/surf-types.js). Here the
+// medium is the window: receipts address each collapsed step (snip returns its exact bytes), the view carries
+// current bytes, the cut is stated.
+const stepKeep = () => Number(process.env.FOLD_KEEP_STEPS ?? 0)
+const viewCap = () => Number(process.env.FOLD_VIEW_CHARS ?? 40_000)
+type Msg = SessionHooks["context"]["messages"][number]
+const squash = (t: string, n: number) => t.replace(/\s+/g, " ").trim().slice(0, n)
+const textOfResult = (part: Msg["content"][number]) => foldable(part)?.text
+const pathOf = (input: unknown) => {
+  const i = (input ?? {}) as Record<string, unknown>
+  const v = i.filePath ?? i.file_path ?? i.path ?? i.file
+  return typeof v === "string" ? v : undefined
+}
+const hash36 = (t: string) => {
+  let h = 5381
+  for (let i = 0; i < t.length; i++) h = ((h << 5) + h + t.charCodeAt(i)) >>> 0
+  return h.toString(36).slice(0, 6).padStart(4, "0")
+}
+export const stepPlan = (messages: Msg[], keep = stepKeep()) => {
+  if (!(keep > 0)) return undefined
+  const s = messages.findLastIndex((m) => m.role === "user" && m.content.some((p) => p.type === "text"))
+  if (s < 0) return undefined
+  const starts: number[] = []
+  for (let i = s + 1; i < messages.length; i++) if (messages[i].role === "assistant") starts.push(i)
+  if (starts.length <= keep) return undefined
+  const cutStep = starts.length - keep
+  const from = starts[0]
+  const to = starts[cutStep]
+  const salt = hash36(messages[s].id ?? String(s))
+  const steps = starts.slice(0, cutStep).map((start, k) => {
+    const end = starts[k + 1]
+    const part = messages.slice(start, end)
+    const raw = part
+      .flatMap((m) =>
+        m.content.flatMap((p) =>
+          p.type === "text"
+            ? [`said: ${p.text}`]
+            : p.type === "tool-call"
+              ? [`${p.name}(${clip(p.input ?? {}, 3000)})`]
+              : p.type === "tool-result"
+                ? [`=> ${textOfResult(p) ?? clip(p.result, 3000)}`]
+                : [],
+        ),
+      )
+      .join("\n")
+      .slice(0, 20_000)
+    const call = part.flatMap((m) => m.content.filter((p) => p.type === "tool-call"))[0]
+    const result = part.flatMap((m) => m.content.flatMap((p) => (p.type === "tool-result" ? [textOfResult(p) ?? ""] : [])))[0] ?? ""
+    const said = part[0].content.flatMap((p) => (p.type === "text" ? [p.text] : [])).join(" ")
+    const n = k + 1
+    return {
+      n,
+      handle: `rs${n.toString(36)}${salt}`,
+      raw,
+      line: `${said ? `said "${squash(said, 120)}" · ` : ""}${call && call.type === "tool-call" ? `${call.name} ${pathOf(call.input) ?? squash(clip(call.input ?? {}, 120), 120)}` : "(no tool)"} → ${squash(result, 140)}`,
+    }
+  })
+  // the VIEW: latest bytes per path from the collapsed region (read result / written content); an edit makes the
+  // path unknown (its bytes are not in the call), so it is left out rather than shown stale
+  const calls = new Map<string, { name: string; input: unknown }>()
+  const files = new Map<string, string>()
+  for (const m of messages.slice(from, to)) {
+    for (const p of m.content) {
+      if (p.type === "tool-call") {
+        calls.set(p.id, { name: p.name, input: p.input })
+        const path = pathOf(p.input)
+        const content = (p.input as Record<string, unknown> | undefined)?.content
+        if (path && /write|create/i.test(p.name) && typeof content === "string") (files.delete(path), files.set(path, content))
+        else if (path && /edit|patch|replace/i.test(p.name)) files.delete(path)
+      } else if (p.type === "tool-result") {
+        const c = calls.get(p.id)
+        const path = c && pathOf(c.input)
+        const text = textOfResult(p)
+        if (c && path && /read|view|cat/i.test(c.name) && text !== undefined && !/error|not found/i.test(text.slice(0, 40))) (files.delete(path), files.set(path, text))
+      }
+    }
+  }
+  // a path touched again inside the kept steps is visible there already
+  const kept = new Set<string>()
+  for (const m of messages.slice(to)) for (const p of m.content) if (p.type === "tool-call") { const path = pathOf(p.input); if (path) kept.add(path) }
+  const view: Array<[string, string]> = []
+  let used = 0
+  for (const [path, bytes] of [...files].reverse()) {
+    if (kept.has(path)) continue
+    if (used + bytes.length > viewCap() && view.length) break
+    view.push([path, bytes.slice(0, viewCap())])
+    used += bytes.length
+  }
+  view.reverse()
+  return { s, from, to, steps, view }
+}
+export const stepNote = (plan: NonNullable<ReturnType<typeof stepPlan>>, keep: number) =>
+  [
+    `[fold: this turn has ${plan.steps.length + keep} steps so far. The last ${keep} are shown in full; steps 1-${plan.steps.length} are stored verbatim. A call to snip with a handle below returns that step's exact text.]`,
+    ...plan.steps.map((st) => `- step ${st.n} (snip ${st.handle}): ${st.line}`),
+    ...(plan.view.length
+      ? [
+          `[workspace: these are the files the stored steps read or wrote, as of their last read or write in this turn. Files on disk are always current; read_file shows them.]`,
+          ...plan.view.map(([path, bytes]) => `=== ${path} ===\n${bytes}`),
+        ]
+      : []),
+  ].join("\n")
+export const stepApply = (messages: Msg[], plan: NonNullable<ReturnType<typeof stepPlan>>, keep: number, store?: Map<string, string>) => {
+  if (store) for (const st of plan.steps) store.set(st.handle, st.raw)
+  const head = messages[plan.s]
+  const note = stepNote(plan, keep)
+  messages.splice(plan.from, plan.to - plan.from)
+  messages[plan.s] = Message.make({
+    id: head.id,
+    role: head.role,
+    content: [...head.content, { type: "text" as const, text: note }],
+    metadata: head.metadata,
+    providerMetadata: head.providerMetadata,
+    native: head.native,
+  })
+}
+
 // THE HARD CAP — the frontier's window NEVER grows past FOLD_MAX_CHARS. The local model does a lot with
 // 8,000 chars; the frontier gets one comfortable ceiling and no more. Folding bounds it per turn; this bounds
 // it absolutely: after folding, drop the OLDEST whole turn until the assembly fits, always keeping the last
@@ -1014,6 +1143,9 @@ export const Plugin = define({
                 : surfLocal(plan.turns, lastUserText(event.messages)),
             )
         }
+        // Step fold: inside one long turn, older whole steps leave the window as addressed receipts + the workspace view
+        const stepsPlan = stepPlan(event.messages)
+        if (stepsPlan) stepApply(event.messages, stepsPlan, stepKeep(), trailStore)
         yield* foldMessages(event)
         if (trailOn) yield* trailMessages(event)
         // THE HARD CAP: after every fold, the frontier's window is bounded absolutely (FOLD_MAX_CHARS).

@@ -76,6 +76,18 @@ What the door does (khora side, `opencode-doorway.mjs` mounted in `proxy.mjs`):
   so parallel agents share a medium, not a window. The door also answers
   `mark`, `claim`, `done` and `notes` events for agents that are not this
   fork. Door down: local truncation answers, and no marks are shared.
+  **Step fold** (`FOLD_KEEP_STEPS=N`, default 0 = off; `FOLD_VIEW_CHARS`, default 40000): `surf` cuts at user
+  prompts, so one prompt that runs 60 tool steps never shrank. With N > 0 the plugin keeps the last N steps (an
+  assistant message plus its tool results) verbatim and collapses older whole steps into one note appended to the
+  turn's ask: one receipt per step, each `snip`-able to its exact bytes (handles `r[0-9a-z]+`, resolved locally),
+  plus a bounded **workspace view** (the latest bytes of files those steps read or wrote; an edited file is left out,
+  not shown stale). The view is what made it work: without it an agent re-read files instead of writing (329 reads vs
+  8 writes, stalled); with it, 37-40 steps at ~22k input tokens/step (full history ~64k) reached 197/197 on a
+  regex-engine task. Measured on one model and one task, not on the live app; keep it opt-in until it is.
+  One vocabulary: `surf` is the general term for seeking — the surfer snipped the segment the words address
+  (byte-accurate, typed gap, never a guess); read, grep, glob and the rest are each a declared surf subtype
+  on a cube cell (read SEG·Ground, grep SEG·Figure; the 27 cells live in khora `native/the-fold/surf-types.js`);
+  their results enter as ordinary steps and their files join the view.
   **REC** (`rec` / `record` events): the only way a change enters the task's
   verified record. DEF a referent and a real check; EVA is the check's exit
   code; exit 0 appends one EOT block to `EOT.md` (last-wins per referent,
