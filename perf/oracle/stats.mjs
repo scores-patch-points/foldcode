@@ -30,7 +30,8 @@ export const minDetectable = (p, n) => 2.8 * Math.sqrt((2 * p * (1 - p)) / n)
 export const nonInferior = (base, cand, { margin = 0.05, boot = 4000, seed = 7 } = {}) => {
   const by = (rows) => {
     const m = new Map()
-    for (const r of rows.filter((x) => !x.error)) // an errored call is not a wrong answer: it is excluded, never paired as a tie (m.get(r.task) ?? m.set(r.task, []).get(r.task)).push(r.pass ? 1 : 0)
+    for (const r of rows.filter((x) => !x.error)) // an errored call is not a wrong answer: it is excluded, never paired as a tie
+      (m.get(r.task) ?? m.set(r.task, []).get(r.task)).push(r.pass ? 1 : 0)
     return new Map([...m].map(([k, v]) => [k, mean(v)]))
   }
   const b = by(base), c = by(cand)

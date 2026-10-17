@@ -262,7 +262,10 @@ export async function runNonInteractivePrompt(input: Input) {
       )
         return
       if (!promoted) continue
-      if (finalizing && !event.type.startsWith("session.execution.")) continue
+      // The final `session.step.ended` races the idle wait that flips `finalizing`: it arrives just before or
+      // after. Its `step-finish` carries the run's token usage and is the one part `reconcile()` cannot rebuild
+      // from the store, so it must pass this filter or `--format json` reports a run's cost as zero.
+      if (finalizing && !event.type.startsWith("session.execution.") && event.type !== "session.step.ended") continue
 
       if (event.type === "session.step.started") {
         const part = {

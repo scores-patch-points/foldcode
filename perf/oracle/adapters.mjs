@@ -72,7 +72,7 @@ export const mockFabricating = { name: "mock-fab", ask: mockAsk(true) }
 // the number a "the fold is faster than native" claim has to move.
 const BIN = process.env.OPENCODE_BIN ?? "opencode"
 const STANDALONE = process.env.OPENCODE_STANDALONE === "1"
-const once = (model, prompt, timeoutMs) => {
+const once = (model, prompt, timeoutMs, standalone = STANDALONE) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "oracle-"))
   const file = path.join(dir, "prompt.txt")
   fs.writeFileSync(file, prompt)
@@ -81,7 +81,7 @@ const once = (model, prompt, timeoutMs) => {
   // is contaminated — measured on deepseek-v4.1-flash: handles6 needle@10 -> "model used 9 tools", 161k tokens,
   // wrong. A deny-all permission rule disables every tool at the door (verified: provoked a tool, got 0).
   fs.writeFileSync(path.join(dir, "opencode.json"), JSON.stringify({ $schema: "https://opencode.ai/config.json", permission: "deny" }))
-  const args = ["run", ...(STANDALONE ? ["--standalone"] : []), "-m", model, "--format", "json", "-f", file, "Follow the instructions in the attached file."]
+  const args = ["run", ...(standalone ? ["--standalone"] : []), "-m", model, "--format", "json", "-f", file, "Follow the instructions in the attached file."]
   const started = Date.now()
   try {
     const r = spawnSync(BIN, args, {
@@ -95,8 +95,8 @@ const once = (model, prompt, timeoutMs) => {
       if (part.type === "text" && typeof part.text === "string") text += part.text
       if (j.type === "error") provider = `${j.error?.type ?? "provider error"}: ${String(j.error?.message ?? "").slice(0, 160)}`
       if (part.type === "tool") toolCalls++
-      // usage rides a `step-finish` part (cli/run/noninteractive.ts:496) whose emission races the execution
-      // boundary, so read every shape it can arrive in and never count a silent 0 as a real measurement.
+      // usage rides a `step-finish` part (cli/run/noninteractive.ts, the session.step.ended branch). Read every
+      // shape it can arrive in so a differently-shaped usage report still counts.
       const t = part.tokens ?? j.tokens ?? j.usage
       if (t) tokens += (t.input ?? t.promptTokens ?? 0) + (t.cache?.read ?? 0) + (t.cache?.write ?? 0)
     }
@@ -111,11 +111,15 @@ export const opencode = (model, { timeoutMs = 180_000, waits = [20_000, 60_000, 
   name: `opencode:${model}`,
   ask: async (prompt) => {
     let ms = 0
-    for (let i = 0; ; i++) {
-      const out = once(model, prompt, timeoutMs)
+    for (let i = 0, standalone = STANDALONE; ; ) {
+      const out = once(model, prompt, timeoutMs, standalone)
       ms += out.ms ?? 0
+      // A managed background service already holding its port fails every run before a model call, and a run needs
+      // none: fall back to a standalone run once (same model, same config) and measure the same thing, rather than
+      // reporting a whole oracle as a wall of ServeError rows.
+      if (out.error && !standalone && /already in use|ServeError/i.test(out.error)) { standalone = true; continue }
       if (!out.error || !/quota|rate|429|overload/i.test(out.error) || i >= waits.length) return { ...out, ms }
-      await new Promise((res) => setTimeout(res, waits[i]))
+      await new Promise((res) => setTimeout(res, waits[i++]))
     }
   },
 })
