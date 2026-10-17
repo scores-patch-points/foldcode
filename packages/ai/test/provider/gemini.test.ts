@@ -465,6 +465,7 @@ describe("Gemini route", () => {
           model,
           messages: [
             Message.user({ type: "media", media: Media.fromDataUrl("data:image/png;base64,AAEC") }),
+            Message.assistant([ToolCallPart.make({ id: "call_image", name: "read", input: {} })]),
             Message.tool({
               id: "call_image",
               name: "read",
@@ -478,6 +479,7 @@ describe("Gemini route", () => {
       )
       expect(prepared.body.contents).toEqual([
         { role: "user", parts: [{ inlineData: { mimeType: "image/png", data: "AAEC" } }] },
+        { role: "model", parts: [{ functionCall: { name: "read", args: {} } }] },
         {
           role: "user",
           parts: [

@@ -3,7 +3,7 @@ import { Message, ToolResultPart, type ToolCallPart } from "./schema/messages.js
 const EMPTY_TOOL_OUTPUT = "(no tool output)"
 const MISSING_TOOL_RESULT = "Tool result missing"
 
-export function normalizeToolHistory(messages: ReadonlyArray<Message>) {
+export function normalizeToolHistory(messages: ReadonlyArray<Message>, options: { readonly dropOrphans?: boolean } = {}) {
   const normalized: Message[] = []
   const pending = new Map<string, ToolCallPart>()
   // System updates cannot sit between a tool call and its results, so they wait until every pending call is answered.
@@ -23,7 +23,7 @@ export function normalizeToolHistory(messages: ReadonlyArray<Message>) {
     if (message.role === "user" || message.role === "assistant") appendMissingResults()
 
     if (message.role === "tool") {
-      const tool = normalizeToolMessage(message, pending)
+      const tool = normalizeToolMessage(message, pending, options.dropOrphans === true)
       if (tool) normalized.push(tool)
       releaseHeld()
       continue
@@ -62,15 +62,23 @@ function missingToolResults(calls: Iterable<ToolCallPart>) {
   })
 }
 
-function normalizeToolMessage(message: Message, pending: Map<string, ToolCallPart>): Message | undefined {
-  const content = message.content.map((part) => {
-    if (part.type !== "tool-result" || part.providerExecuted === true) return part
+function normalizeToolMessage(
+  message: Message,
+  pending: Map<string, ToolCallPart>,
+  dropOrphans: boolean,
+): Message | undefined {
+  const content = message.content.flatMap((part) => {
+    if (part.type !== "tool-result" || part.providerExecuted === true) return [part]
     const call = pending.get(part.id)
+    // A result whose call was compacted away or already answered has nothing to follow, and stateless providers
+    // reject it. Continuation routes keep it: the call lives in the stored interaction they resume.
+    if (!call && dropOrphans) return []
     if (call) pending.delete(part.id)
-    return normalizeToolResult(part, call)
+    return [normalizeToolResult(part, call)]
   })
   if (content.length === 0) return undefined
-  if (content.every((part, index) => part === message.content[index])) return message
+  if (content.length === message.content.length && content.every((part, index) => part === message.content[index]))
+    return message
   return new Message({
     id: message.id,
     role: message.role,

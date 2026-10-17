@@ -596,6 +596,7 @@ const lowerMessages = Effect.fnUntraced(function* (request: LLMRequest, options:
       messages.push({ role: "assistant", content: "Done." })
   }
   const pendingAttachments: OpenAIChatUserContent[] = []
+  const answerable = new Set<string>()
   const flushAttachments = () => {
     if (pendingAttachments.length === 0) return
     bridgeTools()
@@ -651,8 +652,20 @@ const lowerMessages = Effect.fnUntraced(function* (request: LLMRequest, options:
       message.content.every((part) => part.type === "text" && part.text.trim() === "")
     )
       continue
+    if (message.role === "assistant") {
+      answerable.clear()
+      for (const part of message.content) if (part.type === "tool-call") answerable.add(part.id)
+    }
     if (message.role === "tool") {
-      const lowered = yield* lowerToolMessages(message, lowering)
+      // Chat Completions rejects a tool message that does not answer a call in the assistant message before it
+      // ("messages[n] is a tool result, but it does not follow an assistant message with 'tool_calls'"). Compaction
+      // and history trimming can leave such results behind; they carry nothing the model can attach to a call.
+      const content = message.content.filter((part) => part.type !== "tool-result" || answerable.delete(part.id))
+      if (content.length === 0) continue
+      const lowered = yield* lowerToolMessages(
+        content.length === message.content.length ? message : { ...message, content },
+        lowering,
+      )
       messages.push(...lowered.messages)
       pendingAttachments.push(...lowered.attachments)
       continue

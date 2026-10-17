@@ -263,7 +263,7 @@ export const Service = LLMClientService
 export type Service = LLMClientService
 
 const resolveRequestOptions = (request: LLMRequest) => {
-  const messages = normalizeToolHistory(request.messages)
+  const messages = normalizeToolHistory(request.messages, { dropOrphans: !/interactions|responses/i.test(request.model.route.id) })
   const normalized = messages === request.messages ? request : LLMRequest.update(request, { messages })
   const routeDefaults = normalized.model.route.defaults
   const modelDefaults = normalized.model.defaults

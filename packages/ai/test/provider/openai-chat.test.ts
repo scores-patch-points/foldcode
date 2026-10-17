@@ -679,12 +679,31 @@ describe("OpenAI Chat route", () => {
     }),
   )
 
+  it.effect("drops tool results that answer no call in the preceding assistant message", () =>
+    Effect.gen(function* () {
+      const prepared = yield* compileRequest(
+        LLM.request({
+          model,
+          messages: [
+            Message.tool({ id: "gone", name: "read", result: "orphaned by compaction" }),
+            Message.user("continue"),
+          ],
+        }),
+      )
+      expect(prepared.body.messages).toEqual([{ role: "user", content: "continue" }])
+    }),
+  )
+
   it.effect("aggregates consecutive tool images with a following system update", () =>
     Effect.gen(function* () {
       const prepared = yield* compileRequest(
         LLM.request({
           model,
           messages: [
+            Message.assistant([
+              ToolCallPart.make({ id: "call_1", name: "read", input: {} }),
+              ToolCallPart.make({ id: "call_2", name: "read", input: {} }),
+            ]),
             Message.tool({
               id: "call_1",
               name: "read",
@@ -706,6 +725,14 @@ describe("OpenAI Chat route", () => {
         }),
       )
       expect(prepared.body.messages).toEqual([
+        {
+          role: "assistant",
+          content: null,
+          tool_calls: [
+            { id: "call_1", type: "function", function: { name: "read", arguments: "{}" } },
+            { id: "call_2", type: "function", function: { name: "read", arguments: "{}" } },
+          ],
+        },
         { role: "tool", tool_call_id: "call_1", content: "" },
         { role: "tool", tool_call_id: "call_2", content: "" },
         {

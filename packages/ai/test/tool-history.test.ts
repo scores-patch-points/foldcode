@@ -104,6 +104,14 @@ describe("tool history normalization", () => {
     expect(normalizeToolHistory([orphan, hosted])).toEqual([orphan, hosted])
   })
 
+  test("drops results with no pending call only when asked", () => {
+    const orphan = toolResult("orphan", "ignored", "orphan", "text")
+    const user = Message.user("next")
+
+    expect(normalizeToolHistory([orphan, user], { dropOrphans: true })).toEqual([user])
+    expect(normalizeToolHistory([orphan, user])).toEqual([orphan, user])
+  })
+
   test("uses a matching call as the complete tool identity", () => {
     const normalized = normalizeToolHistory([
       Message.assistant(ToolCallPart.make({ id: "call_1", name: "lookup", input: {} })),

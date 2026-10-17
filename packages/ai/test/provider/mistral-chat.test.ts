@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { ConfigProvider, Effect } from "effect"
 import { HttpClientRequest } from "effect/http"
-import { LanguageModel, LLM, LLMEvent, Message, SystemPart, ToolDefinition, Media } from "../../src/index.js"
+import { LanguageModel, LLM, LLMEvent, Message, SystemPart, ToolCallPart, ToolDefinition, Media } from "../../src/index.js"
 import { Mistral } from "../../src/providers/index.js"
 import { MistralChat } from "../../src/protocols/index.js"
 import { LLMClient } from "../../src/route.js"
@@ -249,6 +249,7 @@ describe("Mistral Chat", () => {
               type: "media",
               media: Media.url("https://assets.example.test/input.png", { mediaType: "image/png" }),
             }),
+            Message.assistant([ToolCallPart.make({ id: "Ab12Cd34E", name: "inspect", input: {} })]),
             Message.tool({
               id: "Ab12Cd34E",
               name: "inspect",
@@ -267,6 +268,7 @@ describe("Mistral Chat", () => {
           role: "user",
           content: [{ type: "image_url", image_url: "https://assets.example.test/input.png" }],
         },
+        { role: "assistant", content: "", tool_calls: [{ id: "Ab12Cd34E", type: "function", function: { name: "inspect", arguments: "{}" } }] },
         {
           role: "tool",
           tool_call_id: "Ab12Cd34E",
@@ -291,6 +293,7 @@ describe("Mistral Chat", () => {
               { type: "text", text: "first" },
               { type: "text", text: "second" },
             ]),
+            Message.assistant([ToolCallPart.make({ id: "Ab12Cd34E", name: "lookup", input: {} })]),
             Message.tool({
               id: "Ab12Cd34E",
               name: "lookup",
@@ -305,6 +308,7 @@ describe("Mistral Chat", () => {
       )
       expect(prepared.body.messages).toEqual([
         { role: "user", content: "firstsecond" },
+        { role: "assistant", content: "", tool_calls: [{ id: "Ab12Cd34E", type: "function", function: { name: "lookup", arguments: "{}" } }] },
         { role: "tool", tool_call_id: "Ab12Cd34E", name: "lookup", content: "thirdfourth" },
       ])
     }),
