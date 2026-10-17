@@ -72,4 +72,16 @@ ditto "$app" "$dest"
 xattr -dr com.apple.quarantine "$dest" 2>/dev/null || true
 codesign --verify --strict "$dest" >/dev/null 2>&1 && echo "seal valid" || echo "warning: seal could not be verified"
 
+# A rebuilt bundle no longer matches its macOS privacy grant: the stale Files-and-Folders
+# approval fails SILENTLY (EPERM surfaces as a typed 503 on every location request — the
+# agent picker included). Reset the app's folder grants so the next launch re-prompts;
+# one Allow per rebuild is the honest price.
+bundle_id="$(defaults read "$dest/Contents/Info.plist" CFBundleIdentifier 2>/dev/null || true)"
+if [ -n "$bundle_id" ]; then
+  for svc in SystemPolicyDownloadsFolder SystemPolicyDocumentsFolder SystemPolicyDesktopFolder; do
+    tccutil reset "$svc" "$bundle_id" >/dev/null 2>&1 || true
+  done
+  echo "folder grants reset for $bundle_id — the next launch re-prompts (click Allow)"
+fi
+
 echo "installed: $dest"
