@@ -31,7 +31,7 @@ describe("stageOf", () => {
     expect(stageOf(tool("read"), tool("bash", "x", "completed"))).toBe("INS")
   })
 
-  test("nothing yet is held", () => {
+  test("nothing yet is read", () => {
     expect(stageOf(undefined)).toBe("NUL")
   })
 })
@@ -133,6 +133,20 @@ describe("murmurOf", () => {
     expect(
       murmurOf([{ type: "tool", name: "read", time: { created: T - 9000, completed: T - 3000 }, state: { status: "completed", input: {} } }] as any, T),
     ).toBe("deciding what is next · 3s since read finished")
+  })
+})
+
+describe("snapshotOf", () => {
+  test("names each target as a thing and keeps the model's commentary as the aim", async () => {
+    const { targetsOf, snapshotOf } = await import("./session-mind-stage")
+    const parts = [
+      { type: "tool", name: "read", state: { status: "completed", input: { filePath: "src/a.ts" } } },
+      { type: "reasoning", text: "the amount must match the invoice" },
+    ] as any
+    const snapshot = snapshotOf(targetsOf(parts), parts, 100_000)
+    expect(snapshot.murmur).toBe("the amount must match the invoice · 6 words so far")
+    expect(snapshot.targets[0]!.name).toBe("A")
+    expect(snapshot.targets[0]!.aim).toBe("the amount must match the invoice")
   })
 })
 

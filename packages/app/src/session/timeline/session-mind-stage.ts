@@ -7,7 +7,7 @@
 export type MindStage = "NUL" | "SIG" | "INS" | "SEG" | "CON" | "SYN" | "DEF" | "EVA" | "REC"
 
 export const STAGES: ReadonlyArray<{ id: MindStage; glyph: string; label: string; doing: string }> = [
-  { id: "NUL", glyph: "∅", label: "Hold", doing: "Holding — thinking it through" },
+  { id: "NUL", glyph: "∅", label: "Read", doing: "Reading — thinking it through" },
   { id: "SIG", glyph: "○", label: "Notice", doing: "Noticing — looking for what is there" },
   { id: "INS", glyph: "●", label: "Name", doing: "Naming — taking a specific thing in" },
   { id: "SEG", glyph: "｜", label: "Segment", doing: "Segmenting — cutting the work into units" },
@@ -18,7 +18,7 @@ export const STAGES: ReadonlyArray<{ id: MindStage; glyph: string; label: string
   { id: "REC", glyph: "◉", label: "Reframe", doing: "Reframing — changing approach after a miss" },
 ]
 
-/** Tool name -> operator. Anything not listed is held (NUL). */
+/** Tool name -> operator. Anything not listed is read (NUL). */
 const OPERATOR_OF: Record<string, MindStage> = {
   glob: "SIG", list: "SIG", ls: "SIG", grep: "SIG", search: "SIG", websearch: "SIG",
   read: "INS", webfetch: "INS", fetch: "INS",
@@ -163,10 +163,16 @@ export function inFlightOf(targets: ReadonlyArray<Target>): Target[] {
  *  extension and cannot read the timeline). Targets in order; each has its laps and the steps in them. */
 export type MindSnapshot = {
   at: number
+  /** The live "what it is doing right now" line, built from the trace (murmurOf), never invented progress. */
+  murmur: string
   targets: Array<{
     where: string
     range: string
     after?: string
+    /** What the thing is, in words rather than a path (prettyNameOf): stable, so a row reads as a thing, not a sentence. */
+    name: string
+    /** The model's own words for what it is doing here (conceptOf): live commentary, shown under a running row. */
+    aim: string
     lap: number
     reached: number
     settled: boolean
@@ -181,10 +187,11 @@ export type MindSnapshot = {
   }>
 }
 
-export function snapshotOf(targets: ReadonlyArray<Target>, now = Date.now()): MindSnapshot {
+export function snapshotOf(targets: ReadonlyArray<Target>, parts: ReadonlyArray<Part>, now = Date.now()): MindSnapshot {
   const live = new Set(inFlightOf(targets))
   return {
     at: now,
+    murmur: murmurOf(parts, now),
     targets: targets.map((item) => {
       const lap = lapOf(item)
       const laps: MindSnapshot["targets"][number]["laps"] = []
@@ -209,6 +216,8 @@ export function snapshotOf(targets: ReadonlyArray<Target>, now = Date.now()): Mi
         where: item.where,
         range: item.range,
         after: item.after,
+        name: prettyNameOf(item),
+        aim: conceptOf(item, parts),
         lap,
         reached: reachedOf(item),
         settled: !!settledBy(item),

@@ -398,7 +398,10 @@ function MessageTimelineView(
     })
   })
 
-  createEffect(() => publishMind(snapshotOf(targetsOf(mindParts()))))
+  createEffect(() => {
+    const parts = mindParts()
+    publishMind(snapshotOf(targetsOf(parts), parts))
+  })
   // The latest reasoning, in opencode's own Thinking row: shimmer title, the live heading, paced markdown, collapsible.
   const mindThinking = () => {
     const parts = mindParts()

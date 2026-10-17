@@ -344,7 +344,7 @@ export function SessionMindLine(props: { parts?: ReadonlyArray<Part | undefined>
     return all.length ? stageOf2(all) : "NUL"
   })
   const glyph = () => STAGES.find((item) => item.id === stage())?.glyph ?? "∅"
-  const label = () => STAGES.find((item) => item.id === stage())?.label ?? "Hold"
+  const label = () => STAGES.find((item) => item.id === stage())?.label ?? "Read"
   const name = createMemo(() => (target() ? prettyNameOf(target()!) : ""))
   const steps = createMemo(() => parts().filter((part) => part.type === "tool").length)
   return (
