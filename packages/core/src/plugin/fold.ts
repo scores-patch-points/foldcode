@@ -102,7 +102,7 @@ const lastUserText = (messages: SessionHooks["context"]["messages"]) => {
 // FOLD_KEEP_TURNS=0 disables (upstream behavior).
 const keepTurns = Number(process.env.FOLD_KEEP_TURNS ?? 1)
 
-const surfPlan = (messages: SessionHooks["context"]["messages"]) => {
+export const surfPlan = (messages: SessionHooks["context"]["messages"]) => {
   if (keepTurns <= 0) return undefined
   const starts = messages.flatMap((item, index) =>
     item.role === "user" && item.content.some((part) => part.type === "text") ? [index] : [],
@@ -233,26 +233,43 @@ export const surfLocal = (turns: NonNullable<ReturnType<typeof surfPlan>>["turns
   const byAsk = new Map<string, (typeof turns)[number]>()
   for (const t of turns) byAsk.set(short(t.ask, 300), t) // last-wins per ask (the DMD)
   const kept = [...byAsk.values()]
+  // THE NOTE IS BOUNDED — the fold is the THREAD, never the tail. Only the most recent asks are listed; the rest
+  // ride as a count. So the note cannot grow with the session (measured: unbounded, 30 long turns > 4k chars).
+  const max = Number(process.env.FOLD_NOTE_TURNS ?? 8)
+  const shown = kept.slice(-max)
+  const older = kept.length - shown.length
   const askW = wordsOf(ask)
   const about = [
     ...new Set(kept.flatMap((t) => [...wordsOf(`${t.ask} ${t.answer}`)].filter((w) => askW.has(w)))),
   ].slice(0, 6)
   // THE DERIVATION, composed: the chain resolved to its values, so a trimmed window still holds the result.
-  const derived = derivationFor(kept)
-  const derivedLine = [...derived]
-    .map(([n, v]) => `${n}=${Number.isInteger(v) ? v : v.toFixed(2)}`)
-    .join(", ")
-  return [
-    `[fold: the thread — ${kept.length} earlier ask(s) settled (of ${turns.length} turns); the full history remains in the session]`,
-    ...(about.length ? [`about: ${about.join(", ")}`] : []),
-    ...(derived.size ? [`derived (the machine composed the chain): ${derivedLine}`] : []),
-    ...kept.map(
-      (t) => `- asked: ${short(t.ask, 300)} → ${t.answer ? `settled: ${short(t.answer, 400)}` : "(open, no reply)"}`,
-    ),
-  ].join("\n")
+  const derived = [...derivationFor(kept)].slice(-12)
+  const derivedLine = derived.map(([n, v]) => `${n}=${Number.isInteger(v) ? v : v.toFixed(2)}`).join(", ")
+  // A HARD char budget: the note is the window's fixed cost, so it can never grow — drop the oldest listed turns
+  // (they become the count) until it fits, then clip as a last resort. FOLD_NOTE_CHARS, 2000 default.
+  const budget = Number(process.env.FOLD_NOTE_CHARS ?? 2_000)
+  const build = (list: typeof shown, ext: number) =>
+    [
+      `[fold: the thread — ${kept.length} earlier ask(s) settled (of ${turns.length} turns); the full history remains in the session]`,
+      ...(about.length ? [`about: ${about.join(", ")}`] : []),
+      ...(derived.length ? [`derived (the machine composed the chain): ${derivedLine}`] : []),
+      ...(ext > 0 ? [`- (+${ext} earlier ask(s) folded)`] : []),
+      ...list.map(
+        (t) => `- asked: ${short(t.ask, 300)} → ${t.answer ? `settled: ${short(t.answer, 400)}` : "(open, no reply)"}`,
+      ),
+    ].join("\n")
+  let list = shown
+  let ext = older
+  let note = build(list, ext)
+  while (note.length > budget && list.length > 1) {
+    list = list.slice(1)
+    ext += 1
+    note = build(list, ext)
+  }
+  return note.length > budget ? `${note.slice(0, budget - 1)}…` : note
 }
 
-const surfApply = (messages: SessionHooks["context"]["messages"], cut: number, note: string) => {
+export const surfApply = (messages: SessionHooks["context"]["messages"], cut: number, note: string) => {
   const head = messages[cut]
   messages.splice(0, cut)
   messages[0] = Message.make({
