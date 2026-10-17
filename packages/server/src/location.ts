@@ -97,6 +97,25 @@ function decode(input: string) {
   }
 }
 
+// Location resolution is a local syscall in the normal case. When macOS holds that syscall on a
+// Files-and-Folders consent dialog (a rebuilt app has no recorded decision yet), it waits on a human
+// indefinitely — and every request behind it waits too. Bound the WAIT, never the route: a resolution
+// that has not answered in ten seconds answers the same typed 503 the denial path does, remedy named.
+const RESOLUTION_BOUND = "10 seconds"
+const bounded = <A, E, R>(step: Effect.Effect<A, E, R>) =>
+  step.pipe(
+    Effect.timeoutOrElse({
+      duration: RESOLUTION_BOUND,
+      orElse: () =>
+        Effect.fail(
+          new ServiceUnavailableError({
+            message: `Location did not resolve within ${RESOLUTION_BOUND}: a Files-and-Folders consent dialog may be waiting for an answer — grant this app access to the workspace's folder, or keep the workspace outside a protected folder (Downloads, Desktop, Documents)`,
+            service: "location",
+          }),
+        ),
+    }),
+  )
+
 export const layer = Layer.effect(
   LocationMiddleware,
   Effect.gen(function* () {
@@ -104,8 +123,13 @@ export const layer = Layer.effect(
     return LocationMiddleware.of((effect) =>
       Effect.gen(function* () {
         const request = yield* HttpServerRequest.HttpServerRequest
-        return yield* effect.pipe(Effect.provide(locations.get(requestRef(request))), locationErrors)
-      }),
+        return yield* Effect.scoped(
+          Effect.gen(function* () {
+            const services = yield* bounded(Layer.build(locations.get(requestRef(request))))
+            return yield* effect.pipe(Effect.provideContext(services))
+          }),
+        )
+      }).pipe(locationErrors),
     )
   }),
 )
