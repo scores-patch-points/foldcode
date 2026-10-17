@@ -26,10 +26,10 @@ test("the fold's note carries the thread (clippy's present): about + settled, la
 
 test("the fold composes a chain (BOX computes): the derivation survives a minimal window", () => {
   const turns = [
-    { n: 1, ask: "Define the base B.", answer: "B = 7." },
-    { n: 2, ask: "Define the shard count S.", answer: "S = B * 3." },
-    { n: 3, ask: "Define the fanout F.", answer: "F = S - 5." },
-    { n: 4, ask: "Define the quota Q.", answer: "Q = F - 6." },
+    turn(1, "Define the base B.", "B = 7."),
+    turn(2, "Define the shard count S.", "S = B * 3."),
+    turn(3, "Define the fanout F.", "F = S - 5."),
+    turn(4, "Define the quota Q.", "Q = F - 6."),
   ]
   const note = surfLocal(turns, "what is the quota Q?")
   expect(note).toContain("derived") // the machine composed the chain
