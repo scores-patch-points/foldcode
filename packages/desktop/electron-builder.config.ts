@@ -221,7 +221,18 @@ export function getConfig() {
       return {
         ...base,
         appId,
-        productName: "opencodeXfold Dev",
+        productName: "opencode X the fold",
+        // A local dev build has no Developer ID and is signed ad-hoc (identity "-"). Under the
+        // hardened runtime the nested Electron Framework then carries a different Team ID than the
+        // main executable, so the app must disable library validation or it dies on launch with
+        // "Library not loaded: @rpath/Electron Framework.framework". See entitlements.dev.plist.
+        mac: {
+          ...base.mac,
+          identity: "-",
+          notarize: false,
+          entitlements: "resources/entitlements.dev.plist",
+          entitlementsInherit: "resources/entitlements.dev.plist",
+        },
         deb: { fpm: [metainfoFpm(appId)] },
         rpm: { packageName: "opencode-dev", fpm: [metainfoFpm(appId)] },
       }
