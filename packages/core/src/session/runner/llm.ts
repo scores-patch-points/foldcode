@@ -31,6 +31,7 @@ import { SessionStep } from "./step.js"
 import { ToolOutput } from "../../tool-output.js"
 import { Plugin } from "../../plugin.js"
 import { MAX_STEPS_PROMPT } from "./max-steps.js"
+import { REPEATED_STEP_PROMPT, repeatedStep } from "./repeated-step.js"
 
 const CONTINUE_AFTER_INCOMPLETE_STREAM =
   "The previous response was interrupted. Continue from where you left off without repeating completed content."
@@ -224,6 +225,10 @@ const layer = Layer.effect(
           continue
         }
         const stepLimitReached = loaded.agent.info.steps !== undefined && step >= loaded.agent.info.steps
+        // A turn that keeps re-issuing the same tool call is wedged, not working. Force one text-only
+        // step (like the step limit) so the turn closes and the person sees the loop, rather than
+        // spinning until an external restart breaks it.
+        const loopDetected = repeatedStep(loaded.messages)
         const transcript = SessionModelRequest.baseTranscript({
           agent: loaded.agent.info,
           model: loaded.model,
@@ -239,12 +244,14 @@ const layer = Layer.effect(
           system: transcript.system,
           messages: stepLimitReached
             ? [...transcript.messages, Message.assistant(MAX_STEPS_PROMPT)]
-            : transcript.messages,
+            : loopDetected
+              ? [...transcript.messages, Message.assistant(REPEATED_STEP_PROMPT)]
+              : transcript.messages,
           // Keep tool definitions on the final Step to preserve the provider's cached prefix. A request with NO
           // tool definitions is also a "none": a tool call the model emits anyway (from its own prior — measured
           // on deepseek-v4.1-flash, which asked for tools that were not offered) is recorded as unsettled, and the
           // runner's continuation recovery then re-invokes the model forever with no tool left to run.
-          toolChoice: stepLimitReached || loaded.tools.definitions.length === 0 ? "none" : undefined,
+          toolChoice: stepLimitReached || loopDetected || loaded.tools.definitions.length === 0 ? "none" : undefined,
           webSocket: "session",
           inputTokens: SessionCompaction.estimatePrompt(loaded),
         })
