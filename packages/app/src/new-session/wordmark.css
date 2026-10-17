@@ -1,5 +1,4 @@
 [data-component="new-session-wordmark"] {
-  --icon-strong-base: var(--icon-base);
   --wordmark-shimmer-opacity: 0.45;
 
   .wordmark-shimmer {

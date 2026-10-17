@@ -14,11 +14,8 @@ for (const theme of ["light", "dark"]) {
       await expect(logo.locator("g[mask]")).toHaveCount(0)
       await expect(shimmer).toHaveCSS("color", "rgb(255, 255, 255)")
       await expect(shimmer).toHaveCSS("mix-blend-mode", "screen")
-      await expect(base.locator("path").nth(1)).toHaveAttribute("fill", "var(--icon-base)")
-      await expect(base.locator("path").nth(9)).toHaveCSS(
-        "fill",
-        await base.locator("path").nth(1).evaluate((element) => getComputedStyle(element).fill),
-      )
+      await expect(base.locator('path[fill="var(--icon-base)"]')).toHaveCount(4)
+      await expect(base.locator('path[fill="var(--icon-strong-base)"]')).toHaveCount(4)
       await expect(base.locator('path[fill="var(--icon-weak-base)"]')).toHaveCount(8)
 
       await logo.evaluate((element) => {

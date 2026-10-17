@@ -53,3 +53,41 @@ export const Logo = (props: { class?: string }) => {
     </svg>
   )
 }
+
+// The openfold wordmark: opencode's block-letter "open" (muted) followed by the
+// fold's block-letter "fold" (ink). Each letter keeps the block style's inset
+// weak square, and the last four glyphs are the fold's own art.
+const OpenfoldWordmarkPaths = () => (
+  <>
+    <path fill="var(--icon-weak-base)" d="M18 30H6V18H18V30Z" />
+    <path fill="var(--icon-base)" d="M18 12H6V30H18V12ZM24 36H0V6H24V36Z" />
+    <path fill="var(--icon-weak-base)" d="M48 30H36V18H48V30Z" />
+    <path fill="var(--icon-base)" d="M36 30H48V12H36V30ZM54 36H36V42H30V6H54V36Z" />
+    <path fill="var(--icon-weak-base)" d="M84 24V30H66V24H84Z" />
+    <path fill="var(--icon-base)" d="M84 24H66V30H84V36H60V6H84V24ZM66 18H78V12H66V18Z" />
+    <path fill="var(--icon-weak-base)" d="M108 36H96V18H108V36Z" />
+    <path fill="var(--icon-base)" d="M108 12H96V36H90V6H108V12ZM114 36H108V12H114V36Z" />
+    <path fill="var(--icon-weak-base)" d="M138 36H132V12H138V36Z" />
+    <path fill="var(--icon-strong-base)" d="M138 36H132V0H138V36ZM138 6H126V0H138V6ZM138 18H120V12H138V18Z" />
+    <path fill="var(--icon-weak-base)" d="M168 30H156V18H168V30Z" />
+    <path fill="var(--icon-strong-base)" d="M168 12H156V30H168V12ZM174 36H150V6H174V36Z" />
+    <path fill="var(--icon-weak-base)" d="M204 36H198V18H204V36Z" />
+    <path fill="var(--icon-strong-base)" d="M204 36H198V0H204V36Z" />
+    <path fill="var(--icon-weak-base)" d="M228 30H216V18H228V30Z" />
+    <path fill="var(--icon-strong-base)" d="M228 12H216V30H228V12ZM234 36H210V6H228V0H234V36Z" />
+  </>
+)
+
+export const Wordmark = (props: { class?: string }) => {
+  return (
+    <svg
+      data-component="logo-wordmark"
+      classList={{ [props.class ?? ""]: !!props.class }}
+      viewBox="0 0 234 42"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+    >
+      <OpenfoldWordmarkPaths />
+    </svg>
+  )
+}
