@@ -5,9 +5,9 @@ Left by the "OCxTF context window limits" session. Append below the line; do not
 ## What exists (uncommitted)
 - `khora/opencode-surf.mjs` — mechanical ladder over old opencode turns: Figure (newest, ask-term-scored sentences), Kind (older turns sharing a rare-term signature, admitted only when MDL gain > 0 with >= 2 independent grounds), Pattern (past the cap). No model.
 - `khora/opencode-doorway.mjs` — `surf` event (listed in the handshake). Writes `~/.fold/worknotes/<sessionID>.md` (`FOLD_WORKNOTES_DIR`); text under `## notes` survives rewrites.
-- `opencode-fold/packages/core/src/plugin/fold.ts` — `surfPlan` / `surfApply`; `FOLD_KEEP_TURNS` (default 1, 0 = off); falls back to local truncation when the door is down.
+- `openfold/packages/core/src/plugin/fold.ts` — `surfPlan` / `surfApply`; `FOLD_KEEP_TURNS` (default 1, 0 = off); falls back to local truncation when the door is down.
 - `khora/opencode-surf.test.mjs` — 4 tests, `node --test`.
-- Contract: `opencode-fold/UPSTREAM.md` (`surf` section).
+- Contract: `openfold/UPSTREAM.md` (`surf` section).
 
 ## Evidence (7 turns, gemini-3.5-flash-lite, isolated door on 11466)
 - surf off: input tokens 2521, 2547, 2841, 3173, 3465 (about +300/turn)

@@ -14,14 +14,14 @@
 set -euo pipefail
 
 # One command, from anywhere:
-#   curl -fsSL https://raw.githubusercontent.com/scores-patch-points/opencode-fold/fold/fold-install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/scores-patch-points/openfold/fold/fold-install.sh | bash
 # Run from a checkout, it builds that checkout. Run from a pipe, it clones (or
-# updates) the fork into ~/.opencode-fold first, then builds. Override with
+# updates) the fork into ~/.openfold first, then builds. Override with
 # FOLD_REPO_DIR, FOLD_REPO_URL, FOLD_BRANCH.
 here="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || true)"
 if [ -z "${here:-}" ] || [ ! -f "$here/packages/cli/script/build.ts" ]; then
-  repo="${FOLD_REPO_DIR:-$HOME/.opencode-fold}"
-  url="${FOLD_REPO_URL:-https://github.com/scores-patch-points/opencode-fold.git}"
+  repo="${FOLD_REPO_DIR:-$HOME/.openfold}"
+  url="${FOLD_REPO_URL:-https://github.com/scores-patch-points/openfold.git}"
   branch="${FOLD_BRANCH:-fold}"
   command -v git >/dev/null || { echo "git is required" >&2; exit 1; }
   if [ -d "$repo/.git" ]; then
@@ -58,12 +58,12 @@ case "$(uname -m)" in
 esac
 target="${os}-${arch}"
 
-echo "building opencode-fold for ${target} (this takes a few minutes)"
+echo "building openfold for ${target} (this takes a few minutes)"
 # Stamp a normal-looking version from this tree's own package.json, with the
 # fork's commit as provenance: release gates check semver (>= 1.18.0) and a
 # bare dev build reports 0.0.0-<branch>-<ts>, which fails them.
 tree_version=$(bun -e 'console.log((await Bun.file("package.json").json()).version)')
-outdir="${FOLD_BUILD_DIR:-$HOME/.cache/opencode-fold}"
+outdir="${FOLD_BUILD_DIR:-$HOME/.cache/openfold}"
 rm -rf "$outdir"
 OPENCODE_VERSION="${tree_version}-fold.$(git rev-parse --short HEAD)" \
   bun run --cwd packages/cli script/build.ts --single --skip-install --outdir="$outdir"
@@ -86,9 +86,9 @@ mv -f "$dest/opencode.new" "$dest/opencode"
 
 "$dest/opencode" --version
 base=$(git rev-parse --short upstream/dev 2>/dev/null || echo unknown)
-echo "installed $dest/opencode from opencode-fold @ $(git rev-parse --short HEAD) (upstream base: $base)"
+echo "installed $dest/opencode from openfold @ $(git rev-parse --short HEAD) (upstream base: $base)"
 
-# macOS: a double-clickable "opencode X the fold" app that starts the desktop dev stack from this checkout.
+# macOS: a double-clickable "openfold" app that starts the desktop dev stack from this checkout.
 [ "$os" = darwin ] && ./fold-launcher.sh || true
 
 # The fold stack: report whether the live doorway answers, and whether it

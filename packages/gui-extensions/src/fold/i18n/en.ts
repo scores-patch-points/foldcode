@@ -14,7 +14,7 @@ export default {
   "holodeck.empty": "No turns recorded yet.",
   "holodeck.openReal": "Open the holodeck →",
   "holodeck.hint": "The holodeck opens in its own surface (the browser pane), tied to this workspace.",
-  "panel.title": "opencode X the fold",
+  "panel.title": "openfold",
   "panel.subtitle": "it decides what the model is sent — verbatim, no embeddings, no guessing",
   "panel.refresh": "Refresh",
   "panel.replay": "Replay the arrival animation",

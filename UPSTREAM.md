@@ -1,10 +1,12 @@
-# opencode-fold — the routing fork's contract
+# openfold — the routing fork's contract
 
-opencode-fold is **opencode** (`anomalyco/opencode`, MIT) — the tree is
-byte-for-byte upstream — plus one thing: the doorway plugin that keeps the
-frontier's context to precisely what each ask needs, and records every turn so
-the fold learns. No rebrand lives here. Syncing is a rebase, and the fork's
-honesty is one diff check.
+openfold is **opencode** (`anomalyco/opencode`, MIT) — the tree is
+byte-for-byte upstream — plus two things: the doorway plugin that keeps the
+frontier's context to precisely what each ask needs and records every turn so
+the fold learns, and the app identity (the name *openfold*, the fold's icon,
+and the README lockup). The models are upstream's, unpinned; the CLI is
+upstream's — this is not the abandoned white-label. Syncing is a rebase, and
+the fork's honesty is one diff check.
 
 ## What this branch is
 
@@ -149,7 +151,13 @@ upstream commit the branch sits on) touches any file outside its allowed list �
 the doorway (`packages/core/src/plugin/fold.ts`, its registration in
 `internal.ts`), the fold UI extensions under `packages/gui-extensions/src/fold/`
 (including `remember.tsx`, `remember-model.ts`, `remember-model.test.ts`), the
-mind and its mount, `UPSTREAM.md`, `fold-sync.sh`, `fold-install.sh`, the doorway's web search test
-(`packages/core/test/fold-websearch.test.ts`) — or if the delta deletes any upstream line. The authoritative allowed list is the
-`case` in `fold-sync.sh`. The fork only ever adds. If it ever needs another
-patch, that is a contract change: extend the allowed list first, deliberately.
+mind and its mount, the doorway's web search test
+(`packages/core/test/fold-websearch.test.ts`), the scripts (`UPSTREAM.md`,
+`fold-sync.sh`, `fold-install.sh`, `fold-app.sh`, `fold-launcher.sh`,
+`fold-door.sh`), and the app identity — the openfold name and the fold's icon
+across the READMEs, `brand/`, the app/ui i18n bundles, the favicons/icons, and
+the desktop/app shells — or if the delta deletes any upstream line outside the
+two reviewed exemptions (`settings/model.tsx` and the app-identity surface). The
+authoritative allowed list is the `case` in `fold-sync.sh`. The fork only ever
+adds. If it ever needs another patch, that is a contract change: extend the
+allowed list first, deliberately.

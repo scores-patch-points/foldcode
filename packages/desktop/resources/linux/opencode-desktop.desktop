@@ -1,6 +1,6 @@
 [Desktop Entry]
-Name=opencodeXfold
-Exec=/opt/opencodeXfold/ai.opencode.desktop %U
+Name=openfold
+Exec=/opt/openfold/ai.opencode.desktop %U
 Terminal=false
 Type=Application
 Icon=ai.opencode.desktop
