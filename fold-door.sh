@@ -26,6 +26,9 @@
 # Placement (see the note above): the door must run on the box that holds the workspace bytes —
 # groundCheck reads the disk, so a door that cannot see the files flags them `unknown_path`.
 # FOLD_STACK_DIR names an existing stack; FOLD_STACK_URL/FOLD_STACK_BRANCH name what to clone.
+# FOLD_SIBLINGS_DIR optionally names where the stack's siblings (penelope, janus) live — the door
+# reads its fold-note and priors there instead of failing open to an empty note; `install` carries
+# it into the agent's environment.
 set -eu
 
 # launchd starts this with a near-empty PATH; the stack's tools (node, git, the senses) live in
@@ -57,6 +60,13 @@ stack_branch="${FOLD_STACK_BRANCH:-}"
 # on its own. `full` hands the job back to the stack's local-up.sh (the whole pipeline: model
 # host, mouths, fleet) for operators who want that supervised too.
 mode="${FOLD_DOOR_MODE:-doorway}"
+# THE CUBE (optional, default off): FOLD_CUBE=1 provisions the python witnesses behind the
+# door's 27-cell tool registry — a locked venv (cube-tools/py312, uv) under the door's own
+# state dir, launchd-readable, and the door started with FOLD_CUBE=1. Without it the door
+# still runs; cube calls answer a typed gap (sidecar-absent), never a silent downgrade.
+# FOLD_CUBE_GROUPS chooses the uv groups the venv syncs (default "ci existence": the wired
+# witness plus the sense organs; widen to all three domain groups for the whole locked cube).
+cube="${FOLD_CUBE:-0}"
 
 if [ "$(uname -s)" = Darwin ]; then log="$HOME/Library/Logs/fold-door.log"; else log="${XDG_STATE_HOME:-$HOME/.local/state}/fold-door.log"; fi
 mkdir -p "$(dirname "$log")" 2>/dev/null || true
@@ -106,6 +116,39 @@ fetch_stack() {
   return 0
 }
 
+# THE CUBE'S VENV, provisioned only when asked for (FOLD_CUBE=1). The locked py312 project
+# ships in the stack; the venv lives under the door's own state dir (launchd-readable, never
+# inside the clone), where the sidecar host hunts for it. A failure is disclosed and the door
+# still runs — python stays optional, cube calls answer their typed gap.
+provision_cube() {
+  [ "$cube" = "1" ] || return 0
+  if ! command -v uv >/dev/null 2>&1; then
+    say "FOLD_CUBE=1 but uv is not on PATH — the venv was not provisioned (cube calls will answer sidecar-absent)"
+    return 0
+  fi
+  if [ ! -f "$stack/cube-tools/py312/pyproject.toml" ]; then
+    say "FOLD_CUBE=1 but the stack at $stack carries no cube-tools/py312 project"
+    return 0
+  fi
+  # Which uv groups to sync. Nothing installs unless a group is named
+  # (default-groups=[]), so a bare `uv sync` would build an EMPTY venv — the
+  # default here is the wiring's own reach: the wired witness (ci) plus the
+  # sense organs' group (existence). The remaining domain groups arrive as
+  # their executors are wired — provisioning tracks the wiring, it does not
+  # run ahead of it. FOLD_CUBE_GROUPS="existence structure interpretation"
+  # widens it to the whole locked cube (sentence-transformers and friends
+  # included: expect torch-sized downloads).
+  groups="${FOLD_CUBE_GROUPS:-ci existence}"
+  args=""
+  for g in $groups; do args="$args --group $g"; done
+  say "provisioning the cube venv at $home_dir/venv (uv sync$args, cube-tools/py312)"
+  if ( cd "$stack/cube-tools/py312" && UV_PROJECT_ENVIRONMENT="$home_dir/venv" uv sync --no-python-downloads $args >>"$log" 2>&1 ); then
+    say "cube venv ready: $home_dir/venv"
+  else
+    say "cube venv provisioning failed — the door still runs; cube calls answer sidecar-absent (see $log)"
+  fi
+}
+
 start_door() {
   fetch_stack || true
 
@@ -116,9 +159,13 @@ start_door() {
     say "the stack at $stack is unreadable by this process — grant Full Disk Access to the door agent, or move the stack out of ~/Downloads"
     return 1
   fi
+  provision_cube
   if [ "$mode" = "full" ] && [ -x "$stack/local-up.sh" ]; then
     say "starting the fold pipeline: $stack/local-up.sh bg"
     ( cd "$stack" && ./local-up.sh bg >>"$log" 2>&1 ) || say "local-up.sh returned non-zero"
+  elif [ "$cube" = "1" ]; then
+    say "serving the opencode doorway on :$port (cube on; venv $home_dir/venv)"
+    ( cd "$stack" && FOLD_CUBE=1 FOLD_CUBE_PYTHON="$home_dir/venv/bin/python" nohup node opencode-doorway.mjs --serve "$port" >>"$log" 2>&1 & ) || return 1
   else
     say "serving the opencode doorway on :$port (FOLD_DOOR_MODE=full runs the whole pipeline)"
     ( cd "$stack" && nohup node opencode-doorway.mjs --serve "$port" >>"$log" 2>&1 & ) || return 1
@@ -168,6 +215,8 @@ run() {
 }
 
 agent_plist() {
+  siblings_env=""
+  [ -n "${FOLD_SIBLINGS_DIR:-}" ] && siblings_env="    <key>FOLD_SIBLINGS_DIR</key><string>$FOLD_SIBLINGS_DIR</string>"
   cat <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -179,6 +228,8 @@ agent_plist() {
   <key>EnvironmentVariables</key><dict>
     <key>FOLD_STACK_DIR</key><string>$stack</string>
     <key>FOLD_URL</key><string>$door</string>
+    <key>FOLD_CUBE</key><string>$cube</string>
+$siblings_env
   </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>

@@ -7,6 +7,7 @@ const setup: Setup<typeof Fold> = (ctx) => {
   const SessionFoldPanel = lazy(() => import("./panel"))
   const SessionHolodeckPanel = lazy(() => import("./archive"))
   const SessionPerceivePanel = lazy(() => import("./perceive"))
+  const SessionCubePanel = lazy(() => import("./cube"))
   const SessionWorktreePanel = lazy(() => import("./worktree"))
   const SessionMindTree = lazy(() => import("./mind-tree"))
   const SessionWorkPlans = lazy(() => import("./plans"))
@@ -17,6 +18,7 @@ const setup: Setup<typeof Fold> = (ctx) => {
   onCleanup(onIdle(() => void SessionFoldPanel.preload()))
   onCleanup(onIdle(() => void SessionHolodeckPanel.preload()))
   onCleanup(onIdle(() => void SessionPerceivePanel.preload()))
+  onCleanup(onIdle(() => void SessionCubePanel.preload()))
   onCleanup(onIdle(() => void SessionRememberPanel.preload()))
   onCleanup(onIdle(() => void SessionStructurePanel.preload()))
   onCleanup(onIdle(() => void SessionWorktreePanel.preload()))
@@ -157,6 +159,28 @@ const setup: Setup<typeof Fold> = (ctx) => {
     render: (props) => (
       <Suspense>
         <SessionPerceivePanel session={props.session} />
+      </Suspense>
+    ),
+  })
+
+  // The Cube tab: the 27-cell tool registry as the door sees it — which tools
+  // are present in the locked venv, which domains are provisioned, per-cell
+  // coverage, and each tool's last agreement. Witness calls run in shadow.
+  const cube: PanelTab = {
+    id: "cube",
+    get title() {
+      return ctx.t("tab.cube")
+    },
+    closable: "compact",
+  }
+
+  ctx.add(Panel, {
+    id: "cube",
+    region: "side",
+    list: () => [cube],
+    render: (props) => (
+      <Suspense>
+        <SessionCubePanel session={props.session} />
       </Suspense>
     ),
   })

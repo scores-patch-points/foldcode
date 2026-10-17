@@ -25,15 +25,22 @@ import { record as rulerRecord, recordTokens as rulerTokens } from "./fold-ruler
 
 const base = (process.env.FOLD_URL ?? "http://127.0.0.1:11436").replace(/\/+$/, "")
 const off = process.env.FOLD_OFF === "1"
-// The door sits on the request path, so its recall/surf/title calls get a small
-// budget by default: a healthy local door answers in milliseconds, and a wedged
-// or slow one fails open fast (the turn then sends native content) instead of
-// stalling the frontier. FOLD_TIMEOUT_MS raises it if a door legitimately needs longer.
-const askTimeout = Number(process.env.FOLD_TIMEOUT_MS ?? 250)
+// The door sits on the request path, so its recall/surf/title calls get a bounded
+// budget. The contract's default is 1500ms: the door's surf does real work behind
+// the answer (medium writes, the mechanical fold), and a 250ms budget measured as
+// "folded" while the stigmergic note never arrived. A wedged or slow door still
+// fails open fast (the turn sends native content) instead of stalling the frontier.
+// FOLD_TIMEOUT_MS moves it.
+const askTimeout = Number(process.env.FOLD_TIMEOUT_MS ?? 1500)
 const foldTimeout = Number(process.env.FOLD_FOLD_TIMEOUT_MS ?? 20_000)
 // The swarm is model-free but reads the material through the door's capacity
 // organs; it gets a longer budget than a recall note while still failing open.
 const swarmTimeout = Number(process.env.FOLD_SWARM_TIMEOUT_MS ?? 60_000)
+// The cube runs a python witness in the door's locked venv — a real import
+// plus a fit, so it carries the swarm's class of budget, never the 250ms
+// recall lane. FOLD_CUBE_TIMEOUT_MS moves it; the door may still answer a
+// typed gap (cube-disabled without FOLD_CUBE=1) inside this window.
+const cubeTimeout = Number(process.env.FOLD_CUBE_TIMEOUT_MS ?? 60_000)
 const minChars = Number(process.env.FOLD_MIN_CHARS ?? 4000)
 const coolDown = 30_000
 const debug = process.env.FOLD_DEBUG === "1"
@@ -334,6 +341,23 @@ const clip = (value: unknown, max = 2000) => {
   return text.length > max ? `${text.slice(0, max)}…[${text.length - max} more]` : text
 }
 
+// The door reads a tool's IDENTITY — which file, which command — never its bytes. The input is
+// forwarded as a small object with the addressing fields clipped: a large write's content never
+// rides, and the door never has to parse a string that clip cut mid-token (a truncated string is
+// not JSON, which made every mechanical claim silently unfireable). A non-object value still
+// rides the old clip for compatibility; the door parses strings where it can.
+const TOOL_SHAPE_KEYS = ["filePath", "file_path", "path", "file", "command", "cmd"] as const
+const toolShape = (value: unknown) => {
+  if (!value || typeof value !== "object") return clip(value, 1000)
+  const input = value as Record<string, unknown>
+  const out: Record<string, string> = {}
+  for (const key of TOOL_SHAPE_KEYS) {
+    const field = input[key]
+    if (typeof field === "string") out[key] = clip(field, 1000)
+  }
+  return out
+}
+
 type Observed = Stream.Success<ReturnType<Context["event"]["subscribe"]>>
 
 const forward = (event: Observed) => {
@@ -350,7 +374,7 @@ const forward = (event: Observed) => {
     case "session.tool.input.started":
       return { id: event.data.id, name: event.data.name }
     case "session.tool.called":
-      return { id: event.data.id, input: clip(event.data.input, 1000), executed: event.data.executed }
+      return { id: event.data.id, input: toolShape(event.data.input), executed: event.data.executed }
     case "session.tool.success":
       return { id: event.data.id, ok: true, executed: event.data.executed, output: clip(event.data.content, 1000) }
     case "session.tool.failed":
@@ -564,7 +588,7 @@ export const Plugin = define({
     }).pipe(
       Effect.tap((door) => {
         const events = door?.events ?? []
-        const missing = ["context", "title", "fold", "perceive"].filter((event) => !events.includes(event))
+        const missing = ["context", "surf", "ground", "title", "perceive"].filter((event) => !events.includes(event))
         if (door?.door !== "opencode" || missing.length > 0)
           return Effect.logWarning("fold doorway speaks an older contract", { door: door?.door, missing, events })
         return Effect.void
@@ -1352,6 +1376,87 @@ export const Plugin = define({
               metadata: { schema: "EOSwarm@1", reading, standing, holes, giver, modality, origin: "mechanical" },
             }
           }).pipe(Effect.mapError((error) => (error instanceof ToolFailure ? error : new ToolFailure({ message: "swarm failed", error })))),
+      }),
+    )
+
+    // CUBE: the 27-cell tool registry — coverage always, a witness call in
+    // shadow. The door measures (model-free, python in its locked venv, its own
+    // whitelist and family gates); the result renders as its own notice row, so
+    // the model relays the door's finding and cannot author one. A disagreement
+    // is a finding the door records (a REC candidate), never a retry.
+    yield* ctx.tool.transform((editor) =>
+      editor.add({
+        name: "cube",
+        options: { codemode: false },
+        description:
+          "The 27-cell cube's own tools. Name a cell (DEF·Pattern, NUL.Ground) or a registered tool package (pydmd, scipy) to run one whitelisted tool in shadow — a witness reading beside its own JS sibling, recorded, never gating; or omit both and get the map: every cell's coverage, which python packages are present in the door's locked venv, and each tool's last agreement. Model-free: the door measures, you relay; add no finding it did not measure.",
+        input: Schema.Struct({
+          ask: Schema.String.annotate({ description: "What to read for (the pointing or question)" }),
+          cell: Schema.optionalKey(Schema.String).annotate({
+            description: "A cube address (DEF·Pattern, NUL.Ground). With no tool, the cell's single registered tool runs; a multi-tool cell is refused by name.",
+          }),
+          tool: Schema.optionalKey(Schema.String).annotate({
+            description: "A registered tool package (pydmd, scipy, clingo). Omit with no cell for the coverage map.",
+          }),
+          text: Schema.optionalKey(Schema.String).annotate({ description: "The material inline (a series for the witness), when no path/ref is given" }),
+          path: Schema.optionalKey(Schema.String).annotate({ description: "A file on this machine the door reads for the material" }),
+          ref: Schema.optionalKey(Schema.String).annotate({ description: "An address whose bytes become the material (path#L10-L20, or a <fold-commons> ref)" }),
+          rank: Schema.optionalKey(Schema.Number).annotate({ description: "Declared model order for witnesses that fit one — both engines truncate to it, so the agreement compares readings and not rank choices" }),
+          seed: Schema.optionalKey(Schema.Number).annotate({ description: "Declared seed for a tool that draws (recorded in the call's detail; the tool must honour it)" }),
+        }),
+        output: Schema.Struct({ reading: Schema.String, standing: Schema.String, giver: Schema.String }),
+        execute: (input, context) =>
+          Effect.gen(function* () {
+            const sessionID = context.sessionID
+            const workspace = yield* workspaceOf(sessionID)
+            const answer = yield* post(
+              { event: "cube", sessionID, agent: sessionID, workspace, ask: input.ask, cell: input.cell, tool: input.tool, text: input.text, path: input.path, ref: input.ref, rank: input.rank, seed: input.seed },
+              cubeTimeout,
+            )
+            if (answer === undefined) return yield* Effect.fail(new ToolFailure({ message: `cube: the fold door is unreachable at ${base}` }))
+            if (answer.ok !== true)
+              return yield* Effect.fail(
+                new ToolFailure({
+                  message: `cube ${String(answer.gap ?? "failed")}: ${input.tool ?? input.cell ?? input.ask}${answer.why ? ` — ${String(answer.why)}` : ""}`,
+                }),
+              )
+            // MAP mode (no cell, no tool): the coverage report IS the reading —
+            // the model relays which of the 27 cells the registry can serve.
+            if (answer.mode === "map") {
+              const cells = Array.isArray(answer.cells) ? (answer.cells as { cell: string; coverage: string; tools: { package: string; present: boolean | null }[] }[]) : []
+              const sidecar = (answer.sidecar ?? {}) as { found?: boolean; why?: unknown }
+              const report = [
+                `cube map: ${cells.length} cells registered, ${cells.filter((c) => c.coverage === "present").length} fully present in the locked venv${sidecar.found ? "" : `; sidecar absent — ${String(sidecar.why ?? "").slice(0, 200)}`}`,
+                ...cells.map(
+                  (c) =>
+                    `${c.cell}: ${c.coverage} — ${c.tools
+                      .map((t) => `${t.package}${t.present === true ? "" : t.present === false ? " (absent)" : t.present === null ? " (unprobed)" : ""}`)
+                      .slice(0, 8)
+                      .join(", ")}`,
+                ),
+              ].join("\n")
+              return {
+                output: { reading: report, standing: "map", giver: "cube-registry" },
+                content: report,
+                metadata: { schema: "EOCube@1", mode: "map", origin: "mechanical" },
+              }
+            }
+            const reading = String(answer.reading ?? "")
+            const standing = String(answer.standing ?? "unresolved")
+            const giver = typeof answer.producer === "string" && answer.producer.length > 0 ? answer.producer : "cube"
+            const agreement = typeof answer.agreement === "number" ? `agreement ${answer.agreement.toFixed(2)}` : "no agreement computable"
+            const report = `${reading}\n${agreement}; standing: ${standing}`
+            // The reading as its own notice row, physically separate from the
+            // assistant's text — the door's measurement the model must not reword.
+            yield* ctx.session
+              .synthetic({ sessionID, text: report, description: "the cube — the door's own witness reading, measured", resume: false })
+              .pipe(Effect.catchCause(() => Effect.void))
+            return {
+              output: { reading, standing, giver },
+              content: report,
+              metadata: { schema: "EOCube@1", mode: "call", cell: String(answer.cell ?? ""), tool: (answer.tool ?? null) as unknown, agreement: answer.agreement ?? null, shadow: true, origin: "mechanical" },
+            }
+          }).pipe(Effect.mapError((error) => (error instanceof ToolFailure ? error : new ToolFailure({ message: "cube failed", error })))),
       }),
     )
 
