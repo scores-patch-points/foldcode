@@ -759,6 +759,9 @@ button.ftm-name:focus-visible {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  /* The positioning frame for the profile: a click opens the profile OVER the lens, where you clicked — never below
+     the fold, out of sight. */
+  position: relative;
 }
 
 .ftm-read {
@@ -1056,12 +1059,38 @@ button.ftm-name:focus-visible {
   color: var(--ftm-faint);
 }
 
-/* The profile: the drill-in page a concept opens onto, drawn from the same map and snapshot. Its rows are a list the
-   profile's own cursor steps — the row you are on is the one ENTER follows. */
+/* The profile: the drill-in page a concept opens onto, drawn from the same map and snapshot. It is laid OVER the lens
+   rather than under it, so the click that opened it lands where the eye already is; it enters with one short rise and
+   closes back to the map. Its rows are a list the profile's own cursor steps — the row you are on is the one ENTER
+   follows. */
 .ftm-profile {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  max-height: 100%;
+  overflow: auto;
   border: 0.5px solid var(--ftm-ink2);
-  background: #111110;
+  background: #111110f2;
   padding: 12px 14px;
+  animation: ftm-drill 170ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+@keyframes ftm-drill {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ftm-profile {
+    animation: none;
+  }
 }
 
 .ftm-prof-head {

@@ -1,6 +1,7 @@
 import { createMemo, createSignal, onCleanup, Show } from "solid-js"
 import { Icon } from "@opencode/ui/icon"
 import { Tooltip } from "@opencode/ui/tooltip"
+import { compact, money } from "@opencode/util/savings"
 import { useExtension } from "../sdk"
 import type Fold from "./index"
 
@@ -13,21 +14,8 @@ const FOLD_URL = "http://127.0.0.1:11436"
 // kept out is estimated to be worth.
 type Meter = { tokens: number; usd: number }
 
-const money = (usd: number) => `$${usd.toFixed(4)}`
-
-// The counter reads out tokens the fold KEPT OUT, in the compact form a person reads at a glance:
-// 3130000 -> "3.13M". Two decimals from K up, a plain integer below.
-const compact = (n: number) => {
-  const abs = Math.abs(n)
-
-  if (abs >= 1e9) return `${(n / 1e9).toFixed(2)}B`
-
-  if (abs >= 1e6) return `${(n / 1e6).toFixed(2)}M`
-
-  if (abs >= 1e3) return `${(n / 1e3).toFixed(2)}K`
-
-  return String(Math.round(n))
-}
+// The tally reads the money and token shape from @opencode/util/savings, the same one the Sent
+// panel and the door's /fold readout use — the corner number and those never disagree.
 
 export default function FoldTally() {
   const ctx = useExtension<typeof Fold>()
@@ -92,12 +80,12 @@ export default function FoldTally() {
       }
     >
       <div class="flex h-5 shrink-0 items-center gap-0.5 rounded-full bg-v2-background-bg-layer-02 ps-2 pe-1 [app-region:no-drag]">
-        <Tooltip placement="bottom" value={`${ctx.t("tally.title")} (${money(usd())})`}>
+        <Tooltip placement="bottom" value={ctx.t("tally.title")}>
           <span
             class="shrink-0 whitespace-nowrap text-[11px] leading-4 text-v2-text-text-muted"
             classList={{ "opacity-60": offline() }}
           >
-            {offline() ? ctx.t("tally.offline") : `${compact(tokens())} ${ctx.t("tally.saved")}`}
+            {offline() ? ctx.t("tally.offline") : ctx.t("tally.saved", { tokens: compact(tokens()), money: money(usd()) })}
           </span>
         </Tooltip>
         <button

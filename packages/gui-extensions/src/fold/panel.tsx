@@ -3,6 +3,7 @@ import { Option, Schema } from "effect"
 import { Button } from "@opencode/ui/button"
 import { ScrollView } from "@opencode/ui/scroll-view"
 import { TextShimmer } from "@opencode/ui/text-shimmer"
+import { compact, money } from "@opencode/util/savings"
 import { createLatest, useExtension, type Live, type MountedSession } from "../sdk"
 import type { Browser } from "../browser/contract"
 
@@ -378,9 +379,8 @@ export function TurnView(props: { turn: Turn; index: number; total: number; sess
       </div>
 
       <div class="text-13-regular text-text-weak">
-        This turn: {num(props.turn.tokens?.input).toLocaleString()} in · {num(props.turn.tokens?.output).toLocaleString()} out · $
-        {" "}
-        {num(props.turn.cost).toFixed(4)}
+        This turn: {num(props.turn.tokens?.input).toLocaleString()} in · {num(props.turn.tokens?.output).toLocaleString()} out ·{" "}
+        {money(num(props.turn.cost))}
       </div>
     </div>
   )
@@ -399,7 +399,7 @@ function Summary(props: { meter: Meter | undefined; fallbackTurns: number }) {
         {turns()} {turns() === 1 ? "turn" : "turns"} so far · {repeats()} repeated questions · {recalls()} answered from memory
       </div>
       <div class="text-13-regular text-text-base">
-        Kept out of the model's view: {chars().toLocaleString()} characters (~{tokens().toLocaleString()} tokens, an estimate)
+        Kept out of the model's view: {chars().toLocaleString()} characters (~{compact(tokens())} tokens, an estimate)
       </div>
       <div class="text-12-regular text-text-weak">
         Nothing here is measured against results yet — only what the fold did, not whether it helped.
