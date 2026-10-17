@@ -105,7 +105,10 @@ const once = (model, prompt, timeoutMs, standalone = STANDALONE) => {
       const part = j.part ?? j
       if (part.type === "text" && typeof part.text === "string") text += part.text
       if (j.type === "error") provider = `${j.error?.type ?? "provider error"}: ${String(j.error?.message ?? "").slice(0, 160)}`
-      if (part.type === "tool") toolCalls++
+      // A tool the door refused (providerCall.executed === false) returned NO bytes, so it cannot put the hidden
+      // referent in the answer: the attempt is recorded in the row, never scored as a leak. Only a tool that
+      // actually RAN can contaminate the measurement.
+      if (part.type === "tool" && part.state?.metadata?.providerCall?.executed !== false) toolCalls++
       // usage rides a `step-finish` part (cli/run/noninteractive.ts, the session.step.ended branch). Read every
       // shape it can arrive in so a differently-shaped usage report still counts.
       const t = part.tokens ?? j.tokens ?? j.usage
