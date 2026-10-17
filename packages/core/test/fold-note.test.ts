@@ -36,6 +36,18 @@ test("the fold composes a chain (BOX computes): the derivation survives a minima
   expect(note).toContain("Q=10") // 7*3=21, 21-5=16, 16-6=10 — the RESULT, not the links
 })
 
+test("the mechanical fold compresses many DISTINCT asks into their threads (paraphrases), not a list", () => {
+  const topics = ["parser", "deploy", "billing", "search"]
+  const turns = Array.from({ length: 40 }, (_, i) =>
+    turn(i + 1, `work on the ${topics[i % 4]} item ${i}`, `settled the ${topics[i % 4]} work for item ${i}`),
+  )
+  const note = surfLocal(turns, "what did we settle about the parser?")
+  const threadLines = note.split("\n").filter((l) => l.startsWith("- ["))
+  expect(threadLines.length).toBeLessThanOrEqual(6) // threads, not 40 asks
+  expect(note.length).toBeLessThanOrEqual(2000) // the char budget holds
+  expect(note).toContain("thread(s)") // the note names its threads
+})
+
 test("the fold's note is deterministic (pure — no model, no clock)", () => {
   const turns = [turn(1, "a question about the parser", "the parser lives in lib/p.js")]
   expect(surfLocal(turns, "where is the parser?")).toBe(surfLocal(turns, "where is the parser?"))

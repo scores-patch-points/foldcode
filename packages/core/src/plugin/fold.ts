@@ -233,11 +233,9 @@ export const surfLocal = (turns: NonNullable<ReturnType<typeof surfPlan>>["turns
   const byAsk = new Map<string, (typeof turns)[number]>()
   for (const t of turns) byAsk.set(short(t.ask, 300), t) // last-wins per ask (the DMD)
   const kept = [...byAsk.values()]
-  // THE NOTE IS BOUNDED — the fold is the THREAD, never the tail. Only the most recent asks are listed; the rest
-  // ride as a count. So the note cannot grow with the session (measured: unbounded, 30 long turns > 4k chars).
-  const max = Number(process.env.FOLD_NOTE_TURNS ?? 8)
-  const shown = kept.slice(-max)
-  const older = kept.length - shown.length
+  // THE MECHANICAL FOLD. Distinct asks are not listed — they FOLD to their THREADS: turns sharing a rare term
+  // become one line (a mechanical paraphrase — the door's ladder Kind rung), and the oldest threads become a
+  // count. The note is bounded by THREADS, not turns, and by a hard char budget. No model.
   const askW = wordsOf(ask)
   const about = [
     ...new Set(kept.flatMap((t) => [...wordsOf(`${t.ask} ${t.answer}`)].filter((w) => askW.has(w)))),
@@ -245,25 +243,43 @@ export const surfLocal = (turns: NonNullable<ReturnType<typeof surfPlan>>["turns
   // THE DERIVATION, composed: the chain resolved to its values, so a trimmed window still holds the result.
   const derived = [...derivationFor(kept)].slice(-12)
   const derivedLine = derived.map(([n, v]) => `${n}=${Number.isInteger(v) ? v : v.toFixed(2)}`).join(", ")
-  // A HARD char budget: the note is the window's fixed cost, so it can never grow — drop the oldest listed turns
-  // (they become the count) until it fits, then clip as a last resort. FOLD_NOTE_CHARS, 2000 default.
   const budget = Number(process.env.FOLD_NOTE_CHARS ?? 2_000)
-  const build = (list: typeof shown, ext: number) =>
+  const maxThreads = Number(process.env.FOLD_NOTE_GROUPS ?? 6)
+  // group each turn by its rarest content term not already in the ask — its THREAD (the Kind rung, mechanically)
+  const docs = kept.map((t) => [...wordsOf(`${t.ask} ${t.answer}`)])
+  const df = new Map<string, number>()
+  for (const d of docs) for (const w of d) df.set(w, (df.get(w) ?? 0) + 1)
+  const groups = new Map<string, number[]>()
+  docs.forEach((d, i) => {
+    const sig =
+      d
+        .filter((w) => !askW.has(w))
+        .sort((a, b) => (df.get(a) ?? 0) - (df.get(b) ?? 0) || (a < b ? -1 : 1))[0] ?? `~${i}`
+    const g = groups.get(sig) ?? []
+    g.push(i)
+    groups.set(sig, g)
+  })
+  const threads = [...groups.entries()]
+    .map(([sig, idx]) => ({ sig, idx, newest: idx[idx.length - 1] }))
+    .sort((a, b) => b.newest - a.newest) // newest threads first
+  const lineOf = (t: (typeof threads)[number]) => {
+    const last = kept[t.idx[t.idx.length - 1]]
+    return `- [${t.sig}] ${t.idx.length} ask(s) — latest: ${short(last.ask, 160)} → ${last.answer ? `settled: ${short(last.answer, 220)}` : "(open, no reply)"}`
+  }
+  const build = (list: typeof threads, ext: number) =>
     [
-      `[fold: the thread — ${kept.length} earlier ask(s) settled (of ${turns.length} turns); the full history remains in the session]`,
+      `[fold: the thread — ${kept.length} earlier ask(s) settled (of ${turns.length} turns) across ${threads.length} thread(s); the full history remains in the session]`,
       ...(about.length ? [`about: ${about.join(", ")}`] : []),
       ...(derived.length ? [`derived (the machine composed the chain): ${derivedLine}`] : []),
-      ...(ext > 0 ? [`- (+${ext} earlier ask(s) folded)`] : []),
-      ...list.map(
-        (t) => `- asked: ${short(t.ask, 300)} → ${t.answer ? `settled: ${short(t.answer, 400)}` : "(open, no reply)"}`,
-      ),
+      ...(ext > 0 ? [`- (+${ext} older ask(s) folded)`] : []),
+      ...list.map(lineOf),
     ].join("\n")
-  let list = shown
-  let ext = older
+  let list = threads.slice(0, maxThreads)
+  let ext = kept.length - list.reduce((n, t) => n + t.idx.length, 0)
   let note = build(list, ext)
   while (note.length > budget && list.length > 1) {
-    list = list.slice(1)
-    ext += 1
+    ext += list[list.length - 1].idx.length
+    list = list.slice(0, -1)
     note = build(list, ext)
   }
   return note.length > budget ? `${note.slice(0, budget - 1)}…` : note
