@@ -5,6 +5,7 @@ export default {
   "tab.holodeck": "Holodeck",
   "tab.perceive": "Perceive",
   "tab.remember": "Remember",
+  "tab.structure": "Structure",
   "worktree.title": "Worktree",
   "worktree.subtitle": "the workspace you are working on, as files",
   "worktree.unavailable": "The file tree is unavailable right now.",

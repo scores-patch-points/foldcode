@@ -9,6 +9,7 @@
     "allowSyntheticDefaultImports": true,
     "esModuleInterop": true,
     "isolatedModules": true,
+    "allowJs": true,
     "module": "ESNext",
     "moduleResolution": "bundler",
     "noEmit": true,
