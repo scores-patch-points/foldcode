@@ -1,13 +1,23 @@
 import { createMemo, createSignal, onCleanup, Show } from "solid-js"
+import { Option, Schema } from "effect"
 import { Icon } from "@opencode/ui/icon"
 import { Tooltip } from "@opencode/ui/tooltip"
 import { compact, money } from "@opencode/util/savings"
+import { doorHealth, type DoorHealth } from "./health"
 import { useExtension } from "../sdk"
 import type Fold from "./index"
 
 // The fold door's default address. The tally reads the same meter the panel
 // shows, so the corner number and the panel never disagree.
 const FOLD_URL = "http://127.0.0.1:11436"
+
+// The door's contract as the tally reads it: the event names it serves (a fold door serves
+// "ground") and the sense hunt's found organs. Decoded at the boundary, so the verdict reads a
+// typed value instead of probing a shape.
+const Contract = Schema.Struct({
+  events: Schema.optionalKey(Schema.Array(Schema.String)),
+  senses: Schema.optionalKey(Schema.Struct({ found: Schema.optionalKey(Schema.Array(Schema.Unknown)) })),
+})
 
 // What the tally shows, reduced from the door's savings: tokens kept out of
 // the frontier (projected folds + titles served by rule) and the dollars that
@@ -21,9 +31,25 @@ export default function FoldTally() {
   const ctx = useExtension<typeof Fold>()
 
   const [meter, setMeter] = createSignal<Meter | undefined>()
-  const [offline, setOffline] = createSignal(false)
+  const [health, setHealth] = createSignal<DoorHealth>()
 
-  const poll = () => {
+  // The contract answers whether a fold door is there at all; the meter answers what it saved. The
+  // health verdict lets the pill name WHICH invariant is broken (no door / not a ground door)
+  // instead of showing a stale number when the app is grounding nothing.
+  const pollHealth = async () => {
+    try {
+      const r = await fetch(`${FOLD_URL}/v1/hooks/opencode`)
+
+      if (!r.ok) throw new Error(`contract ${r.status}`)
+
+      const contract = Option.getOrUndefined(Schema.decodeUnknownOption(Contract)(await r.json()))
+      setHealth(doorHealth({ reachable: true, events: contract?.events ?? [], senses: contract?.senses?.found?.length ?? 0 }))
+    } catch {
+      setHealth(doorHealth({ reachable: false }))
+    }
+  }
+
+  const pollMeter = () => {
     void fetch(`${FOLD_URL}/v1/hooks/opencode/meter`)
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`meter ${r.status}`))))
       .then((data) => {
@@ -34,9 +60,13 @@ export default function FoldTally() {
         const titles = Number(savings.titleTokensEst ?? 0) || 0
         const usd = Number(savings.savedUSD ?? 0) || 0
         setMeter({ tokens: projected + titles, usd })
-        setOffline(false)
       })
-      .catch(() => setOffline(true))
+      .catch(() => undefined)
+  }
+
+  const poll = () => {
+    void pollHealth()
+    pollMeter()
   }
 
   poll()
@@ -49,6 +79,23 @@ export default function FoldTally() {
 
   const tokens = createMemo(() => Math.max(0, (meter()?.tokens ?? 0) - baseline().tokens))
   const usd = createMemo(() => Math.max(0, (meter()?.usd ?? 0) - baseline().usd))
+
+  // A door that is down or not a fold door means no turn is being ground; the pill says so.
+  const ungrounded = () => {
+    const state = health()?.state
+
+    return state === "down" || state === "incompatible"
+  }
+
+  const label = () => {
+    const state = health()?.state
+
+    if (state === "down") return ctx.t("tally.offline")
+
+    if (state === "incompatible") return ctx.t("tally.incompatible")
+
+    return ctx.t("tally.saved", { tokens: compact(tokens()), money: money(usd()) })
+  }
 
   const reset = () => {
     const now = meter()
@@ -83,9 +130,9 @@ export default function FoldTally() {
         <Tooltip placement="bottom" value={ctx.t("tally.title")}>
           <span
             class="shrink-0 whitespace-nowrap text-[11px] leading-4 text-v2-text-text-muted"
-            classList={{ "opacity-60": offline() }}
+            classList={{ "opacity-60": ungrounded() }}
           >
-            {offline() ? ctx.t("tally.offline") : ctx.t("tally.saved", { tokens: compact(tokens()), money: money(usd()) })}
+            {label()}
           </span>
         </Tooltip>
         <button

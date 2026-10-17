@@ -25,6 +25,7 @@ export default {
   "tally.title": "fold savings — tokens and money the fold kept out of the frontier",
   "tally.saved": "{{tokens}} tokens · {{money}} saved",
   "tally.offline": "fold: offline",
+  "tally.incompatible": "fold: no ground door",
   "tally.reset": "Reset the savings tally",
   "tally.hide": "Hide the savings tally",
   "tally.show": "Show the savings tally",
