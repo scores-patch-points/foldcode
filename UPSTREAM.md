@@ -55,12 +55,13 @@ What the door does (khora side, `opencode-doorway.mjs` mounted in `proxy.mjs`):
   All three ride the `context` answer (`answer.memory`, `answer.refs`,
   `answer.systemPrompt`); `FOLD_MEMORY=0` / `FOLD_REFS=0` / `FOLD_SYSTEM=0`
   disable one each.
-- **`fold`** — a tool output is about to enter the frontier's context. The door
-  scores the ask's content words against the output's lines (rarer terms weigh
-  more), keeps the windows the ask needs plus the structural head and tail, and
-  receipts every elision with its line range. What is not needed is not sent.
-  The frontier can always re-read an exact range on demand; the chars kept out
-  are the tokens saved.
+- **`fold`** — **RETIRED** (the line-level fold measured equal to its null, so
+  the door answers `{}` and the client no longer posts it; the precompute is a
+  no-op). Tool output now leaves the window by address, not by summary: the
+  step fold (`<fold-index grain="step">`, `FOLD_KEEP_STEPS`) and the trail
+  (`FOLD_TRAIL=1`, opaque handles resolved by `snip`) keep the bytes on disk and
+  the frontier re-reads an exact range on demand. The chars kept out are the
+  tokens saved.
 - **`surf`** — the window must not grow per prompt. Turns older than the last
   `FOLD_KEEP_TURNS` (default 1; 0 disables) go to the door as `{ask, answer,
   grounds}`; it answers one note: a compression ladder (Figure for the newest,

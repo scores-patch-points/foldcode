@@ -58,3 +58,23 @@ test("the cap bounds TOOL OUTPUT too, not only the old-turn note", () => {
     expect(contextChars(messages)).toBeLessThanOrEqual(1200) // tool output cannot grow the window past the cap
   })
 })
+
+test("the cap counts event.system injections too, not only messages", () => {
+  withCap("1200", () => {
+    const messages = [
+      msg("user", "[fold: 3 earlier asks folded]"),
+      ...Array.from({ length: 8 }, (_, i) => [
+        msg("user", `q${i} ${"z".repeat(400)}`),
+        msg("assistant", `a${i} ${"z".repeat(400)}`),
+      ]).flat(),
+      msg("user", "what is the deployment window?"),
+    ]
+    // a large injected block rides in event.system, not in messages
+    const system = [{ text: "y".repeat(900) }]
+    capContext(messages, system)
+    const injected = system.reduce((n, p) => n + (p.text?.length ?? 0), 0)
+    expect(contextChars(messages) + injected).toBeLessThanOrEqual(1200)
+    // the injections themselves are never dropped
+    expect(system[0].text.length).toBe(900)
+  })
+})

@@ -108,15 +108,54 @@ const lastUserText = (messages: SessionHooks["context"]["messages"]) => {
 // durable session keeps everything, and the frontier can re-read on demand.
 // FOLD_KEEP_TURNS=0 disables (upstream behavior).
 const keepTurns = Number(process.env.FOLD_KEEP_TURNS ?? 1)
+const grainMode = process.env.FOLD_GRAIN ?? "auto"
 
-export const surfPlan = (messages: SessionHooks["context"]["messages"]) => {
-  if (keepTurns <= 0) return undefined
+// Grain controller (P2): choose the projection's keep-count from measured signals.
+// "fixed" preserves the static env values; "auto" applies the rules. Base <= 0 means
+// "disabled" and is never re-enabled by the controller.
+export type GrainSignals = {
+  reopenCount?: number
+  pointerCount?: number
+  scentWarm?: boolean
+  costGateMargin?: number | null
+}
+
+export const grainKeepTurns = (base: number, signals: GrainSignals = {}, totalTurns = Infinity) => {
+  if (base <= 0) return base
+  if (grainMode === "fixed") return base
+  const reopen = Math.max(0, signals.reopenCount ?? 0)
+  const warm = (signals.pointerCount ?? 0) > 0 || signals.scentWarm === true
+  const cold = reopen === 0 && !warm
+  let keep = base
+  if (reopen > 0) keep = Math.min(totalTurns, base + reopen)
+  else if (warm) keep = Math.min(totalTurns, base + 1)
+  else if (cold && base > 1) keep = base - 1
+  if (typeof signals.costGateMargin === "number" && signals.costGateMargin < 0) keep = Math.min(totalTurns, keep + 1)
+  return Math.max(1, keep)
+}
+
+export const grainKeepSteps = (base: number, signals: GrainSignals = {}, totalSteps = Infinity) => {
+  if (base <= 0) return base
+  if (grainMode === "fixed") return base
+  const reopen = Math.max(0, signals.reopenCount ?? 0)
+  const warm = (signals.pointerCount ?? 0) > 0
+  const cold = reopen === 0 && !warm
+  let keep = base
+  if (reopen > 0) keep = Math.min(totalSteps, base + reopen)
+  else if (warm) keep = Math.min(totalSteps, base + 1)
+  else if (cold && base > 1) keep = base - 1
+  return Math.max(1, keep)
+}
+
+export const surfPlan = (messages: SessionHooks["context"]["messages"], keepOverride?: number) => {
+  const keep = keepOverride ?? keepTurns
+  if (keep <= 0) return undefined
   const starts = messages.flatMap((item, index) =>
     item.role === "user" && item.content.some((part) => part.type === "text") ? [index] : [],
   )
-  if (starts.length <= keepTurns) return undefined
-  const cut = starts[starts.length - keepTurns]
-  const turns = starts.slice(0, starts.length - keepTurns).map((start, i, all) => {
+  if (starts.length <= keep) return undefined
+  const cut = starts[starts.length - keep]
+  const turns = starts.slice(0, starts.length - keep).map((start, i, all) => {
     const turn = messages.slice(start, i + 1 < all.length ? all[i + 1] : cut)
     const answer = turn
       .findLast((item) => item.role === "assistant")
@@ -269,36 +308,113 @@ export const surfLocal = (turns: NonNullable<ReturnType<typeof surfPlan>>["turns
   const threads = [...groups.entries()]
     .map(([sig, idx]) => ({ sig, idx, newest: idx[idx.length - 1] }))
     .sort((a, b) => b.newest - a.newest) // newest threads first
+  // THE SETTLE LEDGER — one judgment, used twice. A kept ask is settled only if the log carries a reply for it;
+  // the header count and each line's → settled / (open, no reply) must be the same predicate, or the top of the
+  // note claims a window all-done that the lines below disclose as open (kept.length was counted as "settled").
+  const replied = (t: (typeof turns)[number]) => t.answer.trim().length > 0
+  const settledN = kept.filter(replied).length
+  const openN = kept.length - settledN
+  // The folded tail is part of the same ledger: an ask the index dropped is still either answered or not, and the
+  // note must not let the fold hide open work behind a bare count (the header would say "1 settled" over a tail
+  // holding the unanswered ask). Same predicate as every line below — a reply exists, or it does not.
+  const openIn = (ts: typeof threads) => ts.reduce((n, t) => n + t.idx.filter((i) => !replied(kept[i])).length, 0)
   const lineOf = (t: (typeof threads)[number]) => {
     const last = kept[t.idx[t.idx.length - 1]]
-    return `- [${t.sig}] ${t.idx.length} ask(s) — latest: ${short(last.ask, 160)} → ${last.answer ? `settled: ${short(last.answer, 220)}` : "(open, no reply)"}`
+    return `- [${t.sig}] ${t.idx.length} ask(s) — latest: ${short(last.ask, 160)} → ${replied(last) ? `settled: ${short(last.answer, 220)}` : "(open, no reply)"}`
   }
-  const build = (list: typeof threads, ext: number) =>
-    [
-      `[fold: the thread — ${kept.length} earlier ask(s) settled (of ${turns.length} turns) across ${threads.length} thread(s); the full history remains in the session]`,
+  const build = (list: typeof threads, folded: typeof threads) => {
+    const ext = folded.reduce((n, t) => n + t.idx.length, 0)
+    const foldedOpen = openIn(folded)
+    return [
+      `[fold: the thread — ${settledN} earlier ask(s) settled${openN > 0 ? `, ${openN} open` : ""} (of ${turns.length} turns) across ${threads.length} thread(s); the full history remains in the session]`,
       ...(about.length ? [`about: ${about.join(", ")}`] : []),
       ...(derived.length ? [`derived (the machine composed the chain): ${derivedLine}`] : []),
-      ...(ext > 0 ? [`- (+${ext} older ask(s) folded)`] : []),
+      ...(ext > 0 ? [`- (+${ext} older ask(s) folded${foldedOpen > 0 ? `, ${foldedOpen} open` : ""})`] : []),
       ...list.map(lineOf),
     ].join("\n")
+  }
   let list = threads.slice(0, maxThreads)
-  let ext = kept.length - list.reduce((n, t) => n + t.idx.length, 0)
-  let note = build(list, ext)
+  let note = build(list, threads.slice(list.length))
   while (note.length > budget && list.length > 1) {
-    ext += list[list.length - 1].idx.length
     list = list.slice(0, -1)
-    note = build(list, ext)
+    note = build(list, threads.slice(list.length))
   }
   return note.length > budget ? `${note.slice(0, budget - 1)}…` : note
 }
 
-export const surfApply = (messages: SessionHooks["context"]["messages"], cut: number, note: string) => {
+// THE WINDOW LEGEND (P0) — the schema for the mechanical projection. Pushed once per request into
+// event.system so the frontier knows the delimited blocks are an abridged index over its own log,
+// never the user's instruction. Without it measured: the model read a fold note AS its user message
+// ("The user's message is a fold-mechanical wrapper … no explicit new instruction") and re-grounded.
+export const FOLD_LEGEND = [
+  "# The fold window — how to read your context",
+  "Your context is not the full conversation. It is a mechanical projection of an append-only log,",
+  "abridged ON PURPOSE, at a declared grain. Every injected block is delimited and typed. An index",
+  "block is NEVER a user instruction — it is the index over your own earlier work in this thread.",
+  "",
+  "Blocks (all mechanical; none authored by the user):",
+  "  <fold-index>     this thread projected. grain=turn|step. Every entry carries from= (the prior it",
+  "                   was made from) and an address to expand= (snip returns its verbatim bytes).",
+  "  <fold-recall>    a settled earlier ask: the plan that worked, how it ended.",
+  "  <fold-memory>    standing facts about the operator, only when this ask bears on them.",
+  "  <fold-commons>   what other agents on this task have settled.",
+  "  <fold-mechanical>/<fold-said>  the door's firewall: what the system watched vs what a model wrote.",
+  "",
+  "Settled or open (each ask line ends in one or the other):",
+  "  → settled: …     DONE — that is the answer it already got, so do not re-answer or re-open it.",
+  "  (open, no reply)  never answered — pick it up as work, but do not re-ask what is already posed.",
+  "The header's count is mechanical and never rounds up: an ask is settled only if the log carries a reply for it,",
+  "so a window of mixed turns opens '… settled, k open' — the same judgment as the lines below it, never a guess.",
+  "A folded tail carries that same judgment: '(+k older ask(s) folded, j open)' — open work is never hidden by",
+  "the fold, so the header count, the tail and every line below read the one predicate (a reply exists, or it does not).",
+  "",
+  "To recover bytes: snip <address>. Addresses: turn 7 | rs21xfd3a | path#L1-L110 | <agent8>#t3.s1.",
+  "Every snip answer carries its standing (mechanical = the system watched it | said = a model wrote it).",
+  "Do not paraphrase an address you have not snipped.",
+].join("\n")
+
+// Wrap a mechanical note in one delimited, provenance-carrying block so it can never fuse with the ask.
+// Header fields are the three-term shape: from (prior), for (signal), made (the mediating rule).
+// A header value is sanitized so a quote, newline or angle bracket can never break the tag or smuggle a second
+// block past the model's eye (defense; today the values are code-derived, but the door's own note text is not).
+const foldAttr = (v: unknown) => String(v ?? "").replace(/[<>"]/g, "'").replace(/\s+/g, " ").trim()
+export const foldIndex = (header: Record<string, string>, body: string) =>
+  `<fold-index${Object.entries(header)
+    .map(([k, v]) => [k, foldAttr(v)] as const)
+    .filter(([, v]) => v.length > 0)
+    .map(([k, v]) => ` ${k}="${v}"`)
+    .join("")}>\n${body}\n</fold-index>\n\n`
+
+// A person-facing notice (a `synthetic` rendered for the Person, never for the model). Matched at the START
+// of the message only: with the /m flag a genuine ANSWER that happened to begin a line with a notice prefix was
+// deleted wholesale — and "fold measured ·" (P0.4) is a phrase a model could plausibly write.
+export const isPersonNotice = (text: string) =>
+  /^(?:fold facing ·|fold measured ·|fold chase|fold matrix|fold view |fold savings|fold audit|fold door unreachable)/.test(
+    String(text ?? ""),
+  )
+
+export const surfApply = (
+  messages: SessionHooks["context"]["messages"],
+  cut: number,
+  note: string,
+  made = "fold surf",
+  turns = 0,
+) => {
   const head = messages[cut]
   messages.splice(0, cut)
+  const wrapped = foldIndex(
+    {
+      grain: "turn",
+      from: turns > 0 ? `${turns} earlier turn(s)` : `${cut} earlier message(s)`,
+      for: "the current ask",
+      made,
+    },
+    note,
+  )
   messages[0] = Message.make({
     id: head.id,
     role: head.role,
-    content: [{ type: "text" as const, text: note }, ...head.content],
+    content: [{ type: "text" as const, text: wrapped }, ...head.content],
     metadata: head.metadata,
     providerMetadata: head.providerMetadata,
     native: head.native,
@@ -423,11 +539,20 @@ export const stepApply = (messages: Msg[], plan: NonNullable<ReturnType<typeof s
   if (store) for (const st of plan.steps) store.set(st.handle, st.raw)
   const head = messages[plan.s]
   const note = stepNote(plan, keep)
+  const wrapped = foldIndex(
+    {
+      grain: "step",
+      from: `turn with ${plan.steps.length + keep} steps`,
+      for: "the current ask",
+      made: "fold stepNote",
+    },
+    note,
+  )
   messages.splice(plan.from, plan.to - plan.from)
   messages[plan.s] = Message.make({
     id: head.id,
     role: head.role,
-    content: [...head.content, { type: "text" as const, text: note }],
+    content: [...head.content, { type: "text" as const, text: `\n\n${wrapped}` }],
     metadata: head.metadata,
     providerMetadata: head.providerMetadata,
     native: head.native,
@@ -452,13 +577,21 @@ const messageChars = (m: SessionHooks["context"]["messages"][number]) =>
     0,
   )
 export const contextChars = (messages: SessionHooks["context"]["messages"]) => messages.reduce((n, m) => n + messageChars(m), 0)
-export const capContext = (messages: SessionHooks["context"]["messages"]) => {
+export const capContext = (
+  messages: SessionHooks["context"]["messages"],
+  system: ReadonlyArray<{ text?: string }> = [],
+) => {
   const max = Number(process.env.FOLD_MAX_CHARS ?? 32_000)
   if (!(max > 0)) return
+  // The injected blocks (recall, commons, legend, fold-index, plan) live in `event.system`, not in `messages`.
+  // They are counted against the same ceiling, so a large injection cannot slip past the cap (they are never
+  // dropped — the message window shrinks first, and if the injections alone exceed the cap the window floors).
+  const injected = system.reduce((n, part) => n + (typeof part?.text === "string" ? part.text.length : 0), 0)
   // Drop the OLDEST message after the head, one at a time, while over the ceiling. The head (index 0, which
   // carries the fold note) and the last (the current ask) are pinned — the window shrinks from the middle of
   // its own history, and can never exceed the filed max however long the session runs.
-  for (let guard = 0; guard < 5000 && messages.length > 2 && contextChars(messages) > max; guard++) messages.splice(1, 1)
+  for (let guard = 0; guard < 5000 && messages.length > 2 && contextChars(messages) + injected > max; guard++)
+    messages.splice(1, 1)
 }
 
 const isNewAsk = (messages: SessionHooks["context"]["messages"]) => messages.at(-1)?.role === "user"
@@ -738,6 +871,7 @@ export const Plugin = define({
     // when each session last asked, for the door's idle gate.
     const trailStore = new Map<string, string>()
     const trailDone = new Map<string, Map<string, string>>()
+    const reopenCounts = new Map<string, number>()
     const lastCall = new Map<string, number>()
 
     // The precompute: a tool result is folded the moment it lands (event-time,
@@ -746,34 +880,23 @@ export const Plugin = define({
     // yet. Precompute posts with the full fold budget; the request path races it
     // against the small ask budget, so a slow door never stalls the turn — it
     // just sends the raw bytes this once.
-    const folding = new Map<string, Promise<string | undefined>>()
+    // The door RETIRED the `fold` event (the line-level fold measured equal to its null; the door answers `{}`).
+    // The precompute is kept as a no-op so the call sites stay unchanged and no dead request rides each tool result.
     const foldOnce = (
-      sessionID: string,
-      tool: string,
-      ask: string,
-      model: { providerID: string; id: string } | undefined,
-      id: string,
-      text: string,
-    ) => {
-      const existing = folding.get(id)
-      if (existing) return existing
-      const promise = postRaw({ event: "fold", sessionID, tool, ask, text, priceIn: model ? priceIn(model) : undefined }, foldTimeout)
-        .then((answer) => {
-          const value = answer === undefined ? undefined : typeof answer.folded === "string" && answer.folded.length > 0 ? answer.folded : undefined
-          if (value !== undefined) folded.set(id, value)
-          return value
-        })
-        .catch(() => undefined)
-        .finally(() => folding.delete(id))
-      folding.set(id, promise)
-      return promise
-    }
+      _sessionID: string,
+      _tool: string,
+      _ask: string,
+      _model: { providerID: string; id: string } | undefined,
+      _id: string,
+      _text: string,
+    ) => Promise.resolve<string | undefined>(undefined)
     const foldBudget = (promise: Promise<string | undefined>, ms: number) =>
       Promise.race([promise, new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), ms))])
 
     // The turn's ask and model, so an event-time fold knows what to fold toward,
     // and tool id -> name, so a result folded at event time is attributed to its tool.
     const lastAsk = new Map<string, string>()
+    const lastNote = new Map<string, string>()
     const lastModel = new Map<string, { providerID: string; id: string }>()
     const toolNames = new Map<string, string>()
 
@@ -1046,8 +1169,7 @@ export const Plugin = define({
         // turns the model replied to the facing text and the window inflated to 219k tokens.
         for (let i = event.messages.length - 1; i >= 0; i--) {
           const text = event.messages[i].content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n")
-          if (/^(?:fold facing ·|fold chase|fold matrix|fold view |fold savings|fold audit|fold door unreachable)/m.test(text))
-            event.messages.splice(i, 1)
+          if (isPersonNotice(text)) event.messages.splice(i, 1)
         }
         // Remember the turn's ask and model so a tool result that lands mid-turn
         // can be folded at event time without re-reading the message list.
@@ -1114,7 +1236,17 @@ export const Plugin = define({
         // Surf: the window must not grow per prompt. The door's ladder (figure /
         // kind / pattern, each line addressed) answers; with it down, local
         // truncation does, so growth is bounded either way.
-        const plan = surfPlan(event.messages)
+        let folded = false
+        let proj = ""
+        const turnCount = event.messages.filter((m) => m.role === "user").length
+        const prevNote = lastNote.get(event.sessionID) ?? ""
+        const grainSignals: GrainSignals = {
+          reopenCount: reopenCounts.get(event.sessionID) ?? 0,
+          pointerCount: trailDone.get(event.sessionID)?.size ?? 0,
+          scentWarm: prevNote.includes("<fold-trail>"),
+        }
+        const effectiveKeep = grainKeepTurns(keepTurns, grainSignals, turnCount)
+        const plan = surfPlan(event.messages, effectiveKeep)
         if (plan) {
           const task = yield* taskOf(event.sessionID)
           const workspace = yield* workspaceOf(event.sessionID)
@@ -1127,29 +1259,50 @@ export const Plugin = define({
           // `undefined` and the cut below still runs. The door supplies the NOTE; the CLIENT holds the window
           // flat — the window floor must not depend on the door.
           const answer = yield* post(
-            { event: "surf", sessionID: event.sessionID, task, workspace, ask: lastUserText(event.messages), turns: plan.turns, keptOutChars, priceIn: priceIn(event.model), ...priceCache(event.model) },
+            { event: "surf", sessionID: event.sessionID, task, workspace, universe: process.env.FOLD_UNIVERSE ?? "world", ask: lastUserText(event.messages), turns: plan.turns, keptOutChars, priceIn: priceIn(event.model), ...priceCache(event.model) },
             askTimeout,
           ).pipe(Effect.timeout(askTimeout + 100), Effect.catch(() => Effect.succeed(undefined)))
           // not cut when the history is shorter than its own ladder, or when the door's cost gate prices the cut above
           // the cached prefix it would burn (the door says `uncut`): the turns stay, only the note rides
+          const fromDoor = typeof answer?.note === "string" && answer.note.length > 0
+          const noteText = fromDoor ? (answer.note as string) : surfLocal(plan.turns, lastUserText(event.messages))
           if (answer?.uncut === true) {
-            if (typeof answer.note === "string" && answer.note.length > 0) event.system.push({ type: "text", text: answer.note })
-          } else
-            surfApply(
-              event.messages,
-              plan.cut,
-              typeof answer?.note === "string" && answer.note.length > 0
-                ? answer.note
-                : surfLocal(plan.turns, lastUserText(event.messages)),
-            )
+            if (fromDoor)
+              event.system.push({
+                type: "text",
+                text: foldIndex(
+                  { grain: "turn", from: `${plan.turns.length} earlier turn(s)`, for: "the current ask", made: "fold ladder (door, uncut)" },
+                  answer.note as string,
+                ),
+              })
+            folded = fromDoor
+            proj = fromDoor ? noteText : ""
+          } else {
+            surfApply(event.messages, plan.cut, noteText, fromDoor ? "fold ladder (door)" : "fold surf (local)", plan.turns.length)
+            folded = true
+            proj = noteText
+          }
         }
         // Step fold: inside one long turn, older whole steps leave the window as addressed receipts + the workspace view
-        const stepsPlan = stepPlan(event.messages)
-        if (stepsPlan) stepApply(event.messages, stepsPlan, stepKeep(), trailStore)
+        const stepSignals: GrainSignals = {
+          reopenCount: reopenCounts.get(event.sessionID) ?? 0,
+          pointerCount: trailDone.get(event.sessionID)?.size ?? 0,
+        }
+        const effectiveStepKeep = grainKeepSteps(stepKeep(), stepSignals, event.messages.length)
+        const stepsPlan = stepPlan(event.messages, effectiveStepKeep)
+        if (stepsPlan) {
+          stepApply(event.messages, stepsPlan, effectiveStepKeep, trailStore)
+          folded = true
+          proj += `${proj ? "\\n" : ""}${stepNote(stepsPlan, effectiveStepKeep)}` // L1: disclose the step receipts too
+        }
+        // L1 DISCLOSURE: exactly the projection this turn was handed, kept so event:prompt can reveal it.
+        if (folded) lastNote.set(event.sessionID, proj)
+        // THE LEGEND, once, only when a projection was injected — the frontier's schema for the blocks above.
+        if (folded && process.env.FOLD_LEGEND !== "0") event.system.push({ type: "text", text: FOLD_LEGEND })
         yield* foldMessages(event)
         if (trailOn) yield* trailMessages(event)
         // THE HARD CAP: after every fold, the frontier's window is bounded absolutely (FOLD_MAX_CHARS).
-        capContext(event.messages)
+        capContext(event.messages, event.system)
       })
 
     const title = (event: SessionHooks["title"]) =>
@@ -1321,7 +1474,7 @@ export const Plugin = define({
           return fetch(`${base}/v1/hooks/opencode`, {
             method: "POST",
             headers: { "content-type": "application/json", "x-er7-surface": "opencode" },
-            body: JSON.stringify({ event: "prompt", sessionID: event.sessionID, model: event.model, body }),
+            body: JSON.stringify({ event: "prompt", sessionID: event.sessionID, model: event.model, body, note: lastNote.get(event.sessionID) ?? "" }),
             signal: AbortSignal.timeout(foldTimeout),
           }).then(
             () => undefined,
@@ -1420,7 +1573,7 @@ export const Plugin = define({
         name: "snip",
         options: { codemode: false },
         description:
-          "Exact bytes by address: path#L10-L20, path#120-340, or an address shown in <fold-commons> (e.g. 8f3a2b1c#t3.s1). Returns the verbatim bytes and their standing (witnessed or asserted).",
+          "Exact bytes by address. Addresses: a step handle shown in a <fold-index grain=\"step\"> block (rs21xfd3a), a turn (turn 7), a path span (path#L10-L20 or path#120-340), a commons ref (8f3a2b1c#t3.s1), or any address shown in <fold-index>/<fold-commons>. Returns the verbatim bytes and their standing (mechanical = the system watched it, said = a model wrote it).",
         input: Schema.Struct({ ref: Schema.String.annotate({ description: "The address to resolve" }) }),
         output: Schema.Struct({ bytes: Schema.String, standing: Schema.String, from: Schema.String }),
         execute: (input, context) =>
@@ -1430,10 +1583,17 @@ export const Plugin = define({
             // an opaque trail handle is resolved here, from the bytes the tool returned; no door round trip
             if (/^r[0-9a-z]{4,16}$/.test(input.ref.trim())) {
               const kept = trailStore.get(input.ref.trim())
-              if (kept === undefined) return yield* Effect.fail(new ToolFailure({ message: `snip: handle ${input.ref} is not held by this session (the full output remains in the session history)` }))
-              return { output: { bytes: kept, standing: "witnessed", from: "tool result" }, content: kept, metadata: { schema: "EOTSnip@1", ref: input.ref, standing: "witnessed", from: "tool result", origin: "mechanical" } }
+               if (kept === undefined) return yield* Effect.fail(new ToolFailure({ message: `snip: handle ${input.ref} is not held by this session (the full output remains in the session history)` }))
+               reopenCounts.set(sessionID, (reopenCounts.get(sessionID) ?? 0) + 1)
+              const head = `[snip ${input.ref} · from: tool result · standing: mechanical]\n`
+              return { output: { bytes: kept, standing: "witnessed", from: "tool result" }, content: `${head}${kept}`, metadata: { schema: "EOTSnip@1", ref: input.ref, standing: "witnessed", from: "tool result", origin: "mechanical" } }
             }
-            const answer = yield* post({ event: "snip", sessionID, agent: sessionID, workspace, ref: input.ref }, askTimeout * 4)
+            // THE MODEL ANSWERS; THE SYSTEM DOES THE STIGMERGY. The ask in front of the model rides along so the
+            // door can record the tension MECHANICALLY — the model authors no motive, it just reads to answer.
+            const answer = yield* post(
+               { event: "snip", sessionID, agent: sessionID, workspace, universe: process.env.FOLD_UNIVERSE ?? "world", ref: input.ref, ask: lastAsk.get(sessionID) ?? "" },
+              askTimeout * 4,
+            )
             if (answer === undefined) return yield* Effect.fail(new ToolFailure({ message: `snip: the fold door is unreachable at ${base}` }))
             if (answer.ok !== true)
               return yield* Effect.fail(new ToolFailure({ message: `snip ${String(answer.gap ?? "failed")}: ${input.ref}` }))
@@ -1443,9 +1603,10 @@ export const Plugin = define({
               .join(" ")
             const bytes = String(answer.bytes ?? "")
             const standing = String(answer.standing ?? "asserted")
+            const head = `[snip ${input.ref} · from: ${from || "address"} · standing: ${standing === "witnessed" ? "mechanical" : "said"}]\n`
             return {
               output: { bytes, standing, from },
-              content: bytes,
+              content: `${head}${bytes}`,
               metadata: { schema: "EOTSnip@1", ref: input.ref, standing, from, origin: standing === "witnessed" ? "mechanical" : "model" },
             }
           }).pipe(Effect.mapError((error) => (error instanceof ToolFailure ? error : new ToolFailure({ message: "snip failed", error })))),
@@ -1500,7 +1661,7 @@ export const Plugin = define({
             // The reading as its own notice row, physically separate from the assistant's text — the door's
             // measurement the model must not reword. Failure-silent: the tool result already carries it.
             yield* ctx.session
-              .synthetic({ sessionID, text: report, description: "the swarm — the ants' reading, measured", resume: false })
+              .synthetic({ sessionID, text: `fold measured · ${report}`, description: "the swarm — the ants' reading, measured", resume: false })
               .pipe(Effect.catchCause(() => Effect.void))
             return {
               output: { reading, standing, holes, giver },
@@ -1581,7 +1742,7 @@ export const Plugin = define({
             // The reading as its own notice row, physically separate from the
             // assistant's text — the door's measurement the model must not reword.
             yield* ctx.session
-              .synthetic({ sessionID, text: report, description: "the cube — the door's own witness reading, measured", resume: false })
+              .synthetic({ sessionID, text: `fold measured · ${report}`, description: "the cube — the door's own witness reading, measured", resume: false })
               .pipe(Effect.catchCause(() => Effect.void))
             return {
               output: { reading, standing, giver },
@@ -1609,7 +1770,7 @@ export const Plugin = define({
         const text = typeof event.data.text === "string" ? event.data.text : ""
         if (text.trim().length < 8) return
         const workspace = yield* workspaceOf(sessionID)
-        const answer = yield* post({ event: "ground", sessionID, agent: sessionID, workspace, text }, askTimeout)
+        const answer = yield* post({ event: "ground", sessionID, agent: sessionID, workspace, universe: process.env.FOLD_UNIVERSE ?? "world", text }, askTimeout)
         const note = facingNote(answer)
         if (!note) return
         yield* ctx.session.synthetic({

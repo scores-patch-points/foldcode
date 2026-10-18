@@ -228,9 +228,17 @@ export const layer = Layer.effect(
         trigger.reason === "overflow" ? Math.min(cap, Math.floor(estimateContext(context) * SHRINK_STEPS[0])) : cap
 
       const selected = model === context.model ? trigger : { ...trigger, context: { ...context, model } }
+      const useRecord = process.env.FOLD_COMPACT === "record"
       const compaction = native
         ? compactNatively(selected, budget, settings.keep)
-        : summarize(selected, budget, settings.keep)
+        : useRecord
+          ? compactRecord(selected, budget, settings.keep).pipe(
+              Effect.matchEffect({
+                onSuccess: (r) => Effect.succeed(r),
+                onFailure: () => summarize(selected, budget, settings.keep),
+              }),
+            )
+          : summarize(selected, budget, settings.keep)
       return yield* compaction.pipe(
         Effect.matchEffect({
           onSuccess: (result) => publish(selected, result),
@@ -307,6 +315,28 @@ export const layer = Layer.effect(
 
       const overhead = Token.estimate(prompt) + Token.estimate(NUDGE)
       return yield* deliver(trigger, prepared, split.recent, budget - overhead, send)
+    })
+
+    /** Record-based compaction (P4): no model call. Folds the older exchanges into a
+     *  mechanical digest (asks + tool calls + truncated results). Falls back to the
+     *  model summary when the record is empty. */
+    const compactRecord = Effect.fnUntraced(function* (
+      trigger: Trigger,
+      budget: number,
+      keep: number,
+    ): Effect.fn.Return<Result, Failure> {
+      const context = trigger.context
+      const split = splitConversation(context.messages, keep)
+      if (!split) return yield* Effect.fail(NOTHING_TO_COMPACT)
+      const digest = split.older
+        .flatMap((message) => {
+          const text = messageToText(message)
+          return text ? [text] : []
+        })
+        .join("\n")
+        .slice(0, Math.max(0, budget * 4))
+      if (!digest.trim()) return yield* Effect.fail(NOTHING_TO_COMPACT)
+      return { text: `## Mechanical record (no model summary)\\n${digest}`, recent: split.recent }
     })
 
     /**
