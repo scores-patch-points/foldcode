@@ -88,6 +88,7 @@ import { WellKnown } from "../wellknown.js"
 import { WriteTool } from "../tool/plugin/write.js"
 import { AgentPlugin } from "./agent.js"
 import BrowserPlugin from "@opencode/plugin-browser"
+import { AgentsPlugin } from "./agents.js"
 import { CommandPlugin } from "./command.js"
 import { FoldPlugin } from "./fold.js"
 import { IdentityPlugin } from "./identity.js"
@@ -268,6 +269,7 @@ const post = [
   ConfigProviderPlugin.Plugin,
   ConfigWebSearchPlugin.Plugin,
   ConfigPolicyPlugin.Plugin,
+  AgentsPlugin.Plugin,
   // Last: sees the context every other plugin has already shaped.
   FoldPlugin.Plugin,
 ] as const satisfies readonly InternalPlugin[]
