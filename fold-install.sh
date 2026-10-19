@@ -95,8 +95,8 @@ echo "installed $dest/opencode from foldcode @ $(git rev-parse --short HEAD) (up
 # speaks this fork's contract (the plugin also checks at startup, logs, and
 # fails open either way).
 door="${FOLD_URL:-http://127.0.0.1:11436}"
-if curl -s -m 2 "$door/v1/hooks/opencode" | grep -q '"fold"'; then
-  echo "doorway: live at $door with the fold event"
+if curl -s -m 2 "$door/v1/hooks/opencode" | grep -q '"door"'; then
+  echo "doorway: live at $door (the door answers the handshake)"
 else
   echo "doorway: no contract answer at $door (opencode still runs as upstream; start the fold stack or set FOLD_URL)"
 fi
