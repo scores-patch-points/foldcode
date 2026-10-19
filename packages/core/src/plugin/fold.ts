@@ -1215,6 +1215,12 @@ export const Plugin = define({
           const archons = answer?.archons as { note?: unknown } | undefined
           if (archons && typeof archons.note === "string" && archons.note.length > 0)
             event.system.push({ type: "text", text: archons.note })
+          // The power of openness: the AntiStrauss plain-reading teaching the door
+          // injects into every turn by default (honesty, humility, knowing yourself).
+          // The fork carries no openness logic; the note arrives grounded or not at all.
+          const openness = answer?.openness as { note?: unknown } | undefined
+          if (openness && typeof openness.note === "string" && openness.note.length > 0)
+            event.system.push({ type: "text", text: openness.note })
           // Memory: the operator's standing facts (which repo is canonical, which
           // account publishes) the ask bears on, from ~/.config/opencode/user-memory.md.
           // The door decides by mechanical word overlap; the fork carries no memory
