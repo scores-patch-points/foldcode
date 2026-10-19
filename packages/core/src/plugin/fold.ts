@@ -21,11 +21,13 @@ import { define, type Context } from "@opencode/plugin/effect/plugin"
 import type { SessionHooks } from "@opencode/plugin/effect/session"
 import { money } from "@opencode/util/savings"
 import { Effect, Schema, Stream } from "effect"
-import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { record as rulerRecord, recordTokens as rulerTokens } from "./fold-ruler.js"
 import { tap as usageTap } from "./usage-tap.js"
+import * as Physics from "./physics.js"
+import * as Learn from "./physics-learn.js"
+import fs from "node:fs"
 
 const base = (process.env.FOLD_URL ?? "http://127.0.0.1:11436").replace(/\/+$/, "")
 const off = process.env.FOLD_OFF === "1"
@@ -51,6 +53,40 @@ const debug = process.env.FOLD_DEBUG === "1"
 // FOLD_RULER_FILE=<path.jsonl> measures every primary request by segment (measurement only; see fold-ruler.ts).
 const rulerFile = process.env.FOLD_RULER_FILE
 // The provider's own usage, read off each response (usage-tap.ts). On by default: it is the only count that is not derived.
+// PHYSICS-BASED TOOL CALLING (physics.ts). The model writes content in its own medium and the machine derives the
+// operation, so no tool definition is sent. FOLD_PHYSICS=1 serves every provider, 0 none; the default serves local
+// providers (FOLD_PHYSICS_PROVIDERS, default "ollama"), whose models cannot call tools reliably. Every decline and
+// refusal is appended to FOLD_PHYSICS_LOG with its reason and the turn takes the normal tool path.
+const physicsMode = process.env.FOLD_PHYSICS ?? "auto"
+const physicsProviders = (process.env.FOLD_PHYSICS_PROVIDERS ?? "ollama").split(",").map((p) => p.trim())
+const physicsLog = process.env.FOLD_PHYSICS_LOG ?? path.join(os.homedir(), ".local/share/foldcode/physics.jsonl")
+// REC and the frontier: an answer that leaves the ask's void open is retried once by the local model in the other form,
+// then (or past FOLD_PHYSICS_BUDGET_MS) put to the frontier over an OpenAI-compatible endpoint: FOLD_FRONTIER_URL (off until
+// set: a source file leaving the machine is the operator's call, and the :8790 bridge refuses it by disclosure policy),
+// FOLD_FRONTIER_MODEL, FOLD_FRONTIER_KEY optional. A verified edit is kept as a recipe in// FOLD_PHYSICS_RECIPES, which the machine applies to later asks of the same shape with no model at all.
+const physicsRetries = Number(process.env.FOLD_PHYSICS_RETRIES ?? 1)
+const physicsBudget = Number(process.env.FOLD_PHYSICS_BUDGET_MS ?? 60_000)
+const physicsFrontier = !!process.env.FOLD_FRONTIER_URL && process.env.FOLD_PHYSICS_FRONTIER !== "0"
+const physicsRecipes = process.env.FOLD_PHYSICS_RECIPES ?? path.join(os.homedir(), ".local/share/foldcode/physics-recipes.jsonl")
+const physicsAskFrontier = async (prompt: string) => {
+  const url = process.env.FOLD_FRONTIER_URL!.replace(/\/+$/, "") + "/chat/completions"
+  const key = process.env.FOLD_FRONTIER_KEY
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json", ...(key ? { authorization: `Bearer ${key}` } : {}) },
+    body: JSON.stringify({ model: process.env.FOLD_FRONTIER_MODEL ?? "heimdall-by-the-fold", messages: [{ role: "user", content: prompt }] }),
+    signal: AbortSignal.timeout(physicsBudget),
+  })
+  if (!res.ok) throw new Error(`frontier answered ${res.status}`)
+  return ((await res.json()) as { choices?: { message?: { content?: string } }[] }).choices?.[0]?.message?.content
+}
+const physicsServes = (providerID: string) => physicsMode === "1" || (physicsMode === "auto" && physicsProviders.includes(providerID))
+const physicsRecord = (row: Record<string, unknown>) => {
+  try {
+    fs.mkdirSync(path.dirname(physicsLog), { recursive: true })
+    fs.appendFileSync(physicsLog, JSON.stringify({ at: new Date().toISOString(), ...row }) + "\n")
+  } catch {}
+}
 const usageFile = process.env.FOLD_USAGE_FILE ?? path.join(os.homedir(), ".local/share/foldcode/usage.jsonl")
 // FOLD_TRAIL=1: stale tool results become opaque handles except the ones the decayed trail keeps (decided by the door, see
 // khora/opencode-trail.mjs; only when the prompt cache is cold or the window is under pressure, so it never costs a warm cache).
@@ -401,7 +437,7 @@ export const foldIndex = (header: Record<string, string>, body: string) =>
 // of the message only: with the /m flag a genuine ANSWER that happened to begin a line with a notice prefix was
 // deleted wholesale — and "fold measured ·" (P0.4) is a phrase a model could plausibly write.
 export const isPersonNotice = (text: string) =>
-  /^(?:fold facing ·|fold measured ·|fold chase|fold matrix|fold view |fold savings|fold audit|fold door unreachable)/.test(
+  /^(?:fold facing ·|fold measured ·|fold chase|fold matrix|fold view |fold savings|fold audit|fold door unreachable|fold physics ·)/.test(
     String(text ?? ""),
   )
 
@@ -1465,7 +1501,12 @@ export const Plugin = define({
     // when each session last asked, for the door's idle gate.
     const trailStore = new Map<string, string>()
     // The ledger's per-request window sizes, set by the context hook and taken by the usage tap.
-    const windows = new Map<string, { before: number; after: number; tools: number }>()
+    const windows = new Map<string, { before: number; after: number; tools: number; withheld?: number }>()
+    // physics: the file a derived-edit turn presented, waiting for the model's reply; sessions whose derived edit was refused go the tool path next.
+    const armed = new Map<string, { plan: Extract<Physics.Plan, { kind: "edit" }>; ask: string; at: number }>()
+    const physicsAside = new Set<string>()
+    const refused = new Set<string>()
+    const servedTurn = new Set<string>()
     // The held step-fold cut per session (prefix-stable epochs, see stableStepCut).
     const stepEpochs = new Map<string, StepEpoch>()
     // The append-only step projection per session (see projectSteps): which steps are retired, and its events.
@@ -1767,6 +1808,60 @@ export const Plugin = define({
         // notices are stripped. Everything the fold changes from here on is measured against this number; the
         // tap (usage-tap.ts) joins it to the provider's own token count for the request that follows.
         const windowBefore = contextChars(event.messages) + systemChars(event.system)
+        // PHYSICS: serve a read/edit-class turn without tool definitions; decline (recorded) and fall through otherwise.
+        let withheld = 0
+        if (physicsServes(event.model.providerID)) {
+          const last = event.messages.at(-1)
+          const realAsk = last?.role === "user" && last.content.every((part) => part.type === "text")
+          const ask = lastUserText(event.messages)
+          armed.delete(event.sessionID)
+          const answered = last?.role === "assistant" && !last.content.some((part) => part.type === "tool-call") && servedTurn.has(event.sessionID)
+          if (answered) {
+            // the loop's own follow-up after a derived reply: no tools to call, so none are sent
+            withheld = toolChars(event.tools)
+            for (const name of Object.keys(event.tools)) delete event.tools[name]
+            event.system.splice(0, event.system.length, { type: "text", text: "You are a coding assistant." })
+            physicsRecord({ sessionID: event.sessionID, served: true, kind: "follow-up", withheldToolChars: withheld })
+          } else if (!realAsk) physicsRecord({ sessionID: event.sessionID, served: false, reason: "mid-turn: tool results are in the window" })
+          else if (refused.delete(event.sessionID)) physicsRecord({ sessionID: event.sessionID, served: false, reason: "fallback: the previous derived edit was refused", ask })
+          else {
+            const workspace = yield* workspaceOf(event.sessionID)
+            const plan = Physics.resolve(ask, workspace)
+            if (plan.kind === "decline") servedTurn.delete(event.sessionID)
+            if (plan.kind === "decline") physicsRecord({ sessionID: event.sessionID, served: false, reason: plan.reason, ask, workspace })
+            else {
+              // TAUGHT: a recipe the machine learned earlier answers this ask with no model; the model is only asked to say what changed.
+              const made =
+                plan.kind === "edit"
+                  ? (() => {
+                      const hit = Physics.taught(plan, ask, Learn.load(physicsRecipes))
+                      if (!hit) return undefined
+                      const w = Physics.commit(plan, hit.derived.after)
+                      if (!w.ok) return undefined
+                      Learn.won(physicsRecipes, hit.recipe)
+                      physicsRecord({ sessionID: event.sessionID, edit: plan.file, ok: true, by: "recipe", skeleton: hit.recipe.skeleton, checked: hit.derived.checked })
+                      return { after: hit.derived.after }
+                    })()
+                  : undefined
+              withheld = toolChars(event.tools)
+              for (const name of Object.keys(event.tools)) delete event.tools[name]
+              // the system is a plain statement of fact: where the work is. Standing prompts that speak of tools are not sent.
+              event.system.splice(0, event.system.length, { type: "text", text: `You are a coding assistant. The project is at ${workspace}.` })
+              const index = event.messages.length - 1
+              event.messages[index] = Message.make({
+                id: last.id,
+                role: last.role,
+                content: [{ type: "text", text: made ? Physics.presentDone(plan as Extract<Physics.Plan, { kind: "edit" }>, ask, made.after) : Physics.present(plan, ask) }],
+                metadata: last.metadata,
+                providerMetadata: last.providerMetadata,
+                native: last.native,
+              })
+              servedTurn.add(event.sessionID)
+              if (plan.kind === "edit" && !made) armed.set(event.sessionID, { plan, ask, at: Date.now() })
+              physicsRecord({ sessionID: event.sessionID, served: true, kind: plan.kind, file: plan.file, withheldToolChars: withheld })
+            }
+          }
+        }
         // Remember the turn's ask and model so a tool result that lands mid-turn
         // can be folded at event time without re-reading the message list.
         lastAsk.set(event.sessionID, lastUserText(event.messages))
@@ -1946,7 +2041,7 @@ export const Plugin = define({
         // THE LEDGER'S "AFTER": what is actually sent. before - after is what the fold kept out (negative when
         // the notes it added cost more than they removed). `tools` is what the definitions weigh, measured the
         // same way, so a later change that sends fewer tools shows up as its own line.
-        windows.set(event.sessionID, { before: windowBefore, after: contextChars(event.messages) + systemChars(event.system), tools: toolChars(event.tools) })
+        windows.set(event.sessionID, { before: windowBefore, after: contextChars(event.messages) + systemChars(event.system), tools: toolChars(event.tools), ...(withheld ? { withheld } : {}) })
       })
 
     const title = (event: SessionHooks["title"]) =>
@@ -2412,6 +2507,12 @@ export const Plugin = define({
 
     yield* ctx.session.hook("context", context)
     yield* ctx.session.hook("title", title)
+    yield* ctx.session.hook("generate", (event) => {
+      if (!physicsAside.has(event.sessionID)) return Effect.void
+      for (const name of Object.keys(event.tools)) delete event.tools[name]
+      event.system.splice(0, event.system.length, { type: "text", text: "You are a coding assistant." })
+      return Effect.void
+    })
     yield* ctx.session.hook("http.request", (event) => {
       capturePrompt(event)
       return Effect.void
@@ -2449,6 +2550,56 @@ export const Plugin = define({
         })
       }).pipe(Effect.ignore)
 
+    // PHYSICS, the reply side: the model's finished text is the content; the op is derived from it and applied or refused.
+    const physicsApply = (event: Observed) =>
+      Effect.gen(function* () {
+        if (event.type !== "session.text.ended") return
+        const sessionID = event.data.sessionID
+        const hold = armed.get(sessionID)
+        if (!hold) return
+        armed.delete(sessionID)
+        const text = typeof event.data.text === "string" ? event.data.text : ""
+        const { plan, ask } = hold
+        const steps: Array<Record<string, unknown>> = []
+        let by = "local"
+        let outcome: Physics.Derived = Physics.derive(plan, text, ask)
+        steps.push({ by, ok: outcome.ok, ...(outcome.ok ? {} : { gap: outcome.gap }) })
+        // REC: an answer that leaves the void open restructures the frame. First the local model once more, in the other
+        // form and told what is still open; then, past the budget or a second miss, the frontier model.
+        if (!outcome.ok && physicsRetries > 0 && Date.now() - hold.at < physicsBudget) {
+          const pair = { ...plan, form: plan.form === "file" ? ("pair" as const) : ("file" as const) }
+          physicsAside.add(sessionID)
+          const again = yield* ctx.session
+            .generate({ sessionID: sessionID as never, prompt: Physics.restate(pair, ask, text, outcome.gap.reason, pair.form) })
+            .pipe(Effect.timeout(physicsBudget), Effect.catchCause(() => Effect.succeed(undefined)))
+          physicsAside.delete(sessionID)
+          if (again?.text) {
+            by = "local-restated"
+            outcome = Physics.derive(pair, again.text, ask)
+            steps.push({ by, ok: outcome.ok, ...(outcome.ok ? {} : { gap: outcome.gap }) })
+          }
+        }
+        if (!outcome.ok && physicsFrontier) {
+          const gap = outcome.gap.reason
+          const answer = yield* Effect.tryPromise(() => physicsAskFrontier(Physics.restate({ ...plan, form: "file" }, ask, text, gap, "file"))).pipe(Effect.catchCause(() => Effect.succeed(undefined)))
+          const after = answer === undefined ? undefined : Physics.wholeFile(answer, plan.before)
+          by = "frontier"
+          outcome = after === undefined ? { ok: false, gap: { kind: "unreadable", reason: "the frontier gave no file" } } : Physics.accept(plan, after, ask)
+          steps.push({ by, ok: outcome.ok, ...(outcome.ok ? {} : { gap: outcome.gap }) })
+        }
+        const written = outcome.ok ? Physics.commit(plan, outcome.after) : undefined
+        if (outcome.ok && written && !written.ok) outcome = { ok: false, gap: written.gap }
+        // TEACH: an edit that filled a testable void is kept as a recipe, so the machine answers the next ask of that shape alone.
+        let taught = false
+        if (outcome.ok && outcome.checked > 0) {
+          const recipe = Physics.teach(plan, ask, outcome.after, by)
+          if (recipe) taught = Learn.keep(physicsRecipes, recipe)
+        }
+        if (!outcome.ok) refused.add(sessionID)
+        physicsRecord({ sessionID, edit: plan.file, ok: outcome.ok, by, taught, steps, ms: Date.now() - hold.at, ...(outcome.ok ? { act: outcome.op.op, checked: outcome.checked } : { gap: outcome.gap }) })
+        yield* ctx.session.synthetic({ sessionID, text: Physics.notice(plan.file, outcome) + (outcome.ok && by !== "local" ? ` · by ${by}` : "") + (taught ? " · taught" : ""), description: "fold physics — the derived operation", resume: false })
+      }).pipe(Effect.ignore)
+
     yield* ctx.event.subscribe().pipe(
       Stream.runForEach((event) => {
         // Worktree operations carry a project, not a session: the door reads what git now says in the
@@ -2472,8 +2623,9 @@ export const Plugin = define({
           if (text.length >= minChars && !folded.has(event.data.id))
             void foldOnce(event.data.sessionID, name, lastAsk.get(event.data.sessionID) ?? "", lastModel.get(event.data.sessionID), event.data.id, text)
         }
+        const derivedApply = event.type === "session.text.ended" ? physicsApply(event) : undefined
         const data = forward(event)
-        if (!data) return Effect.void
+        if (!data) return derivedApply ?? Effect.void
         const sessionID = "sessionID" in event.data ? event.data.sessionID : undefined
         const record = post({ event: "event", type: event.type, sessionID, data }, askTimeout).pipe(Effect.asVoid)
         // The record rides with its side effects — never instead of them, all concurrent, all
@@ -2481,6 +2633,7 @@ export const Plugin = define({
         // renders the typing on the answer. Each is opt-in and neither can delay the other.
         const side: Array<Effect.Effect<void, never, never>> = [record]
         if (facingOn && event.type === "session.text.ended") side.push(facing(event))
+        if (derivedApply) side.push(derivedApply)
         if (shadowOn) {
           const shadow = shadowOf(event)
           if (shadow && sessionID) side.push(post({ event: "shadow", sessionID, ...shadow }, askTimeout).pipe(Effect.asVoid))
