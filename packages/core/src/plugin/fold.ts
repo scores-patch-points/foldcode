@@ -691,6 +691,56 @@ const foldable = (part: SessionHooks["context"]["messages"][number]["content"][n
   return { text, id: part.id, name: part.name }
 }
 
+// STIGMERGIC PARAPHRASE — the trail mark a kept-out result leaves behind. Mechanical, model-free: counts, the
+// first line, and the structure the bytes themselves declare (markdown headings, else top-level symbols). The
+// next reader learns what was here without a snip, and snips only when the gist says the bytes matter.
+export const trailGist = (text: string, key = "") => {
+  const lines = text.split("\n")
+  const first = lines.find((l) => l.trim().length > 0)?.trim().slice(0, 120) ?? ""
+  const heads = lines.filter((l) => /^\s*(?:\d+:\s*)?#{1,4}\s+\S/.test(l)).map((l) => l.replace(/^\s*(?:\d+:\s*)?/, "").trim().slice(0, 60))
+  const syms = heads.length
+    ? heads
+    : lines.flatMap((l) => {
+        const m = /^\s*(?:\d+:\s*)?(?:export\s+)?(?:async\s+)?(?:function|class|const|def|interface|type)\s+([A-Za-z_$][\w$]*)/.exec(l)
+        return m ? [m[1]] : []
+      })
+  const shown = syms.slice(0, 8)
+  return [
+    key ? `of ${key}` : "",
+    `${lines.length} lines`,
+    first ? `starts "${first}"` : "",
+    shown.length ? `${heads.length ? "headings" : "symbols"}: ${shown.join(" | ")}${syms.length > shown.length ? ` +${syms.length - shown.length}` : ""}` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ")
+}
+
+// Replace the results the door pointed at with a kept-out stub + mechanical gist. `held` results are never
+// replaced for the first time: the model must read what it just asked for (see trailMessages).
+export const trailApply = (
+  messages: SessionHooks["context"]["messages"],
+  point: Map<string, string>,
+  done: Map<string, string>,
+  store: Map<string, string>,
+  keyOf: Map<string, string>,
+  held: (target: { id: string; name?: string }) => boolean,
+) => {
+  for (const [index, message] of messages.entries()) {
+    let changed = false
+    const content = message.content.map((part) => {
+      const target = foldable(part)
+      const handle = target ? point.get(target.id) : undefined
+      if (!target || !handle || (held(target) && !done.has(target.id)) || (target.text.startsWith("[") && target.text.includes("kept out; SNIP"))) return part
+      store.set(handle, target.text)
+      done.set(target.id, handle)
+      changed = true
+      return { ...part, result: { type: "text" as const, value: `[${target.text.length} chars kept out; SNIP ${handle}] gist (mechanical): ${trailGist(target.text, keyOf.get(target.id))}` } }
+    })
+    if (changed)
+      messages[index] = Message.make({ id: message.id, role: message.role, content, metadata: message.metadata, providerMetadata: message.providerMetadata, native: message.native })
+  }
+}
+
 const formatMeter = (meter: Record<string, unknown>) => {
   const savings = (meter.savings ?? {}) as Record<string, unknown>
   const num = (value: unknown) => (typeof value === "number" ? value : 0)
@@ -1125,6 +1175,11 @@ export const Plugin = define({
         // what each result is ABOUT: the path (or pattern/command) its call named
         const keyOf = new Map<string, string>()
         const results: Array<{ id: string; key: string; step: number }> = []
+        // The model must read what it just asked for. A `snip` answer is a recovery, and the newest tool result is the
+        // one the model has not yet acted on: pointerizing either hands back a handle for a handle, so the model
+        // snips again, gets a stub again, and re-reads in a loop (measured: one 113-line PLAN.md, ~20 snips).
+        const newest = event.messages.flatMap((m) => m.content).findLast((part) => foldable(part) !== undefined)
+        const held = (target: { id: string; name?: string }) => target.name === "snip" || target.id === (newest as { id?: string } | undefined)?.id
         let step = 0
         for (const message of event.messages) {
           if (message.role === "user" && message.content.some((part) => part.type === "text")) step++
@@ -1135,7 +1190,7 @@ export const Plugin = define({
               keyOf.set(part.id, `${part.name}:${String(arg).slice(0, 200)}`)
             }
             const target = foldable(part)
-            if (target && target.text.length >= trailMinChars) results.push({ id: target.id, key: keyOf.get(target.id) ?? `${target.name}:${target.id}`, step })
+            if (target && !held(target) && target.text.length >= trailMinChars) results.push({ id: target.id, key: keyOf.get(target.id) ?? `${target.name}:${target.id}`, step })
           }
         }
         if (!results.length && done.size === 0) return
@@ -1145,20 +1200,7 @@ export const Plugin = define({
         const answer = yield* post({ event: "trail", sessionID: event.sessionID, results, already: [...done.keys()], idleMs, tokens, window: 200_000 }, askTimeout)
         if (answer?.go === true && answer.point && typeof answer.point === "object") for (const [id, handle] of Object.entries(answer.point as Record<string, string>)) if (!point.has(id)) point.set(id, String(handle))
         if (point.size === 0) return
-        for (const [index, message] of event.messages.entries()) {
-          let changed = false
-          const content = message.content.map((part) => {
-            const target = foldable(part)
-            const handle = target ? point.get(target.id) : undefined
-            if (!target || !handle || target.text.startsWith("[") && target.text.includes("kept out; SNIP")) return part
-            trailStore.set(handle, target.text)
-            done.set(target.id, handle)
-            changed = true
-            return { ...part, result: { type: "text" as const, value: `[${target.text.length} chars kept out; SNIP ${handle}]` } }
-          })
-          if (changed)
-            event.messages[index] = Message.make({ id: message.id, role: message.role, content, metadata: message.metadata, providerMetadata: message.providerMetadata, native: message.native })
-        }
+        trailApply(event.messages, point, done, trailStore, keyOf, held)
       })
 
     const context = (event: SessionHooks["context"]) =>
