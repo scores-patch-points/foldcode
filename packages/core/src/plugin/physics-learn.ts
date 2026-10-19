@@ -51,8 +51,12 @@ export const learn = (input: { ask: string; file: string; before: string; after:
     const b = newLines[0]
     let i = 0
     while (i < a.length && i < b.length && a[i] === b[i]) i++
+    // never split a token: "80" -> "8080" shares a leading 8, which belongs to the changed value, not to the shared prefix
+    const isWord = (c: string | undefined) => !!c && /\w/.test(c)
+    while (i > 0 && isWord(a[i - 1]) && (isWord(a[i]) || isWord(b[i]))) i--
     let j = 0
     while (j < a.length - i && j < b.length - i && a[a.length - 1 - j] === b[b.length - 1 - j]) j++
+    while (j > 0 && isWord(a[a.length - j]) && (isWord(a[a.length - j - 1]) || isWord(b[b.length - j - 1]))) j--
     const prefix = templated(a.slice(0, i), slots)
     const suffix = templated(a.slice(a.length - j), slots)
     const fill = templated(b.slice(i, b.length - j), slots)

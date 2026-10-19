@@ -45,6 +45,13 @@ test("teaching: an edit made elsewhere becomes a recipe the machine then applies
   expect(taught(edit("srv.py", "PORT = 1\nPORT = 2\n"), "Change PORT to 9 in srv.py.", [recipe])).toBeUndefined()
 })
 
+test("falsified live: 80 -> 8080 does not bake the shared leading 8 into the recipe", () => {
+  const r = teach(edit("srv.py", "PORT = 80\nHOST = 'x'\n"), "Change PORT to 8080 in srv.py.", "PORT = 8080\nHOST = 'x'\n", "local")!
+  expect(r.prefix).toBe("{0} = ")
+  const got = taught(edit("web.py", "PORT = 1\nHOST = 'y'\n"), "Change PORT to 9 in web.py.", [r])
+  expect(got?.derived).toMatchObject({ ok: true, after: "PORT = 9\nHOST = 'y'\n" })
+})
+
 test("teaching: an ask with nothing to test teaches nothing the machine will trust", () => {
   const before = "a = 1\nb = 2\nc = 3\n"
   const r = teach(edit("t.py", before), "Make b bigger.", "a = 1\nb = 20\nc = 3\n", "frontier")

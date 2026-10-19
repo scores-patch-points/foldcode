@@ -1505,6 +1505,7 @@ export const Plugin = define({
     // physics: the file a derived-edit turn presented, waiting for the model's reply; sessions whose derived edit was refused go the tool path next.
     const armed = new Map<string, { plan: Extract<Physics.Plan, { kind: "edit" }>; ask: string; at: number }>()
     const physicsAside = new Set<string>()
+    const pending = new Map<string, { hold: { plan: Extract<Physics.Plan, { kind: "edit" }>; ask: string; at: number }; text: string; first: Physics.Derived }>()
     const refused = new Set<string>()
     const servedTurn = new Set<string>()
     // The held step-fold cut per session (prefix-stable epochs, see stableStepCut).
@@ -1817,6 +1818,8 @@ export const Plugin = define({
           armed.delete(event.sessionID)
           const answered = last?.role === "assistant" && !last.content.some((part) => part.type === "tool-call") && servedTurn.has(event.sessionID)
           if (answered) {
+            // an answer that missed is restructured here, inside the request, so the session stays open while REC runs
+            yield* settle(event.sessionID)
             // the loop's own follow-up after a derived reply: no tools to call, so none are sent
             withheld = toolChars(event.tools)
             for (const name of Object.keys(event.tools)) delete event.tools[name]
@@ -2551,18 +2554,16 @@ export const Plugin = define({
       }).pipe(Effect.ignore)
 
     // PHYSICS, the reply side: the model's finished text is the content; the op is derived from it and applied or refused.
-    const physicsApply = (event: Observed) =>
+    const settle = (sessionID: string) =>
       Effect.gen(function* () {
-        if (event.type !== "session.text.ended") return
-        const sessionID = event.data.sessionID
-        const hold = armed.get(sessionID)
-        if (!hold) return
-        armed.delete(sessionID)
-        const text = typeof event.data.text === "string" ? event.data.text : ""
+        const held = pending.get(sessionID)
+        if (!held) return
+        pending.delete(sessionID)
+        const { hold, text } = held
         const { plan, ask } = hold
         const steps: Array<Record<string, unknown>> = []
         let by = "local"
-        let outcome: Physics.Derived = Physics.derive(plan, text, ask)
+        let outcome: Physics.Derived = held.first
         steps.push({ by, ok: outcome.ok, ...(outcome.ok ? {} : { gap: outcome.gap }) })
         // REC: an answer that leaves the void open restructures the frame. First the local model once more, in the other
         // form and told what is still open; then, past the budget or a second miss, the frontier model.
@@ -2597,7 +2598,24 @@ export const Plugin = define({
         }
         if (!outcome.ok) refused.add(sessionID)
         physicsRecord({ sessionID, edit: plan.file, ok: outcome.ok, by, taught, steps, ms: Date.now() - hold.at, ...(outcome.ok ? { act: outcome.op.op, checked: outcome.checked } : { gap: outcome.gap }) })
-        yield* ctx.session.synthetic({ sessionID, text: Physics.notice(plan.file, outcome) + (outcome.ok && by !== "local" ? ` · by ${by}` : "") + (taught ? " · taught" : ""), description: "fold physics — the derived operation", resume: false })
+        yield* ctx.session.synthetic({ sessionID: sessionID as never, text: Physics.notice(plan.file, outcome) + (outcome.ok && by !== "local" ? ` · by ${by}` : "") + (taught ? " · taught" : ""), description: "fold physics — the derived operation", resume: false })
+      }).pipe(Effect.ignore)
+
+    const physicsApply = (event: Observed) =>
+      Effect.gen(function* () {
+        if (event.type !== "session.text.ended") return
+        const sessionID = event.data.sessionID
+        const hold = armed.get(sessionID)
+        if (!hold) return
+        armed.delete(sessionID)
+        const text = typeof event.data.text === "string" ? event.data.text : ""
+        const first = Physics.derive(hold.plan, text, hold.ask)
+        pending.set(sessionID, { hold, text, first })
+        if (first.ok) return yield* settle(sessionID)
+        // A miss restructures (REC), which takes model calls. The loop's follow-up request settles it from the context hook,
+        // which holds the session open; with no follow-up, it settles here after a short wait.
+        yield* Effect.sleep("4 seconds")
+        yield* settle(sessionID)
       }).pipe(Effect.ignore)
 
     yield* ctx.event.subscribe().pipe(
