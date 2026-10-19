@@ -1,9 +1,12 @@
 import { createEffect, For, on, onCleanup } from "solid-js"
 import { createStore } from "solid-js/store"
 
-const target = ["f", "o", "l", "d", "c", "o", "d", "e"] as const
+// The brand wordmark (ui/logo): "fold" in IM Fell English Italic, then "code" in pixel letters. When the
+// page opens it levitates (ui/logo.css) and the pixel half scrambles; "fold" never scrambles, so the name
+// is always readable.
+const target = ["c", "o", "d", "e"] as const
 
-const choices = ["f", "o", "l", "d", "c", "e"] as const
+const choices = ["c", "o", "d", "e"] as const
 
 export function AnimatedWordmark(props: { active: boolean }) {
   const [state, setState] = createStore({ letters: [...target] })
@@ -47,53 +50,43 @@ export function AnimatedWordmark(props: { active: boolean }) {
   onCleanup(() => timers.forEach(clearTimeout))
 
   return (
-    <svg class="settings-about-wordmark" viewBox="0 0 234 42" aria-hidden="true">
+    <svg
+      data-component="logo-wordmark"
+      classList={{ "settings-about-wordmark": true, "wordmark-levitate": props.active }}
+      viewBox="0 -2 206 54"
+      aria-hidden="true"
+    >
       <defs>
         <symbol id="settings-about-letter-o" viewBox="0 0 24 42">
-          <path class="settings-about-letter-shadow" d="M18 30H6V18H18V30Z" />
           <path d="M18 12H6V30H18V12ZM24 36H0V6H24V36Z" />
         </symbol>
-        <symbol id="settings-about-letter-p" viewBox="0 0 24 42">
-          <path class="settings-about-letter-shadow" d="M18 30H6V18H18V30Z" />
-          <path d="M6 30H18V12H6V30ZM24 36H6V42H0V6H24V36Z" />
-        </symbol>
         <symbol id="settings-about-letter-e" viewBox="0 0 24 42">
-          <path class="settings-about-letter-shadow" d="M24 24V30H6V24H24Z" />
           <path d="M24 24H6V30H24V36H0V6H24V24ZM6 18H18V12H6V18Z" />
         </symbol>
-        <symbol id="settings-about-letter-n" viewBox="0 0 24 42">
-          <path class="settings-about-letter-shadow" d="M18 36H6V18H18V36Z" />
-          <path d="M18 12H6V36H0V6H18V12ZM24 36H18V12H24V36Z" />
-        </symbol>
         <symbol id="settings-about-letter-c" viewBox="0 0 24 42">
-          <path class="settings-about-letter-shadow" d="M24 30H6V18H24V30Z" />
           <path d="M24 12H6V30H24V36H0V6H24V12Z" />
         </symbol>
         <symbol id="settings-about-letter-d" viewBox="0 0 24 42">
-          <path class="settings-about-letter-shadow" d="M18 30H6V18H18V30Z" />
           <path d="M18 12H6V30H18V12ZM24 36H0V6H18V0H24V36Z" />
         </symbol>
-        <symbol id="settings-about-letter-x" viewBox="0 0 24 42">
-          <path class="settings-about-letter-shadow" d="M18 36H6V12H18V36Z" />
-          <path d="M0 0H6L24 30V36H18L0 6V0Z" />
-          <path d="M18 0H24V6L6 36H0V30L18 0Z" />
-        </symbol>
-        <symbol id="settings-about-letter-f" viewBox="0 0 24 42">
-          <path class="settings-about-letter-shadow" d="M18 36H12V12H18V36Z" />
-          <path d="M18 36H12V0H18V36Z" />
-          <path d="M18 6H6V0H18V6Z" />
-          <path d="M18 18H0V12H18V18Z" />
-        </symbol>
-        <symbol id="settings-about-letter-l" viewBox="0 0 24 42">
-          <path class="settings-about-letter-shadow" d="M24 36H18V18H24V36Z" />
-          <path d="M24 36H18V0H24V36Z" />
-        </symbol>
       </defs>
-      <For each={state.letters}>
-        {(letter, index) => (
-          <use href={`#settings-about-letter-${letter}`} x={index() * 30} width="24" height="42" />
-        )}
-      </For>
+      <text
+        data-slot="wordmark-fold"
+        x="11"
+        y="36"
+        font-family="'IM Fell English', 'Iowan Old Style', Georgia, serif"
+        font-style="italic"
+        font-size="50"
+      >
+        fold
+      </text>
+      <g data-slot="wordmark-code" class="settings-about-code">
+        <For each={state.letters}>
+          {(letter, index) => (
+            <use href={`#settings-about-letter-${letter}`} x={90 + index() * 30} width="24" height="42" />
+          )}
+        </For>
+      </g>
     </svg>
   )
 }

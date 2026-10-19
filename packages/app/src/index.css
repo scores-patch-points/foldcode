@@ -25,6 +25,15 @@
   font-display: swap;
 }
 
+/* The wordmark's "fold" (ui/logo). SIL Open Font License, from Google Fonts. */
+@font-face {
+  font-family: "IM Fell English";
+  src: url("/assets/IMFellEnglish-Italic.woff2") format("woff2");
+  font-weight: 400;
+  font-style: italic;
+  font-display: block;
+}
+
 @media (display-mode: standalone) {
   /* WebKit excludes safe-area insets from dvh in installed apps. */
   #root {

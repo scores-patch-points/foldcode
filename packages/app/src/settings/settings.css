@@ -239,16 +239,17 @@
 }
 
 .settings-about-wordmark {
-  width: 178px;
-  height: 32px;
+  width: 168px;
+  height: 44px;
   flex-shrink: 0;
-  opacity: 0.2;
-  color: var(--v2-text-text-muted);
+  opacity: 0.55;
+  color: var(--v2-text-text-base);
   fill: currentColor;
 }
 
-.settings-about-letter-shadow {
-  opacity: 0.3;
+/* "fold" full ink, "code" muted: the brand wordmark's ink and gray. */
+.settings-about-code {
+  color: var(--v2-text-text-muted);
 }
 
 .settings-about-faint,
