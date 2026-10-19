@@ -25,6 +25,7 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { record as rulerRecord, recordTokens as rulerTokens } from "./fold-ruler.js"
+import { tap as usageTap } from "./usage-tap.js"
 
 const base = (process.env.FOLD_URL ?? "http://127.0.0.1:11436").replace(/\/+$/, "")
 const off = process.env.FOLD_OFF === "1"
@@ -49,6 +50,8 @@ const coolDown = 30_000
 const debug = process.env.FOLD_DEBUG === "1"
 // FOLD_RULER_FILE=<path.jsonl> measures every primary request by segment (measurement only; see fold-ruler.ts).
 const rulerFile = process.env.FOLD_RULER_FILE
+// The provider's own usage, read off each response (usage-tap.ts). On by default: it is the only count that is not derived.
+const usageFile = process.env.FOLD_USAGE_FILE ?? path.join(os.homedir(), ".local/share/foldcode/usage.jsonl")
 // FOLD_TRAIL=1: stale tool results become opaque handles except the ones the decayed trail keeps (decided by the door, see
 // khora/opencode-trail.mjs; only when the prompt cache is cold or the window is under pressure, so it never costs a warm cache).
 const trailOn = process.env.FOLD_TRAIL === "1"
@@ -454,7 +457,7 @@ const hash36 = (t: string) => {
   for (let i = 0; i < t.length; i++) h = ((h << 5) + h + t.charCodeAt(i)) >>> 0
   return h.toString(36).slice(0, 6).padStart(4, "0")
 }
-export const stepPlan = (messages: Msg[], keep = stepKeep()) => {
+export const stepPlan = (messages: Msg[], keep = stepKeep(), viewMax = viewCap()) => {
   if (!(keep > 0)) return undefined
   const s = messages.findLastIndex((m) => m.role === "user" && m.content.some((p) => p.type === "text"))
   if (s < 0) return undefined
@@ -520,8 +523,9 @@ export const stepPlan = (messages: Msg[], keep = stepKeep()) => {
   let used = 0
   for (const [path, bytes] of [...files].reverse()) {
     if (kept.has(path)) continue
-    if (used + bytes.length > viewCap() && view.length) break
-    view.push([path, bytes.slice(0, viewCap())])
+    if (used + bytes.length > viewMax && view.length) break
+    if (!(viewMax > 0)) break
+    view.push([path, bytes.slice(0, viewMax)])
     used += bytes.length
   }
   view.reverse()
@@ -529,7 +533,9 @@ export const stepPlan = (messages: Msg[], keep = stepKeep()) => {
 }
 export const stepNote = (plan: NonNullable<ReturnType<typeof stepPlan>>, keep: number) =>
   [
-    `[fold: this turn has ${plan.steps.length + keep} steps so far. The last ${keep} are shown in full; steps 1-${plan.steps.length} are stored verbatim. A call to snip with a handle below returns that step's exact text.]`,
+    // Prefix-stable: the note names only the folded steps, never the running count, so the same cut is the
+    // same bytes on every request and the provider's cache keeps reading past it.
+    `[fold: steps 1-${plan.steps.length} of this turn are stored verbatim; the steps after them are shown in full. A call to snip with a handle below returns that step's exact text.]`,
     ...plan.steps.map((st) => `- step ${st.n} (snip ${st.handle}): ${st.line}`),
     ...(plan.view.length
       ? [
@@ -545,7 +551,7 @@ export const stepApply = (messages: Msg[], plan: NonNullable<ReturnType<typeof s
   const wrapped = foldIndex(
     {
       grain: "step",
-      from: `turn with ${plan.steps.length + keep} steps`,
+      from: `steps 1-${plan.steps.length} of this turn`,
       for: "the current ask",
       made: "fold stepNote",
     },
@@ -580,22 +586,157 @@ const messageChars = (m: SessionHooks["context"]["messages"][number]) =>
     0,
   )
 export const contextChars = (messages: SessionHooks["context"]["messages"]) => messages.reduce((n, m) => n + messageChars(m), 0)
+// The window ceiling the cap enforces, in chars of messages + injected system blocks: the tighter of the
+// window cap and the gate's room after the tool definitions. stableStepCut plans against this same number,
+// so the cut and the cap never disagree (when they did, the cap dropped steps the cut had kept, and every
+// drop edited the head: 9 of 17 live requests broke the cache that way).
+export const windowLimit = (tools: number) => {
+  const gate = gateChars()
+  return Math.min(Number(process.env.FOLD_MAX_CHARS ?? 32_000), gate > 0 ? gate - tools : Infinity)
+}
+
 export const capContext = (
   messages: SessionHooks["context"]["messages"],
   system: ReadonlyArray<{ text?: string }> = [],
+  opts: { fixed?: number; store?: Map<string, string>; clipOnly?: boolean } = {},
 ) => {
-  const max = Number(process.env.FOLD_MAX_CHARS ?? 32_000)
+  // The tighter of the window cap and THE GATE (the whole prompt: tool definitions are `fixed`, they never shrink).
+  const max = windowLimit(opts.fixed ?? 0)
   if (!(max > 0)) return
+  const keep = (text: string, cut: number) => {
+    if (!opts.store) return clipToFit(text, cut)
+    const handle = `rc${hash36(text)}${text.length.toString(36)}`
+    opts.store.set(handle, text)
+    return clipToFit(text, cut, handle)
+  }
   // The injected blocks (recall, commons, legend, fold-index, plan) live in `event.system`, not in `messages`.
   // They are counted against the same ceiling, so a large injection cannot slip past the cap (they are never
   // dropped — the message window shrinks first, and if the injections alone exceed the cap the window floors).
   const injected = system.reduce((n, part) => n + (typeof part?.text === "string" ? part.text.length : 0), 0)
-  // Drop the OLDEST message after the head, one at a time, while over the ceiling. The head (index 0, which
-  // carries the fold note) and the last (the current ask) are pinned — the window shrinks from the middle of
-  // its own history, and can never exceed the filed max however long the session runs.
-  for (let guard = 0; guard < 5000 && messages.length > 2 && contextChars(messages) + injected > max; guard++)
-    messages.splice(1, 1)
+  const over = () => contextChars(messages) + injected - max
+  // 1. CLIP before dropping. One large part (a 24k file read) must not evict every step around it: oversized
+  // tool results and tool-call inputs are cut, oldest first, down to a floor, so each step keeps its shape
+  // (which call, on what, what came back). Measured on the dolphin session: dropping whole messages instead
+  // left the ask + note + one orphaned read, and the agent re-read the same file for 70 steps.
+  const floor = Math.min(2_000, Math.floor(max / 4))
+  // Parts are immutable: a clipped part is a new part in a new message, the original bytes held under a handle.
+  // A clip always lands on the floor, never on "just enough": the same part is the same bytes on every later
+  // request, so a clip moves the cache boundary once instead of on every step.
+  for (let i = 1; i < messages.length && over() > 0; i++)
+    for (let j = 0; j < messages[i].content.length; j++) {
+      const excess = over()
+      if (excess <= 0) break
+      const part = messages[i].content[j]
+      let next: Msg["content"][number] | undefined
+      if (part.type === "tool-result") {
+        const text = foldable(part)?.text
+        if (text === undefined || text.length <= floor) continue
+        next = { ...part, result: { type: "text" as const, value: keep(text, floor) } }
+      } else if (part.type === "tool-call" && part.input && typeof part.input === "object") {
+        const input = { ...(part.input as Record<string, unknown>) }
+        for (const key of Object.keys(input)) {
+          const v = input[key]
+          if (typeof v === "string" && v.length > floor) input[key] = keep(v, floor)
+        }
+        next = { ...part, input }
+      }
+      if (next) messages[i] = { ...messages[i], content: messages[i].content.map((p, k) => (k === j ? next : p)) } as Msg
+    }
+  // 2. Then drop the OLDEST whole STEP after the head while still over: an assistant message and the tool
+  // results that answer it leave together, so no result is ever orphaned from its call (an orphan is
+  // stripped downstream, which silently erases what the agent just read). The head (index 0, which carries
+  // the fold note) and the last step (the current work) are pinned.
+  const stepEnd = (start: number) => {
+    let j = start + 1
+    while (j < messages.length && messages[j].role !== "assistant" && !(messages[j].role === "user" && messages[j].content.some((p) => p.type === "text"))) j++
+    return j
+  }
+  for (let guard = 0; guard < 5000 && !opts.clipOnly && messages.length > 2 && over() > 0; guard++) {
+    const end = stepEnd(1)
+    if (end >= messages.length) break
+    const gone = messages.splice(1, end - 1)
+    // Lossless: the dropped step's exact bytes are held under a handle and a one-line receipt rides in the head.
+    if (opts.store) {
+      const raw = JSON.stringify(gone.map((m) => m.content))
+      const handle = `rd${hash36(raw)}${raw.length.toString(36)}`
+      opts.store.set(handle, raw)
+      const names = gone.flatMap((m) => m.content.flatMap((p) => (p.type === "tool-call" ? [`${p.name} ${pathOf(p.input) ?? ""}`.trim()] : [])))
+      const receipt = { type: "text", text: `[fold: a step (${names.join(", ") || "text"}) left the window to fit the gate; snip ${handle} returns its exact bytes]` } as Msg["content"][number]
+      messages[0] = { ...messages[0], content: [...messages[0].content, receipt] } as Msg
+    }
+  }
 }
+
+// THE GATE — the whole prompt the model receives (system + tool definitions + messages), in chars of what the
+// hooks hand the provider. Over it, the fold compresses mechanically and losslessly: whole steps become
+// addressed receipts, cut bytes are held under snip handles. It never fails a request. 0 disables.
+export const gateChars = () => Number(process.env.FOLD_GATE_CHARS ?? 48_000)
+export const toolChars = (tools: Record<string, unknown> | undefined) => (tools ? JSON.stringify(tools).length : 0)
+export const systemChars = (system: ReadonlyArray<{ text?: string }>) =>
+  system.reduce((n, part) => n + (typeof part?.text === "string" ? part.text.length : 0), 0)
+
+// PREFIX-STABLE STEP FOLD. Measured on a live 39-request session: folding all but the newest step on EVERY
+// request rewrote the head each time, so the provider cached only the fixed 8,640-token prefix and billed
+// the whole window again on every step (cost fell 4-24% against no fold while raw tokens fell 3x). Here the
+// cut is held still while the window fits under the gate; only when it overflows does the cut jump, far
+// enough that the window drops to `low` of the gate, so many appended steps fit before the next jump.
+// Between jumps every request is the previous one plus the new step: an append, which the cache reuses.
+export type StepEpoch = { head: string; cut: number; view: number }
+export const stableStepCut = (
+  messages: Msg[],
+  sizes: { tools: number; system: number },
+  prev: StepEpoch | undefined,
+  low = 0.6,
+): StepEpoch | undefined => {
+  const limit = windowLimit(sizes.tools)
+  if (!(limit > 0) || !Number.isFinite(limit)) return undefined
+  const s = messages.findLastIndex((m) => m.role === "user" && m.content.some((p) => p.type === "text"))
+  if (s < 0) return undefined
+  const head = messages[s].id ?? String(s)
+  const steps = messages.slice(s + 1).filter((m) => m.role === "assistant").length
+  const held = prev && prev.head === head ? prev : { head, cut: 0, view: viewCap() }
+  // The window as it will be sent: folded at `cut`, then with the cap's clips (which never move the prefix
+  // more than once per part). Only what clipping cannot bring under the gate is an overflow.
+  const size = (cut: number, view: number) => {
+    const trial = structuredClone(messages)
+    const plan = cut > 0 ? stepPlan(trial, steps - cut, view) : undefined
+    if (plan) stepApply(trial, plan, steps - cut)
+    capContext(trial, [{ text: "x".repeat(sizes.system) }], { fixed: sizes.tools, clipOnly: true })
+    return contextChars(trial) + sizes.system
+  }
+  const cut = Math.min(held.cut, Math.max(0, steps - 1))
+  if (size(cut, held.view) <= limit) return { head, cut, view: held.view }
+  // Overflow: the smallest jump (and the largest view) that lands under the low-water mark — `low` of the ROOM
+  // the injected system blocks leave under the limit, not of the whole limit.
+  const target = sizes.system + low * (limit - sizes.system)
+  for (let next = Math.max(cut + 1, 1); next <= steps - 1; next++)
+    for (const view of [viewCap(), 8_000, 2_000, 0]) if (size(next, view) <= target) return { head, cut: next, view }
+  return steps > 1 ? { head, cut: steps - 1, view: 0 } : { head, cut: 0, view: held.view }
+}
+
+// The step fold the gate needs: the most steps kept verbatim and the largest workspace view that fit, tried
+// on a copy so the live window is folded once. undefined when the window already fits or nothing can fold.
+export const gateStepPlan = (messages: Msg[], fixed: number, from: number) => {
+  const gate = gateChars()
+  if (!(gate > 0) || contextChars(messages) + fixed <= gate) return undefined
+  const keeps = [...new Set([from, 4, 2, 1].filter((k) => k > 0 && k <= Math.max(from, 4)))].sort((a, b) => b - a)
+  let last: { keep: number; plan: NonNullable<ReturnType<typeof stepPlan>> } | undefined
+  for (const keep of keeps)
+    for (const view of [viewCap(), 8_000, 2_000, 0]) {
+      const plan = stepPlan(messages, keep, view)
+      if (!plan) continue
+      last = { keep, plan }
+      const trial = structuredClone(messages)
+      stepApply(trial, plan, keep)
+      if (contextChars(trial) + fixed <= gate) return last
+    }
+  return last
+}
+
+const clipToFit = (text: string, keep: number, handle?: string) =>
+  text.length <= keep
+    ? text
+    : `${text.slice(0, keep)}\n[fold: ${(text.length - keep).toLocaleString()} of ${text.length.toLocaleString()} chars cut to fit the window. This is a cut of the same output, not a new one; ${handle ? `snip ${handle} returns all of it` : "read with an offset for the rest"}.]`
 
 const isNewAsk = (messages: SessionHooks["context"]["messages"]) => messages.at(-1)?.role === "user"
 
@@ -946,6 +1087,10 @@ export const Plugin = define({
     // per session (monotone: a stub never turns back into bytes, so the prompt prefix flips at most once per result);
     // when each session last asked, for the door's idle gate.
     const trailStore = new Map<string, string>()
+    // The ledger's per-request window sizes, set by the context hook and taken by the usage tap.
+    const windows = new Map<string, { before: number; after: number; tools: number }>()
+    // The held step-fold cut per session (prefix-stable epochs, see stableStepCut).
+    const stepEpochs = new Map<string, StepEpoch>()
     const trailDone = new Map<string, Map<string, string>>()
     const reopenCounts = new Map<string, number>()
     const lastCall = new Map<string, number>()
@@ -1239,6 +1384,10 @@ export const Plugin = define({
           const text = event.messages[i].content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n")
           if (isPersonNotice(text)) event.messages.splice(i, 1)
         }
+        // THE LEDGER'S "BEFORE": the window exactly as the harness assembled it (messages + system), after our own
+        // notices are stripped. Everything the fold changes from here on is measured against this number; the
+        // tap (usage-tap.ts) joins it to the provider's own token count for the request that follows.
+        const windowBefore = contextChars(event.messages) + systemChars(event.system)
         // Remember the turn's ask and model so a tool result that lands mid-turn
         // can be folded at event time without re-reading the message list.
         lastAsk.set(event.sessionID, lastUserText(event.messages))
@@ -1362,8 +1511,23 @@ export const Plugin = define({
           reopenCount: reopenCounts.get(event.sessionID) ?? 0,
           pointerCount: trailDone.get(event.sessionID)?.size ?? 0,
         }
-        const effectiveStepKeep = grainKeepSteps(stepKeep(), stepSignals, event.messages.length)
-        const stepsPlan = stepPlan(event.messages, effectiveStepKeep)
+        const fixed = toolChars(event.tools) + systemChars(event.system)
+        const grainKeep = grainKeepSteps(stepKeep(), stepSignals, event.messages.length)
+        // THE GATE first. Default: the prefix-stable epoch (stableStepCut). FOLD_STABLE=0 restores the
+        // per-request fold (most steps that fit, recomputed every request), kept for the A/B.
+        const stable = process.env.FOLD_STABLE !== "0"
+        const epoch = stable
+          ? stableStepCut(event.messages, { tools: toolChars(event.tools), system: systemChars(event.system) }, stepEpochs.get(event.sessionID))
+          : undefined
+        if (epoch) stepEpochs.set(event.sessionID, epoch)
+        const stepCount = event.messages.slice(event.messages.findLastIndex((m) => m.role === "user" && m.content.some((p) => p.type === "text")) + 1).filter((m) => m.role === "assistant").length
+        const gated = stable
+          ? epoch && epoch.cut > 0
+            ? { keep: stepCount - epoch.cut, plan: stepPlan(event.messages, stepCount - epoch.cut, epoch.view) }
+            : undefined
+          : gateStepPlan(event.messages, fixed, grainKeep || 4)
+        const effectiveStepKeep = gated?.keep ?? (stable ? 0 : grainKeep)
+        const stepsPlan = gated?.plan ?? (stable ? undefined : stepPlan(event.messages, effectiveStepKeep))
         if (stepsPlan) {
           stepApply(event.messages, stepsPlan, effectiveStepKeep, trailStore)
           folded = true
@@ -1376,7 +1540,11 @@ export const Plugin = define({
         yield* foldMessages(event)
         if (trailOn) yield* trailMessages(event)
         // THE HARD CAP: after every fold, the frontier's window is bounded absolutely (FOLD_MAX_CHARS).
-        capContext(event.messages, event.system)
+        capContext(event.messages, event.system, { fixed: toolChars(event.tools), store: trailStore })
+        // THE LEDGER'S "AFTER": what is actually sent. before - after is what the fold kept out (negative when
+        // the notes it added cost more than they removed). `tools` is what the definitions weigh, measured the
+        // same way, so a later change that sends fewer tools shows up as its own line.
+        windows.set(event.sessionID, { before: windowBefore, after: contextChars(event.messages) + systemChars(event.system), tools: toolChars(event.tools) })
       })
 
     const title = (event: SessionHooks["title"]) =>
@@ -1844,6 +2012,14 @@ export const Plugin = define({
     yield* ctx.session.hook("title", title)
     yield* ctx.session.hook("http.request", (event) => {
       capturePrompt(event)
+      return Effect.void
+    })
+    yield* ctx.session.hook("http.response", (event) => {
+      if (usageFile !== "off") {
+        const window = event.kind === "primary" ? windows.get(event.sessionID) : undefined
+        windows.delete(event.sessionID)
+        void usageTap(usageFile, { sessionID: event.sessionID, kind: event.kind, model: event.model, request: event.request, response: event.response, window }).catch(() => undefined)
+      }
       return Effect.void
     })
 

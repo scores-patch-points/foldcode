@@ -78,3 +78,37 @@ test("the cap counts event.system injections too, not only messages", () => {
     expect(system[0].text.length).toBe(900)
   })
 })
+
+// SAFETY: a call and its result, the pairing capContext must keep — `id` links them, `input` is what is clipped.
+const call = (id: string, path: string) =>
+  ({ role: "assistant", content: [{ type: "tool-call", id, name: "read", input: { path } }] }) as unknown as Parameters<typeof capContext>[0][number]
+const result = (id: string, value: string) =>
+  ({ role: "tool", content: [{ type: "tool-result", id, name: "read", result: { type: "text", value } }] }) as unknown as Parameters<typeof capContext>[0][number]
+
+test("one large read cannot evict the steps around it, and no result is orphaned from its call", () => {
+  // The dolphin session: a 24k file read in a 32k cap dropped every step but the ask, the note and one
+  // orphaned result, and the agent re-read the same file for 70 steps.
+  withCap("32000", () => {
+    const messages = [
+      msg("user", "build me a website [fold: steps 1-2 stored]"),
+      call("a", "README.md"),
+      result("a", "r".repeat(3000)),
+      call("b", "dolphinit.html"),
+      result("b", "d".repeat(24_000)),
+      call("c", "README.md"),
+      result("c", "r".repeat(3000)),
+      call("d", "dolphinit.html"),
+      result("d", "d".repeat(24_000)),
+    ]
+    capContext(messages)
+    expect(contextChars(messages)).toBeLessThanOrEqual(32_000)
+    const calls = new Set(messages.flatMap((m) => m.content.flatMap((p) => (p.type === "tool-call" ? [p.id] : []))))
+    const results = messages.flatMap((m) => m.content.flatMap((p) => (p.type === "tool-result" ? [p.id] : [])))
+    expect(results.every((id) => calls.has(id))).toBe(true) // no orphan
+    expect([...calls]).toEqual(["a", "b", "c", "d"]) // every step keeps its shape
+    const value = (id: string) =>
+      messages.flatMap((m) => m.content.flatMap((p) => (p.type === "tool-result" && p.id === id ? [(p.result as { value: string }).value] : [])))[0]
+    expect(value("b")).toContain("[fold:") // the older read is cut, and the cut is stated, never silent
+    expect(value("d")).toBe("d".repeat(24_000)) // the newest read stays whole
+  })
+})
