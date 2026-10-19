@@ -16,7 +16,7 @@ export default {
   "holodeck.empty": "No turns recorded yet.",
   "holodeck.openReal": "Open the holodeck →",
   "holodeck.hint": "The holodeck opens in its own surface (the browser pane), tied to this workspace.",
-  "panel.title": "openfold",
+  "panel.title": "foldcode",
   "panel.subtitle": "it decides what the model is sent — verbatim, no embeddings, no guessing",
   "panel.refresh": "Refresh",
   "panel.replay": "Replay the arrival animation",
@@ -83,4 +83,8 @@ export default {
   "remember.promptWhen": "when (words that make it bear) — optional",
   "remember.promptText": "the instruction text, injected when it bears",
   "remember.footnote": "Nothing here is loaded into a prompt wholesale. The door (Gary's door) injects an entry only when an ask's own words bear on it; appends are append-only, so a later entry supersedes an earlier one without editing it.",
+  "tab.layers": "Layers",
+  "layers.title": "Layers",
+  "layers.subtitle": "one record, five grains — move the lens; no view rewrites the text",
+  "layers.hint": "click a [S#] to pin its source",
 }

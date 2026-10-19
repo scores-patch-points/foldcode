@@ -13,6 +13,7 @@ const setup: Setup<typeof Fold> = (ctx) => {
   const SessionWorkPlans = lazy(() => import("./plans"))
   const SessionRememberPanel = lazy(() => import("./remember"))
   const SessionStructurePanel = lazy(() => import("./structure"))
+  const SessionLayersPanel = lazy(() => import("./layers"))
   // Compile the panels while the app idles, so the first open renders at once.
   onCleanup(onIdle(() => void SessionMindTree.preload()))
   onCleanup(onIdle(() => void SessionFoldPanel.preload()))
@@ -21,6 +22,7 @@ const setup: Setup<typeof Fold> = (ctx) => {
   onCleanup(onIdle(() => void SessionCubePanel.preload()))
   onCleanup(onIdle(() => void SessionRememberPanel.preload()))
   onCleanup(onIdle(() => void SessionStructurePanel.preload()))
+  onCleanup(onIdle(() => void SessionLayersPanel.preload()))
   onCleanup(onIdle(() => void SessionWorktreePanel.preload()))
 
   ctx.add(Style, css)
@@ -225,6 +227,27 @@ const setup: Setup<typeof Fold> = (ctx) => {
     render: (props) => (
       <Suspense>
         <SessionStructurePanel session={props.session} />
+      </Suspense>
+    ),
+  })
+
+  // The Layers tab: the projected reality at five grains — prompt · projection · answer · sources · record —
+  // with one grain switch and per-node pins. The same record seen from different lenses; no view re-authors the text.
+  const layers: PanelTab = {
+    id: "layers",
+    get title() {
+      return ctx.t("tab.layers")
+    },
+    closable: "compact",
+  }
+
+  ctx.add(Panel, {
+    id: "layers",
+    region: "side",
+    list: () => [layers],
+    render: (props) => (
+      <Suspense>
+        <SessionLayersPanel session={props.session} />
       </Suspense>
     ),
   })
