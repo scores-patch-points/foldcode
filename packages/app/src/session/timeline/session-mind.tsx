@@ -1,4 +1,6 @@
-import { createMemo, createSignal, For, onCleanup, Show, type JSX } from "solid-js"
+import { createMemo, createSignal, For, onCleanup, Show } from "solid-js"
+import type { SessionMessageAssistant } from "@opencode/client/promise"
+import { AssistantReasoningContent } from "@opencode/session-ui/message-content"
 import { followBottom } from "./follow-bottom"
 import {
   stageOf,
@@ -15,12 +17,15 @@ import {
   rangeOf,
   reachedOf,
   STAGES,
+  targetOf,
   targetsOf,
   type MindStage,
   type Part,
   type Target,
   whereOf,
 } from "./session-mind-stage"
+
+type MindPart = SessionMessageAssistant["content"][number] & Part
 
 // The mind: what the model is doing right now, in words, while a turn runs.
 // The shimmering "Working" label says only that something is happening; this says
@@ -29,12 +34,13 @@ import {
 // aria-current, the pulse is dropped under prefers-reduced-motion).
 
 export function SessionMind(props: {
-  parts?: ReadonlyArray<Part | undefined>
+  parts?: ReadonlyArray<MindPart | undefined>
   startedAt?: number
   /** Open a path in the right-hand panel. */
   onOpen?: (path: string) => void
-  /** The model's reasoning, drawn the way opencode draws it everywhere else (its Thinking row). */
-  thinking?: JSX.Element
+  /** Show the model's reasoning as a log, drawn the way opencode draws it everywhere else (its Thinking row).
+   *  `expanded` starts each block open; absent means the log is not shown. */
+  thinking?: { expanded: boolean }
 }) {
   const [now, setNow] = createSignal(Date.now())
   const [pickedKey, setPickedKey] = createSignal<string | undefined>()
@@ -42,7 +48,7 @@ export function SessionMind(props: {
   const tick = setInterval(() => setNow(Date.now()), 1000)
   onCleanup(() => clearInterval(tick))
 
-  const parts = createMemo((): ReadonlyArray<Part> => (props.parts ?? []).filter((part): part is Part => !!part))
+  const parts = createMemo((): ReadonlyArray<MindPart> => (props.parts ?? []).filter((part): part is MindPart => !!part))
   const targets = createMemo(() => targetsOf(parts()))
   // Follow the target the work is on now, unless one was picked from the list.
   const shown = createMemo(() => targets().find((item) => item.key === pickedKey()) ?? targets().at(-1))
@@ -76,7 +82,8 @@ export function SessionMind(props: {
     return name
   })
   const aim = createMemo(() => conceptOf(shown(), parts()))
-  const murmur = createMemo(() => (props.thinking && parts().at(-1)?.type === "reasoning" ? "" : murmurOf(parts(), now())))
+  const thoughts = createMemo(() => !!props.thinking && parts().some((part) => part.type === "reasoning"))
+  const murmur = createMemo(() => (thoughts() && parts().at(-1)?.type === "reasoning" ? "" : murmurOf(parts(), now())))
   const doing = createMemo(() => STAGES.find((item) => item.id === here())?.doing ?? "Working")
   const clip = (value: string | undefined, max = 240) => {
     const one = (value ?? "").trim().replace(/\s+/g, " ")
@@ -222,7 +229,31 @@ export function SessionMind(props: {
         </For>
       </ol>
 
-      {props.thinking}
+      {/* The turn as a log, oldest first: each reasoning block in opencode's own Thinking row, with the tool call
+          that followed it as a one-line target, so a thought sits beside what it led to. Blocks stay mounted as
+          the turn grows, so a reader's expand or collapse survives the next step. */}
+      <Show when={thoughts()}>
+        <div data-component="session-mind-thoughts" class="flex flex-col gap-2">
+          <For each={parts()}>
+            {(part, index) =>
+              part.type === "reasoning" ? (
+                <AssistantReasoningContent
+                  id={`mind-reasoning-${index()}`}
+                  content={part}
+                  streaming={index() === parts().length - 1 && part.time?.completed === undefined}
+                  defaultOpen={props.thinking?.expanded ?? false}
+                />
+              ) : part.type === "tool" ? (
+                <div class="flex min-w-0 items-center gap-1.5 ps-3 font-mono text-[11px] opacity-70">
+                  <span aria-hidden="true">{mark(part)}</span>
+                  <span class="shrink-0">{part.name}</span>
+                  <span class="min-w-0 truncate">{targetOf(part)}</span>
+                </div>
+              ) : undefined
+            }
+          </For>
+        </div>
+      </Show>
 
       <Show when={open()}>
         {(id) => (

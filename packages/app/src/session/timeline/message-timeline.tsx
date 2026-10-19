@@ -30,7 +30,6 @@ import { SessionRunningMenu } from "@/session/header/session-running-menu"
 import { SessionMind, SessionMindLine } from "./session-mind"
 import { publishMind, snapshotOf, targetsOf } from "./session-mind-stage"
 import { followBottom } from "./follow-bottom"
-import { AssistantReasoningContent } from "@opencode/session-ui/message-content"
 import { useExtensionHost } from "@/runtime/extension/host"
 import { useExtensionAttachment } from "@/runtime/extension/host-apis"
 
@@ -402,20 +401,13 @@ function MessageTimelineView(
     const parts = mindParts()
     publishMind(snapshotOf(targetsOf(parts), parts))
   })
-  // The latest reasoning, in opencode's own Thinking row: shimmer title, the live heading, paced markdown, collapsible.
+  // Whether the rail's thought log shows, and whether its blocks start open: the one thinking setting drives both
+  // the timeline and this panel, and a hidden placement hides the log here too. The log itself is drawn by the
+  // mind, so it stays mounted as the turn grows instead of being replaced on every new part.
   const mindThinking = () => {
-    const parts = mindParts()
-    const index = parts.findLastIndex((part) => part?.type === "reasoning")
-    const content = index >= 0 ? parts[index] : undefined
-    if (!content || content.type !== "reasoning") return undefined
-    return (
-      <AssistantReasoningContent
-        id={`mind-reasoning-${index}`}
-        content={content}
-        streaming={index === parts.length - 1 && content.time?.completed === undefined}
-        defaultOpen={false}
-      />
-    )
+    const thinking = props.data.timelineDetail().thinking
+    if (thinking.placement === "hidden") return undefined
+    return { expanded: thinking.details === "expanded" }
   }
   // The rail lives in the gutter beside the session column, and only when that gutter is wide enough to hold it;
   // otherwise the mind stays in the flow under the Working line. It is never drawn over the content.
