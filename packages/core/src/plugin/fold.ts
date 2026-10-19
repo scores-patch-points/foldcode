@@ -739,6 +739,357 @@ export const gateStepPlan = (messages: Msg[], fixed: number, from: number) => {
   return last
 }
 
+// THE STEP LOG, PROJECTED APPEND-ONLY. The turn's steps are a log; the window is a projection of it at the
+// latest cursor, and the projection only ever GROWS. Lineage: khora native/the-fold/build-log.js, where a
+// build is never a mutable object but a thread of entries (PROPOSE · INS, SUPERSEDE · SYN naming the version
+// it supersedes) and "the code" is the fold of the log up to here. Here the same discipline holds the window:
+//   1. A fold never edits the head. Each fold APPENDS a projection event (a mid-turn system message, typed
+//      <fold-index grain="step" v=k supersedes=v(k-1)>) where the steps it retires stood; the reader's rule is
+//      that the latest version of an entry wins. Between folds every request is the previous one plus the new
+//      step, and at a fold the provider's cache breaks only at the first step actually removed.
+//   2. What stays verbatim is decided by the dependency chain, not by age: an edit is made from the version
+//      of the file it edits (SYN after the read or write that produced that version, the cube's own order
+//      SIG/SEG -> INS -> SYN), the next step is made from the latest run's result (EVA), and the frontier is
+//      the work itself. Everything else becomes an addressed receipt whose exact bytes are held under a snip
+//      handle. FOLD_GATE_CHARS only says WHEN to fold; the chain says WHAT.
+//   3. What the agent already observed is state, not memory: every observation is keyed by its address (a
+//      path, or the call itself) and versioned by a hash of its bytes, edits are compiled mechanically onto
+//      the bytes they were made from, and the projection says "read at version X, same bytes at steps a, b",
+//      so a re-read to remember is never needed. No model is consulted for any of it.
+type StepOp = "SIG" | "SEG" | "INS" | "SYN" | "EVA" | "NUL"
+export type StepAct = {
+  n: number
+  id: string
+  start: number
+  end: number
+  acts: Array<{ op: StepOp; name: string; addr: string; file: boolean; from?: string; to?: string; ok: boolean }>
+  deps: number[]
+  handle: string
+  raw: string
+  line: string
+}
+export type StepFact = { addr: string; file: boolean; version: string; bytes?: string; by: number; seen: number[]; made: number[] }
+export type StepLog = { s: number; head: string; first: number; acts: StepAct[]; state: Map<string, StepFact> }
+export type ProjectionEvent = { v: number; anchor: string; text: string }
+export type Projection = { head: string; retired: string[]; events: ProjectionEvent[]; facts: Record<string, string>; clips: string[] }
+
+const frontierSteps = () => Number(process.env.FOLD_FRONTIER ?? 2)
+const versionOf = (t: string) => `${hash36(t)}${t.length.toString(36)}`
+const isAsk = (m: Msg) => m.role === "user" && m.content.some((p) => p.type === "text")
+const editOf = (input: unknown) => {
+  const i = (input ?? {}) as Record<string, unknown>
+  const old = i.oldString ?? i.old_string ?? i.old
+  const next = i.newString ?? i.new_string ?? i.new
+  return typeof old === "string" && typeof next === "string" && old.length > 0
+    ? { old, next, all: i.replaceAll === true || i.replace_all === true }
+    : undefined
+}
+// An edit compiled onto the bytes it was made from (build-log's patch rule: the bytes must be located exactly
+// once, or every one of them under replaceAll). undefined when they are not: the version is then known only by
+// its derivation, never guessed.
+const compileEdit = (bytes: string, e: NonNullable<ReturnType<typeof editOf>>) => {
+  const k = bytes.split(e.old).length - 1
+  if (k === 0 || (k > 1 && !e.all)) return undefined
+  return e.all ? bytes.split(e.old).join(e.next) : bytes.replace(e.old, () => e.next)
+}
+// A read result as file bytes: a "Read file …, lines a-b" header and "N: " / "N| " line numbers are the tool's
+// rendering, not the file. Only a read from line 1 is the file's head; a later span is kept as an observation.
+const readBytes = (text: string) => {
+  const lines = text.split("\n")
+  const header = /^(Read file|<file>|<path>)/i.test(lines[0] ?? "") ? lines.shift() : undefined
+  const numbered = lines.length > 0 && lines.filter((l) => l.length > 0).every((l) => /^\s*\d+(?:: |:$|\| |\|$|\t)/.test(l))
+  const body = numbered ? lines.map((l) => l.replace(/^\s*\d+(?:: ?|\| ?|\t)/, "")).join("\n") : lines.join("\n")
+  const from = header ? Number(/lines (\d+)-/.exec(header)?.[1] ?? 1) : 1
+  return { body, whole: from === 1 }
+}
+const stableJson = (v: unknown): string =>
+  v && typeof v === "object"
+    ? Array.isArray(v)
+      ? `[${v.map(stableJson).join(",")}]`
+      : `{${Object.keys(v as object)
+          .sort()
+          .map((k) => `${JSON.stringify(k)}:${stableJson((v as Record<string, unknown>)[k])}`)
+          .join(",")}}`
+    : JSON.stringify(v) ?? "null"
+const failed = (text: string | undefined) => text !== undefined && /^\s*(error|failed|not found|no such file)/i.test(text.slice(0, 80))
+
+// The act of a tool call, typed mechanically from the ACT (which tool, on what), never from the content.
+const actOf = (name: string, input: unknown): { op: StepOp; addr: string; file: boolean } => {
+  const path = pathOf(input)
+  const content = (input as Record<string, unknown> | undefined)?.content
+  if (path && /edit|patch|replace/i.test(name)) return { op: "SYN", addr: path, file: true }
+  if (path && /write|create/i.test(name) && typeof content === "string") return { op: "INS", addr: path, file: true }
+  if (path && /read|view|cat/i.test(name)) return { op: "SIG", addr: path, file: true }
+  const addr = `${name} ${squash(stableJson(input ?? {}), 300)}`
+  if (/bash|shell|exec|run|test|command/i.test(name)) return { op: "EVA", addr, file: false }
+  if (/grep|glob|list|search|find|fetch|snip|perceive|read|view/i.test(name)) return { op: "SEG", addr, file: false }
+  return { op: "NUL", addr, file: false }
+}
+
+// THE LOG: the current turn's steps, each typed, addressed, and linked to the steps it was made from.
+export const stepLog = (messages: Msg[]): StepLog | undefined => {
+  const s = messages.findLastIndex(isAsk)
+  if (s < 0) return undefined
+  const starts: number[] = []
+  for (let i = s + 1; i < messages.length; i++) if (messages[i].role === "assistant") starts.push(i)
+  if (starts.length === 0) return undefined
+  const head = messages[s].id ?? String(s)
+  const salt = hash36(head)
+  const state = new Map<string, StepFact>()
+  const acts = starts.map((start, k): StepAct => {
+    const n = k + 1
+    const end = starts[k + 1] ?? messages.length
+    const part = messages.slice(start, end)
+    const results = new Map<string, string | undefined>()
+    for (const m of part) for (const p of m.content) if (p.type === "tool-result") results.set(p.id, textOfResult(p) ?? clip(p.result, 1_000_000))
+    const deps = new Set<number>()
+    const acts: StepAct["acts"] = []
+    for (const m of part)
+      for (const p of m.content) {
+        if (p.type !== "tool-call") continue
+        const { op, addr, file } = actOf(p.name, p.input)
+        const out = results.get(p.id)
+        const ok = out !== undefined && !failed(out)
+        const prior = state.get(addr)
+        const from = prior?.version
+        let next: StepFact | undefined
+        if (op === "SYN") {
+          // made FROM the version it edits: the step that produced that version is a dependency
+          if (prior) deps.add(prior.by)
+          const e = editOf(p.input)
+          if (ok) {
+            const bytes = prior?.bytes !== undefined && e ? compileEdit(prior.bytes, e) : undefined
+            const version = bytes !== undefined ? versionOf(bytes) : `${from ?? "?"}+${n}`
+            next = { addr, file, version, bytes, by: n, seen: [], made: [...(prior?.made ?? []), n] }
+          }
+        } else if (op === "INS" && ok) {
+          const bytes = String((p.input as Record<string, unknown>).content)
+          next = { addr, file, version: versionOf(bytes), bytes, by: n, seen: [], made: [...(prior?.made ?? []), n] }
+        } else if (ok && out !== undefined && op !== "NUL") {
+          const { body, whole } = file ? readBytes(out) : { body: out, whole: true }
+          const version = versionOf(body)
+          // the latest observation produces the version (a re-read of the same bytes moves `by`, so the
+          // chain keeps the newest copy and the older ones can retire)
+          next = {
+            addr,
+            file,
+            version,
+            bytes: whole ? body : undefined,
+            by: n,
+            seen: prior && prior.version === version ? [...prior.seen, n] : [n],
+            made: prior?.made ?? [],
+          }
+        }
+        if (next) (state.delete(addr), state.set(addr, next))
+        acts.push({ op, name: p.name, addr, file, from, to: next?.version, ok })
+      }
+    const raw = JSON.stringify(part.map((m) => ({ role: m.role, content: m.content })))
+    const said = part[0].content.flatMap((p) => (p.type === "text" ? [p.text] : [])).join(" ")
+    const result = [...results.values()][0] ?? ""
+    const what = acts.length
+      ? acts.map((a) => `${a.op} ${a.name} ${a.file ? a.addr : squash(a.addr.slice(a.name.length + 1), 100)}${a.from && a.to && a.from !== a.to ? ` @${a.from}→@${a.to}` : a.to ? ` @${a.to}` : ""}${a.ok ? "" : " (failed)"}`).join("; ")
+      : "(no tool)"
+    return {
+      n,
+      id: messages[start].id ?? `${head}#${n}`,
+      start,
+      end,
+      acts,
+      deps: [...deps].sort((a, b) => a - b),
+      handle: `rs${n.toString(36)}${salt}`,
+      raw,
+      line: `${said ? `said "${squash(said, 100)}" · ` : ""}${what} → ${squash(result, 120)}`,
+    }
+  })
+  return { s, head, first: starts[0], acts, state }
+}
+
+// THE CHAIN: the steps the current work depends on. Roots: the frontier (the last FOLD_FRONTIER steps), the
+// latest successful edit or write (the file version being worked on), and the latest run (the result the next
+// step is made from). Closed over `deps`, so an edit keeps the read it came from, and a chain of edits keeps
+// the read at its root.
+export const neededSteps = (log: StepLog, frontier = frontierSteps()) => {
+  const total = log.acts.length
+  const roots = new Set<number>()
+  for (let n = Math.max(1, total - Math.max(1, frontier) + 1); n <= total; n++) roots.add(n)
+  const made = log.acts.findLast((a) => a.acts.some((x) => (x.op === "SYN" || x.op === "INS") && x.ok))
+  if (made) roots.add(made.n)
+  const ran = log.acts.findLast((a) => a.acts.some((x) => x.op === "EVA"))
+  if (ran) roots.add(ran.n)
+  const need = new Set<number>()
+  const visit = (n: number) => {
+    if (need.has(n)) return
+    need.add(n)
+    for (const d of log.acts[n - 1]?.deps ?? []) visit(d)
+  }
+  for (const r of roots) visit(r)
+  return need
+}
+
+// The projection rendered: everything before the turn's first step unchanged (the ask is never edited), then
+// each step not retired, and each projection event right after the step it anchors to.
+const eventMessage = (head: string, ev: ProjectionEvent) =>
+  Message.make({ id: `fold-proj-${head}-${ev.v}`, role: "system", content: [{ type: "text" as const, text: ev.text }] })
+export const renderProjection = (messages: Msg[], log: StepLog, proj: Projection, store?: Map<string, string>, floor = 2_000): Msg[] => {
+  const retired = new Set(proj.retired)
+  const clipped = new Set(proj.clips)
+  // A clip is decided once, when the result is superseded (at a fold), and kept: the same part is the same
+  // bytes on every later request, so the cache never breaks because space ran out.
+  const clipMsg = (m: Msg): Msg => {
+    if (clipped.size === 0 || !m.content.some((p) => p.type === "tool-result" && clipped.has(p.id))) return m
+    return {
+      ...m,
+      content: m.content.map((p) => {
+        if (p.type !== "tool-result" || !clipped.has(p.id)) return p
+        const text = foldable(p)?.text
+        if (text === undefined || text.length <= floor) return p
+        const handle = `rc${hash36(text)}${text.length.toString(36)}`
+        store?.set(handle, text)
+        return { ...p, result: { type: "text" as const, value: clipToFit(text, floor, handle) } }
+      }),
+    } as Msg
+  }
+  const anchored = new Map<string, ProjectionEvent[]>()
+  for (const ev of proj.events) anchored.set(ev.anchor, [...(anchored.get(ev.anchor) ?? []), ev])
+  const out = messages.slice(0, log.first)
+  for (const a of log.acts) {
+    // a retired step leaves the window, but an instruction the harness placed inside its span stays (it is not
+    // the step's work, and a system update is never the fold's to drop)
+    if (!retired.has(a.id)) out.push(...messages.slice(a.start, a.end).map(clipMsg))
+    else out.push(...messages.slice(a.start, a.end).filter((m) => m.role === "system"))
+    for (const ev of anchored.get(a.id) ?? []) out.push(eventMessage(log.head, ev))
+  }
+  return out
+}
+
+// One projection event: the receipts of the steps it retires, the observed state that changed since the last
+// event (the latest version of an entry wins), and the current bytes of files not visible verbatim elsewhere.
+const projectionText = (log: StepLog, proj: Projection, batch: StepAct[], keptAfter: Set<number>, viewMax: number) => {
+  const v = proj.events.length + 1
+  const last = log.acts.length
+  const facts: Record<string, string> = {}
+  const changed: StepFact[] = []
+  for (const o of log.state.values()) {
+    const sig = `${o.version}|${o.seen.join(",")}|${o.made.join(",")}`
+    facts[o.addr] = sig
+    if (proj.facts[o.addr] !== sig) changed.push(o)
+  }
+  // where the current bytes of an entry already ride verbatim: in the kept step that observed or wrote them
+  // (an edit's compiled bytes ride nowhere, so they go in the view)
+  const shownIn = (o: StepFact) => {
+    if (!keptAfter.has(o.by)) return undefined
+    const act = log.acts[o.by - 1]?.acts.find((x) => x.addr === o.addr && x.to === o.version)
+    return act && act.op !== "SYN" ? o.by : undefined
+  }
+  const view: Array<[string, string]> = []
+  let used = 0
+  for (const o of [...changed].reverse()) {
+    if (!o.file || o.bytes === undefined || shownIn(o)) continue
+    if (!(viewMax > 0) || (used + o.bytes.length > viewMax && view.length)) continue
+    view.push([`${o.addr} @${o.version}`, o.bytes.slice(0, viewMax)])
+    used += o.bytes.length
+  }
+  view.reverse()
+  const inView = new Set(view.map(([k]) => k))
+  const stateLine = (o: StepFact) => {
+    const shown = shownIn(o)
+    const name = o.file ? o.addr : `${o.addr.slice(0, o.addr.indexOf(" "))} \`${squash(o.addr.slice(o.addr.indexOf(" ") + 1), 160)}\``
+    const plural = (k: number[]) => (k.length > 1 ? "s" : "")
+    return [
+      `- ${name} @${o.version}`,
+      o.seen.length ? `${o.file ? "read" : "observed"} at this version at step${plural(o.seen)} ${o.seen.join(", ")}` : "",
+      o.made.length ? `written or edited at step${plural(o.made)} ${o.made.join(", ")}` : "",
+      o.seen.length > 1 ? "the same bytes each time" : "",
+      shown
+        ? `current bytes shown in full in step ${shown}`
+        : inView.has(`${o.addr} @${o.version}`)
+          ? "current bytes below"
+          : o.file && o.bytes === undefined
+            ? "current bytes not held here (an edit could not be compiled); read the file for them"
+            : `snip rs${o.by.toString(36)}${hash36(log.head)} returns the step that holds them`,
+    ]
+      .filter(Boolean)
+      .join(" · ")
+  }
+  // MECHANICAL PROSIFICATION: the model is handed what it could have written itself, plain working notes in
+  // its own voice, never EOT notation or fold markup. Deterministic, rule-based, no model; the version number
+  // is the only structure, and a later version replaces an earlier one entry by entry.
+  const text = [
+    `Working notes (version ${v}${v > 1 ? `, replacing version ${v - 1}` : ""}), as of step ${last}. Steps ${batch.map((a) => a.n).join(", ")} are summarized below; I can get the exact text of any of them with snip and its handle.`,
+    ...batch.map((a) => `Step ${a.n} (${a.handle})${a.deps.length ? `, built on step ${a.deps.join(", ")}` : ""}: ${a.line}`),
+    ...(changed.length ? [`What I have already looked at or changed in this task, at the latest version (no need to read these again unless the file changed on disk):`, ...changed.map(stateLine)] : []),
+    ...(view.length ? [`Current file contents:`, ...view.map(([k, bytes]) => `--- ${k} ---\n${bytes}`)] : []),
+  ].join("\n")
+  return { text, facts }
+}
+
+// THE FOLD: the projection for this request. Under the gate the held projection is rendered as it stands (the
+// request is the previous one plus the new step). Over it, ONE new event retires every live step the chain does
+// not need; only when that cannot fit are needed steps retired too, oldest first (the frontier's newest step
+// never), with their current bytes carried in the event. undefined when the turn has no steps.
+export const projectSteps = (messages: Msg[], sizes: { tools: number; system: number }, prev: Projection | undefined, store?: Map<string, string>) => {
+  const log = stepLog(messages)
+  if (!log) return undefined
+  const held: Projection = prev && prev.head === log.head ? prev : { head: log.head, retired: [], events: [], facts: {}, clips: [] }
+  const limit = windowLimit(sizes.tools)
+  if (!(limit > 0) || !Number.isFinite(limit)) return undefined
+  // The window as it will be sent: with the cap's clips (measured: remembering clips as projection state, or
+  // sizing raw so retirement replaces clipping, both cost more cache breaks on the live replay than this).
+  const size = (out: Msg[]) => {
+    const trial = structuredClone(out)
+    capContext(trial, [{ text: "x".repeat(sizes.system) }], { fixed: sizes.tools, clipOnly: true })
+    return contextChars(trial) + sizes.system
+  }
+  const gate = limit
+  const current = renderProjection(messages, log, held)
+  if (size(current) <= gate) return { messages: current, proj: held, log, event: undefined, clipped: false }
+  const retired = new Set(held.retired)
+  const live = log.acts.filter((a) => !retired.has(a.id))
+  const need = neededSteps(log)
+  const newest = log.acts.at(-1)!.n
+  const free = live.filter((a) => !need.has(a.n))
+  const forced = live.filter((a) => need.has(a.n) && a.n !== newest)
+  const attempt = (batch: StepAct[], view: number) => {
+    const gone = new Set(batch.map((a) => a.id))
+    const keptAfter = new Set(log.acts.filter((a) => !retired.has(a.id) && !gone.has(a.id)).map((a) => a.n))
+    const { text, facts } = projectionText(log, held, batch, keptAfter, view)
+    const anchorN = Math.max(...batch.map((a) => a.n), ...held.events.map((ev) => log.acts.find((a) => a.id === ev.anchor)?.n ?? 0))
+    const proj: Projection = {
+      head: log.head,
+      retired: [...held.retired, ...batch.map((a) => a.id)],
+      events: [...held.events, { v: held.events.length + 1, anchor: log.acts[anchorN - 1].id, text }],
+      facts: { ...held.facts, ...facts },
+      clips: held.clips,
+    }
+    return { proj, out: renderProjection(messages, log, proj) }
+  }
+  // Hysteresis, as in the epoch fold: an overflow retires down to a low-water mark (`low` of the room above the
+  // injected system), so many appended steps fit before the next event. Chain-needed steps are retired only
+  // when the free ones cannot get there, oldest first.
+  const low = 0.6
+  const target = sizes.system + low * (limit - sizes.system)
+  let best: ReturnType<typeof attempt> | undefined
+  let fits: ReturnType<typeof attempt> | undefined
+  search: for (const goal of [target, gate]) {
+    for (let extra = 0; extra <= (goal === target ? 0 : forced.length); extra++) {
+      const batch = [...free, ...forced.slice(0, extra)].sort((a, b) => a.n - b.n)
+      if (batch.length === 0) continue
+      for (const view of [viewCap(), 8_000, 2_000, 0]) {
+        best = attempt(batch, view)
+        if (size(best.out) <= goal) {
+          fits = best
+          break search
+        }
+      }
+    }
+  }
+  best = fits ?? best
+  if (!best) return { messages: current, proj: held, log, event: undefined, clipped: false }
+  const batchIds = new Set(best.proj.retired.slice(held.retired.length))
+  if (store) for (const a of log.acts) if (batchIds.has(a.id)) store.set(a.handle, a.raw)
+  return { messages: best.out, proj: best.proj, log, event: best.proj.events.at(-1), clipped: false }
+}
+
 const clipToFit = (text: string, keep: number, handle?: string) =>
   text.length <= keep
     ? text
@@ -1117,6 +1468,8 @@ export const Plugin = define({
     const windows = new Map<string, { before: number; after: number; tools: number }>()
     // The held step-fold cut per session (prefix-stable epochs, see stableStepCut).
     const stepEpochs = new Map<string, StepEpoch>()
+    // The append-only step projection per session (see projectSteps): which steps are retired, and its events.
+    const stepProjections = new Map<string, Projection>()
     const trailDone = new Map<string, Map<string, string>>()
     const reopenCounts = new Map<string, number>()
     const lastCall = new Map<string, number>()
@@ -1549,12 +1902,28 @@ export const Plugin = define({
         // THE GATE first. Default: the prefix-stable epoch (stableStepCut). FOLD_STABLE=0 restores the
         // per-request fold (most steps that fit, recomputed every request), kept for the A/B.
         const stable = process.env.FOLD_STABLE !== "0"
-        const epoch = stable
+        // Default: the append-only projection (projectSteps) — the head is never edited, each fold appends an
+        // event, and the dependency chain picks what stays verbatim. FOLD_PROJECTION=0 keeps the epoch fold.
+        const projected =
+          stable && process.env.FOLD_PROJECTION !== "0"
+            ? projectSteps(event.messages, { tools: toolChars(event.tools), system: systemChars(event.system) }, stepProjections.get(event.sessionID), trailStore)
+            : undefined
+        if (projected) {
+          stepProjections.set(event.sessionID, projected.proj)
+          event.messages.splice(0, event.messages.length, ...projected.messages)
+          if (projected.proj.events.length) {
+            folded = true
+            proj += `${proj ? "\n" : ""}${projected.proj.events.map((ev) => ev.text).join("\n")}` // L1: disclose the events
+          }
+        }
+        const epoch = stable && !projected
           ? stableStepCut(event.messages, { tools: toolChars(event.tools), system: systemChars(event.system) }, stepEpochs.get(event.sessionID))
           : undefined
         if (epoch) stepEpochs.set(event.sessionID, epoch)
         const stepCount = event.messages.slice(event.messages.findLastIndex((m) => m.role === "user" && m.content.some((p) => p.type === "text")) + 1).filter((m) => m.role === "assistant").length
-        const gated = stable
+        const gated = projected
+          ? undefined
+          : stable
           ? epoch && epoch.cut > 0
             ? { keep: stepCount - epoch.cut, plan: stepPlan(event.messages, stepCount - epoch.cut, epoch.view) }
             : undefined
