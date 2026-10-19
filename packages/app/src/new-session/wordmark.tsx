@@ -9,8 +9,8 @@ export function NewSessionWordmark() {
       class="pointer-events-none mx-auto w-full max-w-[720px] text-v2-background-bg-inverse"
     >
       <div data-slot="wordmark-reveal" class="relative mx-auto w-4/5">
-        <Wordmark class="block aspect-[234/42] w-full opacity-[0.16]" />
-        <Wordmark class="wordmark-shimmer absolute inset-0 aspect-[234/42] w-full" />
+        <Wordmark class="block aspect-[254/48] w-full opacity-[0.16]" />
+        <Wordmark class="wordmark-shimmer absolute inset-0 aspect-[254/48] w-full" />
       </div>
     </div>
   )

@@ -58,7 +58,7 @@ export function figuresIn(t) {
     if (m.index > 0 && /[A-Za-z0-9:.]/.test(t[m.index - 1])) continue;
     const cur = m[1], num = parseFloat(m[2].replace(/,/g, '')), mult = m[4]; let unit = m[6] || '';
     if (!cur && !mult && !m[6] && /^\d{4}$/.test(m[2]) && num >= 1000 && num <= 2099) continue;   // a BARE year is a date, not a figure.
-    // LOCAL PATCH (openfold): upstream dropped a 4-digit number 1000-2099 even when a unit word followed, so
+    // LOCAL PATCH (foldcode): upstream dropped a 4-digit number 1000-2099 even when a unit word followed, so
     // "1200 cameras" vanished as if it were a year. It is kept now — but tagged `yearLike` (it may be a count OR a
     // year plus a noun, "2026 report"), UNLESS comma-formatted or carrying a currency/multiplier, which a year
     // never is. The terrain reports a yearLike collision as a NOMINATION, never as an asserted contradiction.

@@ -16,9 +16,9 @@ describe("repeatedStep", () => {
   test("detects the same shell command re-run with different output plumbing", () => {
     expect(
       repeatedStep([
-        shell("cd openfold && node openfold.test.js 2>&1 | grep -E '^#'"),
-        shell("cd openfold && node openfold.test.js > /tmp/of.txt 2>&1; echo EXIT; grep -c 'not ok' /tmp/of.txt"),
-        shell("cd openfold && node openfold.test.js | tail -70"),
+        shell("cd foldcode && node foldcode.test.js 2>&1 | grep -E '^#'"),
+        shell("cd foldcode && node foldcode.test.js > /tmp/of.txt 2>&1; echo EXIT; grep -c 'not ok' /tmp/of.txt"),
+        shell("cd foldcode && node foldcode.test.js | tail -70"),
       ]),
     ).toBe(true)
   })

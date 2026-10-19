@@ -1,7 +1,7 @@
 #!/bin/sh
 # fold-door.sh — keep the fold's ground-producer alive for the app.
 #
-# The desktop app ("openfold") grounds nothing by itself. Every answer's provenance
+# The desktop app ("foldcode") grounds nothing by itself. Every answer's provenance
 # (the `fold facing` row: [S#] grounded, [M] the mouth's own, the standing cell) is computed by
 # the fold door — khora's opencode doorway, mounted on the proxy at FOLD_URL, default
 # http://127.0.0.1:11436. With the door down the app FAILS OPEN into plain opencode and grounds

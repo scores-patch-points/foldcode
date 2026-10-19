@@ -2,7 +2,7 @@ export * as SessionRunnerRepeatedStep from "./repeated-step.js"
 
 // A weak or sloppy model can wedge a turn by issuing the same tool call again and
 // again without acting on the result it already holds (measured 2026-10-17: a
-// supervising model re-ran `node openfold.test.js` ~16 times, only cosmetic
+// supervising model re-ran `node foldcode.test.js` ~16 times, only cosmetic
 // changes to the output plumbing, while the failing assertions sat in its own
 // prior tool result). Tools then stay on and the step allowance never trips, so
 // nothing in the runner ends the turn. This module names the loop so the runner

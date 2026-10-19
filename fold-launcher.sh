@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# fold-launcher.sh — macOS only: make "openfold" a double-clickable app.
+# fold-launcher.sh — macOS only: make "foldcode" a double-clickable app.
 #
-# Builds ~/Applications/openfold.app, whose launcher brings the running desktop dev app
+# Builds ~/Applications/foldcode.app, whose launcher brings the running desktop dev app
 # to the front or starts the dev stack (`bun run dev` in packages/desktop) from this checkout. If
 # the Dock holds a direct shortcut to the cached "OpenCode Dev.app" (which opens a bare Electron
 # "how to run an app" screen), that shortcut is repointed at the launcher. Safe to re-run.
@@ -10,8 +10,8 @@ set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 bun_bin="$(command -v bun)"
-app="${FOLD_LAUNCHER_DIR:-$HOME/Applications}/openfold.app"
-icon="$here/brand/app-icon/openfold-app-icon-dark-1024.png"
+app="${FOLD_LAUNCHER_DIR:-$HOME/Applications}/foldcode.app"
+icon="$here/brand/app-icon/foldcode-app-icon-dark-1024.png"
 
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
@@ -20,8 +20,8 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-  <key>CFBundleName</key><string>openfold</string>
-  <key>CFBundleDisplayName</key><string>openfold</string>
+  <key>CFBundleName</key><string>foldcode</string>
+  <key>CFBundleDisplayName</key><string>foldcode</string>
   <key>CFBundleIdentifier</key><string>ai.opencode.fold.launcher</string>
   <key>CFBundleExecutable</key><string>launcher</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
@@ -38,12 +38,12 @@ cat > "$app/Contents/MacOS/launcher" <<LAUNCHER
 set -u
 REPO="$here"
 BUN="$bun_bin"
-LOCK="/tmp/openfold-launch.lock"
+LOCK="/tmp/foldcode-launch.lock"
 PIDFILE="\$LOCK/pid"
-LOG="\$HOME/Library/Logs/openfold-launch.log"
+LOG="\$HOME/Library/Logs/foldcode-launch.log"
 export PATH="$(dirname "$bun_bin"):/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
-notify() { osascript -e "display notification \\"\$1\\" with title \\"openfold\\"" >/dev/null 2>&1 || true; }
+notify() { osascript -e "display notification \\"\$1\\" with title \\"foldcode\\"" >/dev/null 2>&1 || true; }
 log() { print -r -- "\$(date '+%Y-%m-%d %H:%M:%S') \$1" >> "\$LOG" 2>/dev/null || true; }
 
 # The dev app's Electron main process, matched on its own path — not a shell that merely names it.
@@ -120,7 +120,7 @@ for it in d.get("persistent-apps", []):
         # A fresh file-data: the Dock follows the saved bookmark over the URL, so the old one must go.
         t["file-data"] = {"_CFURLString": "file://" + urllib.parse.quote(app) + "/", "_CFURLStringType": 15}
         t.pop("book", None)
-        t["file-label"] = "openfold"
+        t["file-label"] = "foldcode"
         n += 1
 if n:
     p = subprocess.run(["defaults", "import", "com.apple.dock", "-"], input=plistlib.dumps(d))

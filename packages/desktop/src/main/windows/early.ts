@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto"
+import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { app, BrowserWindow, screen, shell } from "electron"
+import { DEFAULT_PROJECT_DIR } from "../constants"
 import { resolveExternalURL } from "../files/external-url"
 import { windowArguments } from "./bootstrap"
 import { WINDOW_IDS_KEY } from "../storage/keys"
@@ -33,7 +35,22 @@ const displays = {
 // main process has loaded. The frame options mirror windowAppearance(); the persisted background
 // colour stands in for the theme until the renderer applies it, so the window is on screen while the
 // bundle, the layers and the renderer boot. restoreWindows() adopts it through takeEarlyWindow().
+// Runs before the layers spawn the background service, so the service and the CLI under it
+// inherit the default project directory as both cwd and PWD. Best effort: if the directory
+// cannot be reached yet (the Documents grant has not been answered), the app stays where it was
+// and logs; the next launch after the consent lands here.
+export function adoptDefaultProject() {
+  try {
+    fs.mkdirSync(DEFAULT_PROJECT_DIR, { recursive: true })
+    process.chdir(DEFAULT_PROJECT_DIR)
+    process.env.PWD = DEFAULT_PROJECT_DIR
+  } catch (error) {
+    console.warn("default project directory unavailable", DEFAULT_PROJECT_DIR, error)
+  }
+}
+
 export function createEarlyWindow() {
+  adoptDefaultProject()
   const ids = getStore().get(WINDOW_IDS_KEY)
   const id = Array.isArray(ids) && typeof ids[0] === "string" ? ids[0] : randomUUID()
   const root = path.dirname(fileURLToPath(import.meta.url))
@@ -48,7 +65,7 @@ export function createEarlyWindow() {
     height: state.height,
     show: true,
     autoHideMenuBar: true,
-    title: "openfold",
+    title: "foldcode",
     icon: path.join(icons, `icon.${process.platform === "win32" ? "ico" : "png"}`),
     backgroundColor: storedBackgroundColor(),
     ...(process.platform === "darwin" ? { titleBarStyle: "hidden" as const, trafficLightPosition: { x: 14, y: 14 } } : {}),

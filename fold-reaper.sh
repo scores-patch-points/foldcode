@@ -56,7 +56,7 @@ age_seconds() {
 
 # The staged CLI dirs the running apps would adopt; their services must survive a boot.
 current_stages() {
-  for app in "${FOLD_APP_DIR:-/Applications}/openfold.app" "$HOME/Applications/openfold.app" /Applications/openfold.app; do
+  for app in "${FOLD_APP_DIR:-/Applications}/foldcode.app" "$HOME/Applications/foldcode.app" /Applications/foldcode.app; do
     v=$(cat "$app/Contents/Resources/opencode-cli.version" 2>/dev/null || true)
     [ -n "$v" ] && printf '%s\n' "$v"
   done
@@ -67,7 +67,7 @@ clients_on() { lsof -nP -iTCP:"$1" -sTCP:ESTABLISHED 2>/dev/null | tail -n +2 | 
 service_cmd() {
   c=$(ps -o command= -p "$1" 2>/dev/null || true)
   case "$c" in
-    *opencode*" serve --service"*|*openfold*" serve --service"*) printf '%s' "$c" ;;
+    *opencode*" serve --service"*|*foldcode*" serve --service"*) printf '%s' "$c" ;;
   esac
 }
 

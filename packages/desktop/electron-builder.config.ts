@@ -177,7 +177,7 @@ const getBase = (appId: string): Configuration => {
       target: ["dmg", "zip"],
     },
     protocols: {
-      name: "openfold",
+      name: "foldcode",
       schemes: ["opencode"],
     },
     win: {
@@ -221,7 +221,7 @@ export function getConfig() {
       return {
         ...base,
         appId,
-        productName: "openfold",
+        productName: "foldcode",
         // A local dev build has no Developer ID and is signed ad-hoc (identity "-"). Under the
         // hardened runtime the nested Electron Framework then carries a different Team ID than the
         // main executable, so the app must disable library validation or it dies on launch with
@@ -242,8 +242,8 @@ export function getConfig() {
       return {
         ...base,
         appId,
-        productName: "openfold Beta",
-        protocols: { name: "openfold Beta", schemes: ["opencode"] },
+        productName: "foldcode Beta",
+        protocols: { name: "foldcode Beta", schemes: ["opencode"] },
         publish: {
           provider: "generic",
           url: "https://opencode.ai/update/api/beta/desktop/opencode/",
@@ -258,8 +258,8 @@ export function getConfig() {
       return {
         ...base,
         appId,
-        productName: "openfold",
-        protocols: { name: "openfold", schemes: ["opencode"] },
+        productName: "foldcode",
+        protocols: { name: "foldcode", schemes: ["opencode"] },
         publish: {
           provider: "generic",
           url: "https://opencode.ai/update/api/latest/desktop/opencode/",

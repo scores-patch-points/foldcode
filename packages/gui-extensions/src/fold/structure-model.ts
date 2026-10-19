@@ -1,4 +1,4 @@
-// The pure structure model — one model, both surfaces. The openfold app's Structure panel
+// The pure structure model — one model, both surfaces. The foldcode app's Structure panel
 // and the opencode `discover-structure` tool both call THIS, so there is one definition of
 // "what structure is here". Browser-safe: no node:fs, no network, no model. A mechanical
 // reader splits material into statements (each carrying the byte span it came from) and the

@@ -109,7 +109,7 @@ export function terrainOf(input, { key = '' } = {}) {
     // A value is yearLike only if EVERY occurrence of it is yearLike: one comma-formatted or currency occurrence
     // ("1,200 cameras") proves it is a count, not a year.
     v.yearLike = v.yearLike && !!f.yearLike;
-    // LOCAL PATCH (openfold): the EARNED referents the statement carrying this value names — the anchor the
+    // LOCAL PATCH (foldcode): the EARNED referents the statement carrying this value names — the anchor the
     // referent gate below uses to tell a real contradiction from a mere unit-string collision.
     for (const n of st.names || []) { const k = referentKey(n); if (k && earnedKeys.has(k)) v.refs.add(k); }
     if (v.at.length < 20) { const a = { ...addr(st), raw: f.raw }; a.window = windowOf(a, f.raw); v.at.push(a); }
@@ -122,7 +122,7 @@ export function terrainOf(input, { key = '' } = {}) {
     // plus a noun — so it can be NOMINATED but never ASSERTED as a contradiction. Falsifier: a false break on
     // "Metro Nashville published the 2026 report" vs "…the 2027 report" (unit "report").
     const allYearLike = vals.every(v => v.yearLike);
-    // THE REFERENT GATE (LOCAL PATCH, openfold): a unit-string collision is only a CONTRADICTION when the
+    // THE REFERENT GATE (LOCAL PATCH, foldcode): a unit-string collision is only a CONTRADICTION when the
     // differing values share a referent BOTH sources witness — "1,200 cameras" vs "1,500 cameras" about one city.
     // Two unrelated subjects that happen to share a unit ("library budget 120 dollars" vs "ticket sales 340
     // dollars") share no earned referent, so the collision is NOMINATED, never asserted. This is the mechanical
@@ -253,7 +253,7 @@ export function terrainOf(input, { key = '' } = {}) {
   const paradigmGroups = [...groups.values()].filter(g => g.length >= 2).map(ids => ({ docs: ids.sort(), shared: sharedBy(ids), label: sharedBy(ids).slice(0, 3).join(' · ') })).sort((a, b) => b.docs.length - a.docs.length);
   const stray = docs.filter(d => ![...groups.values()].some(g => g.length >= 2 && g.includes(d.id))).map(d => d.id);
   // A BREAK is a referent-anchored contradiction: same unit, differing values, AND a shared earned referent
-  // (LOCAL PATCH, openfold). A bare unit collision with no shared referent is `nominated`, reported but never
+  // (LOCAL PATCH, foldcode). A bare unit collision with no shared referent is `nominated`, reported but never
   // called a contradiction — the identity-by-appearance move FOLD-CONSTITUTION II.7 refuses.
   const breaks = [
     ...fieldRows.filter(f => f.contradicts).map(f => ({

@@ -1,9 +1,9 @@
-# openfold — the routing fork's contract
+# foldcode — the routing fork's contract
 
-openfold is **opencode** (`anomalyco/opencode`, MIT) — the tree is
+foldcode is **opencode** (`anomalyco/opencode`, MIT) — the tree is
 byte-for-byte upstream — plus two things: the doorway plugin that keeps the
 frontier's context to precisely what each ask needs and records every turn so
-the fold learns, and the app identity (the name *openfold*, the fold's icon,
+the fold learns, and the app identity (the name *foldcode*, the fold's icon,
 and the README lockup). The models are upstream's, unpinned; the CLI is
 upstream's — this is not the abandoned white-label. Syncing is a rebase, and
 the fork's honesty is one diff check.
@@ -167,7 +167,7 @@ the doorway (`packages/core/src/plugin/fold.ts`, its registration in
 mind and its mount, the doorway's web search test
 (`packages/core/test/fold-websearch.test.ts`), the scripts (`UPSTREAM.md`,
 `fold-sync.sh`, `fold-install.sh`, `fold-app.sh`, `fold-launcher.sh`,
-`fold-door.sh`), and the app identity — the openfold name and the fold's icon
+`fold-door.sh`), and the app identity — the foldcode name and the fold's icon
 across the READMEs, `brand/`, the app/ui i18n bundles, the favicons/icons, and
 the desktop/app shells — or if the delta deletes any upstream line outside the
 two reviewed exemptions (`settings/model.tsx` and the app-identity surface). The

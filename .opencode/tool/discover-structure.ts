@@ -4,7 +4,7 @@ import { readdirSync, statSync } from "node:fs"
 import { join, extname, basename, resolve } from "node:path"
 import { structureOf, type Source } from "../../packages/gui-extensions/src/fold/structure-model"
 
-// discover-structure — the agent's door onto the ONE pure structure model the openfold app's
+// discover-structure — the agent's door onto the ONE pure structure model the foldcode app's
 // Structure panel also uses (packages/gui-extensions/src/fold/structure-model). Point it at
 // material and read back the nine registers the fold MEASURES — model-free. This file adds
 // only the parts a dev tool needs and a browser cannot have: reading a path off disk, asking

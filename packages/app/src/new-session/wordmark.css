@@ -4,7 +4,9 @@
   .wordmark-shimmer {
     --icon-base: white;
     --icon-strong-base: white;
+    /* The block insets vanish; the wordmark's "code" half still lights up with the sweep. */
     --icon-weak-base: transparent;
+    --wordmark-code: white;
 
     /* Blend above the base logo's opacity so the sweep only adds light in either theme. */
     color: white;

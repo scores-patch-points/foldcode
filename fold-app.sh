@@ -22,17 +22,17 @@ command -v bun >/dev/null || { echo "bun is required: https://bun.sh" >&2; exit 
 
 desktop="packages/desktop"
 
-# Prefer an already-built fold CLI (fold-install.sh leaves one under ~/.cache/openfold);
+# Prefer an already-built fold CLI (fold-install.sh leaves one under ~/.cache/foldcode);
 # build it with fold-install.sh on first use.
 cli_dir=""
-for candidate in "${FOLD_APP_CLI:-}" "$HOME"/.cache/openfold/cli-*/; do
+for candidate in "${FOLD_APP_CLI:-}" "$HOME"/.cache/foldcode/cli-*/; do
   [ -n "$candidate" ] || continue
   [ -x "${candidate%/}/bin/opencode" ] && cli_dir="${candidate%/}" && break
 done
 if [ -z "$cli_dir" ]; then
   echo "no built fold CLI found; running fold-install.sh"
   ./fold-install.sh
-  for candidate in "$HOME"/.cache/openfold/cli-*/; do
+  for candidate in "$HOME"/.cache/foldcode/cli-*/; do
     [ -x "${candidate%/}/bin/opencode" ] && cli_dir="${candidate%/}" && break
   done
 fi
@@ -55,7 +55,7 @@ codesign --force --sign - "$desktop/resources/opencode-cli"
 echo "packaging (electron-builder)"
 ( cd "$desktop" && CSC_IDENTITY_AUTO_DISCOVERY=false bun run package:mac )
 
-app="$desktop/dist/mac-arm64/openfold.app"
+app="$desktop/dist/mac-arm64/foldcode.app"
 [ -d "$app" ] || { echo "packaging produced no app at $app" >&2; exit 1; }
 bundled="$(cat "$app/Contents/Resources/opencode-cli.version" 2>/dev/null || echo unknown)"
 [ "$bundled" = "$version" ] || { echo "bundled CLI version $bundled != fold CLI $version" >&2; exit 1; }
@@ -65,7 +65,7 @@ echo "confirmed bundled fold CLI: $bundled"
 # instance (a crash, a kill, or a rebuild that replaced the running bundle).
 "$here/fold-reaper.sh" reap || true
 
-dest="${FOLD_APP_DIR:-/Applications}/openfold.app"
+dest="${FOLD_APP_DIR:-/Applications}/foldcode.app"
 echo "installing -> $dest"
 rm -rf "$dest"
 ditto "$app" "$dest"

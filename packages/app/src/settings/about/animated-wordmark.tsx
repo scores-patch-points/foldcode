@@ -1,9 +1,9 @@
 import { createEffect, For, on, onCleanup } from "solid-js"
 import { createStore } from "solid-js/store"
 
-const target = ["o", "p", "e", "n", "f", "o", "l", "d"] as const
+const target = ["f", "o", "l", "d", "c", "o", "d", "e"] as const
 
-const choices = ["o", "p", "e", "n", "f", "l", "d"] as const
+const choices = ["f", "o", "l", "d", "c", "e"] as const
 
 export function AnimatedWordmark(props: { active: boolean }) {
   const [state, setState] = createStore({ letters: [...target] })
