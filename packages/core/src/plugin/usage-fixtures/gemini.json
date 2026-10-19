@@ -1,0 +1,13 @@
+{
+ "source": "foldcode/packages/ai/test/fixtures/recordings/gemini/gemini-2-5-flash-image.json",
+ "responses": [
+  {
+   "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse",
+   "status": 200,
+   "headers": {
+    "content-type": "text/event-stream"
+   },
+   "body": "data: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"jiggling restroom prison\"}],\"role\": \"model\"},\"finishReason\": \"STOP\",\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 291,\"candidatesTokenCount\": 5,\"totalTokenCount\": 402,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 33},{\"modality\": \"IMAGE\",\"tokenCount\": 258}],\"thoughtsTokenCount\": 106,\"serviceTier\": \"standard\"},\"modelVersion\": \"gemini-2.5-flash\",\"responseId\": \"p9wMarTSBZy3_uMPvM_bGA\"}\r\n\r\n"
+  }
+ ]
+}
