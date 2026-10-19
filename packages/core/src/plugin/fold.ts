@@ -365,6 +365,12 @@ export const FOLD_LEGEND = [
   "  <fold-memory>    standing facts about the operator, only when this ask bears on them.",
   "  <fold-commons>   what other agents on this task have settled.",
   "  <fold-mechanical>/<fold-said>  the door's firewall: what the system watched vs what a model wrote.",
+  "  <fold-lane>      how the door classified THIS ask: its lane (II.9) and the language leg. A",
+  "                   `register` lane means phrase, never reason to a fact; `mechanical` is settled;",
+  "                   `grounding: full` (eng only) means every claim must bind to a byte-addressed span;",
+  "                   `structural-only` means claim binding is not guaranteed — do not present a claim as",
+  "                   bound unless a span carries it. A `shape: a demand (imperative)` line means draw only",
+  "                   the residue: a proposition with no span is [voice] or a holding, never a world fact.",
   "",
   "Settled or open (each ask line ends in one or the other):",
   "  → settled: …     DONE — that is the answer it already got, so do not re-answer or re-open it.",
@@ -962,6 +968,13 @@ const facingNote = (answer: Record<string, unknown> | undefined): string => {
         flags?: Array<{ kind?: string; detail?: string; cell?: string }>
         summary?: Record<string, number>
         standing?: { cell?: string; meaning?: string; watched?: string[] }
+        step?: {
+          output?: string
+          superseded?: string | null
+          ground_trace?: Array<{ text?: string; ground?: string; ref?: string | null }>
+          lane?: string
+          disclosure?: string
+        }
       }
     | undefined
   const sentences = Array.isArray(g?.sentences) ? g.sentences : []
@@ -979,10 +992,23 @@ const facingNote = (answer: Record<string, unknown> | undefined): string => {
   const st = g?.standing
   const where = st?.cell ? `standing · ${st.cell}${st.watched?.length ? ` — watched ${st.watched.join(", ")}` : ""}` : ""
   const flagLines = flags.map((f) => `⚠ ${String(f.kind ?? "flag")}${f.cell ? ` → ${f.cell}` : ""}: ${short(f.detail, 120)}`)
+  // THE SECOND VERSION: the model's finished text as one step — each sentence
+  // typed against the ground ([S address] = rests on a fact; [M] = the mouth's
+  // own), and, when a mechanism settled the ask, the draw the machine outweighed.
+  const step = g?.step
+  const stepLines = step
+    ? [
+        `── the ground — the model's text is one step ──`,
+        ...(step.ground_trace ?? []).map((s) =>
+          s.ground === "material" ? `[S ${String(s.ref ?? "?")}] ${short(s.text, 200)}` : `[M] ${short(s.text, 200)}`,
+        ),
+        ...(step.superseded ? [`[superseded] the machine settled this — the model's draw was: ${short(step.superseded, 200)}`] : []),
+      ]
+    : []
   if (facingLevel === "off") return ""
   if (facingLevel === "line") return [head, where].filter(Boolean).join("\n")
   if (facingLevel === "standing") return [where, ...flagLines].filter(Boolean).join("\n")
-  return [head, where, ...lines, ...flagLines].filter(Boolean).join("\n")
+  return [head, where, ...lines, ...stepLines, ...flagLines].filter(Boolean).join("\n")
 }
 
 export const Plugin = define({
@@ -1455,6 +1481,13 @@ export const Plugin = define({
           const systemPrompt = answer?.systemPrompt
           if (typeof systemPrompt === "string" && systemPrompt.length > 0)
             event.system.push({ type: "text", text: systemPrompt })
+          // The lane: the door's reason-gate classification of THIS ask plus the language
+          // leg's grounding disclosure (opencode-lane.mjs). Injected only when it arrives —
+          // the fork carries no gate logic. It tells the frontier which II.9 lane it is in
+          // and how strong the grounding is, so a creative or casual turn is not confused
+          // with a claim about the world.
+          const lane = answer?.lane
+          if (typeof lane === "string" && lane.length > 0) event.system.push({ type: "text", text: lane })
         }
         // Surf: the window must not grow per prompt. The door's ladder (figure /
         // kind / pattern, each line addressed) answers; with it down, local
@@ -2033,7 +2066,10 @@ export const Plugin = define({
         const text = typeof event.data.text === "string" ? event.data.text : ""
         if (text.trim().length < 8) return
         const workspace = yield* workspaceOf(sessionID)
-        const answer = yield* post({ event: "ground", sessionID, agent: sessionID, workspace, universe: process.env.FOLD_UNIVERSE ?? "world", text }, askTimeout)
+        const answer = yield* post(
+          { event: "ground", sessionID, agent: sessionID, workspace, universe: process.env.FOLD_UNIVERSE ?? "world", text, ask: lastAsk.get(sessionID) ?? "" },
+          askTimeout,
+        )
         const note = facingNote(answer)
         if (!note) return
         yield* ctx.session.synthetic({
