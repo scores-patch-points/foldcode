@@ -42,6 +42,7 @@ import type {
 import { Worktree } from "@opencode/schema/worktree"
 import { SessionID } from "@opencode/schema/session-id"
 import { SessionMessage } from "@opencode/schema/session-message"
+import { TokenUsage } from "@opencode/schema/token-usage"
 import {
   isFormAlreadySettledError,
   isFormNotFoundError,
@@ -1419,6 +1420,17 @@ export function createData(config: CreateDataInput) {
           (total, id) => total + (store.session.info[id]?.cost ?? 0),
           0,
         )
+      },
+      // The tokens the server recorded, summed over the family exactly as cost is: every step,
+      // compaction, and title, not only the messages the client has paged in.
+      tokenTotal(sessionID: string) {
+        const session = store.session.info[sessionID]
+        if (!session) return 0
+        if (session.parentID) return TokenUsage.total(session.tokens)
+        return (store.session.family[sessionID] ?? [sessionID]).reduce((total, id) => {
+          const info = store.session.info[id]
+          return info ? total + TokenUsage.total(info.tokens) : total
+        }, 0)
       },
       status(sessionID: string) {
         return store.session.active[sessionID] ?? "idle"

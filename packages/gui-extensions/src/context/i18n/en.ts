@@ -4,6 +4,7 @@ export default {
   "usage.tokens": "Tokens",
   "usage.usage": "Context",
   "usage.cost": "Cost",
+  "usage.withoutFold": "Without fold",
   "usage.view": "View context usage",
   "usage.toggle": "Toggle session context",
   "systemPrompt.title": "System Prompt",

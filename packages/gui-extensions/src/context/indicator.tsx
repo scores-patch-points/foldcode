@@ -1,11 +1,24 @@
-import { Show, createMemo, type ComponentProps, type JSX } from "solid-js"
-import { ProgressCircle } from "@opencode/ui/progress-circle"
+import { Show, createMemo, createSignal, onCleanup, type ComponentProps, type JSX } from "solid-js"
+import { Option, Schema } from "effect"
 import { Button } from "@opencode/ui/button"
 import { Tooltip } from "@opencode/ui/tooltip"
 import { useI18n } from "@opencode/ui/context/i18n"
-import { lastAssistantWithUsage } from "@opencode/client/solid"
-import { useExtension, type MountedSession } from "../sdk"
+import { createKeyed, useExtension, type MountedSession } from "../sdk"
 import { catalogModel, syncCatalog } from "./catalog"
+
+const FOLD_METER_URL = "http://127.0.0.1:11436/v1/hooks/opencode/meter"
+
+/** The fold door's meter: what it kept out of the frontier's window, in estimated tokens. */
+const Meter = Schema.Struct({
+  savings: Schema.optional(
+    Schema.Struct({
+      projectedTokensEst: Schema.optional(Schema.Number),
+      titleTokensEst: Schema.optional(Schema.Number),
+    }),
+  ),
+})
+
+const decodeMeter = Schema.decodeUnknownOption(Meter)
 
 function ContextTooltipRow(props: { name: JSX.Element; value: JSX.Element }) {
   return (
@@ -44,30 +57,10 @@ export function SessionContextUsage(props: {
     props.session.id ? props.session.server.data.session.get(props.session.id) : undefined,
   )
 
-  // Same step as the TUI: after the last completed compaction and before an undo boundary.
-  const context = createMemo(() => {
-    const message = lastAssistantWithUsage(messages(), info()?.revert?.messageID)
-
-    if (!message) return
-    const model = catalogModel(props.session, message.model)?.model
-
-    const total =
-      message.tokens.input +
-      message.tokens.output +
-      message.tokens.reasoning +
-      message.tokens.cache.read +
-      message.tokens.cache.write
-
-    return {
-      total,
-      usage: model?.limit.context ? Math.round((total / model.limit.context) * 100) : null,
-    }
-  })
-
-  const tokens = createMemo(() =>
-    new Intl.NumberFormat(i18n.locale(), { notation: "compact", maximumFractionDigits: 0 })
-      .format(context()?.total ?? 0)
-      .toLocaleLowerCase(i18n.locale()),
+  // The server's recorded usage for the whole session family, like the cost beside it: every step,
+  // compaction, and title, whether or not the client has paged those messages in.
+  const sessionTokens = createMemo(() =>
+    props.session.id ? props.session.server.data.session.tokenTotal(props.session.id) : 0,
   )
 
   // A root session's cost includes its subagent sessions, as in the TUI.
@@ -91,35 +84,41 @@ export function SessionContextUsage(props: {
     layout.toggle(`${ctx.id}:main`, props.session)
   }
 
-  const circle = () => (
-    <div class="flex items-center justify-center">
-      <ProgressCircle
-        appearance="indicator"
-        size={16}
-        strokeWidth={2}
-        percentage={context()?.usage ?? 0}
-        style={{
-          "--progress-circle-background": "var(--v2-background-bg-layer-04, var(--border-weak-base))",
-          "--progress-circle-background-overlay": "var(--v2-overlay-simple-overlay-pressed, transparent)",
-          "--progress-circle-progress": "var(--v2-icon-icon-base, var(--icon-base))",
-        }}
-      />
-    </div>
-  )
+  // What the fold kept out of the frontier's window, read once per routed session; the local door may be down.
+  const [foldSavings, setFoldSavings] = createSignal<number | undefined>()
 
-  const compactCircle = () => (
-    <div class="flex items-center justify-center">
-      <ProgressCircle appearance="compact" size={16} percentage={context()?.usage ?? 0} />
-    </div>
+  createKeyed(
+    () => props.session.id,
+    () => {
+      const controller = new AbortController()
+      onCleanup(() => controller.abort())
+      setFoldSavings(undefined)
+      void fetch(FOLD_METER_URL, { signal: controller.signal })
+        .then((response) => (response.ok ? response.json() : undefined))
+        .then((json) => {
+          const meter = Option.getOrUndefined(decodeMeter(json))
+
+          if (!meter?.savings) return
+          setFoldSavings((meter.savings.projectedTokensEst ?? 0) + (meter.savings.titleTokensEst ?? 0))
+        })
+        .catch(() => undefined)
+    },
   )
 
   const tooltipValue = () => (
-    <div class="flex w-[120px] flex-col gap-2">
+    <div class="flex w-[140px] flex-col gap-2">
       <Show when={showCost()}>
         <ContextTooltipRow name={ctx.t("usage.cost")} value={cost()} />
       </Show>
-      <ContextTooltipRow name={ctx.t("usage.usage")} value={`${context()?.usage ?? 0}%`} />
-      <ContextTooltipRow name={ctx.t("usage.tokens")} value={context()?.total.toLocaleString(i18n.locale()) ?? "0"} />
+      <ContextTooltipRow name={ctx.t("usage.tokens")} value={sessionTokens().toLocaleString(i18n.locale())} />
+      <Show when={foldSavings()}>
+        {(savings) => (
+          <ContextTooltipRow
+            name={ctx.t("usage.withoutFold")}
+            value={(sessionTokens() + savings()).toLocaleString(i18n.locale())}
+          />
+        )}
+      </Show>
     </div>
   )
 
@@ -129,33 +128,27 @@ export function SessionContextUsage(props: {
         value={variant() === "indicator" ? tooltipValue() : ctx.t("usage.toggle")}
         placement={props.placement ?? "top"}
       >
-        <Show
-          when={variant() === "indicator"}
-          fallback={
-            <Button
-              type="button"
-              variant="ghost-muted"
-              class="group shrink-0"
-              style={{ padding: "0 6px", color: "var(--v2-text-text-faint)" }}
-              onClick={openContext}
-              aria-expanded={layout.state(`${ctx.id}:main`, props.session) === "visible"}
-              aria-label={ctx.t("usage.toggle")}
-            >
-              <span class="flex items-center gap-2 whitespace-nowrap group-active:text-v2-text-text-muted">
-                {compactCircle()}
-                <span>{tokens()}</span>
-                <Show when={showCost()}>
-                  <span aria-hidden="true" class="flex w-1.5 shrink-0 items-center justify-center">
-                    ·
-                  </span>
-                  <span>{cost()}</span>
-                </Show>
-              </span>
-            </Button>
-          }
+        <Button
+          type="button"
+          variant="ghost-muted"
+          class="group shrink-0"
+          style={{ padding: "0 6px", color: "var(--v2-text-text-faint)" }}
+          onClick={openContext}
+          aria-expanded={layout.state(`${ctx.id}:main`, props.session) === "visible"}
+          aria-label={ctx.t("usage.toggle")}
         >
-          {circle()}
-        </Show>
+          <span class="flex items-center gap-2 whitespace-nowrap group-active:text-v2-text-text-muted">
+            <span>
+              {sessionTokens().toLocaleString(i18n.locale())} {ctx.t("usage.tokens")}
+            </span>
+            <Show when={showCost()}>
+              <span aria-hidden="true" class="flex w-1.5 shrink-0 items-center justify-center">
+                ·
+              </span>
+              <span>{cost()}</span>
+            </Show>
+          </span>
+        </Button>
       </Tooltip>
     </Show>
   )

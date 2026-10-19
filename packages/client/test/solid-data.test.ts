@@ -52,12 +52,13 @@ test("uses the configured initial window and retains normal cursor page sizes", 
   }
 })
 
-test("counts every subagent page in a root session's cost", async () => {
+test("counts every subagent page in a root session's cost and tokens", async () => {
   const child = (index: number): SessionInfo => ({
     ...session(0),
     id: `ses_child_${index}`,
     parentID: "ses_root",
     cost: 1,
+    tokens: { input: index + 1, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
   })
   const requests: string[] = []
   const api = OpenCode.make({
@@ -66,7 +67,15 @@ test("counts every subagent page in a root session's cost", async () => {
       const url = new URL((input instanceof Request ? input : new Request(input, init)).url)
       requests.push(`${url.pathname}?${url.searchParams}`)
 
-      if (url.pathname === "/api/session/ses_root") return Response.json({ data: { ...session(0), id: "ses_root", cost: 0.5 } })
+      if (url.pathname === "/api/session/ses_root")
+        return Response.json({
+          data: {
+            ...session(0),
+            id: "ses_root",
+            cost: 0.5,
+            tokens: { input: 10, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+          },
+        })
 
       if (url.searchParams.get("cursor") === "page_2")
         return Response.json({ data: Array.from({ length: 50 }, (_, index) => child(200 + index)), cursor: { next: "page_3" } })
@@ -83,6 +92,8 @@ test("counts every subagent page in a root session's cost", async () => {
     await setup.data.session.sync("ses_root", { children: true })
     expect(setup.data.session.family("ses_root")).toHaveLength(251)
     expect(setup.data.session.cost("ses_root")).toBe(250.5)
+    expect(setup.data.session.tokenTotal("ses_root")).toBe(31385)
+    expect(setup.data.session.tokenTotal("ses_child_0")).toBe(1)
     expect(requests.toSorted()).toEqual([
       "/api/session/ses_root?",
       "/api/session?limit=200&cursor=page_2",
