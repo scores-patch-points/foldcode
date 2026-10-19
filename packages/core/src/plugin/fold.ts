@@ -21,6 +21,9 @@ import { define, type Context } from "@opencode/plugin/effect/plugin"
 import type { SessionHooks } from "@opencode/plugin/effect/session"
 import { money } from "@opencode/util/savings"
 import { Effect, Schema, Stream } from "effect"
+import fs from "node:fs"
+import os from "node:os"
+import path from "node:path"
 import { record as rulerRecord, recordTokens as rulerTokens } from "./fold-ruler.js"
 
 const base = (process.env.FOLD_URL ?? "http://127.0.0.1:11436").replace(/\/+$/, "")
@@ -739,6 +742,29 @@ export const trailApply = (
     if (changed)
       messages[index] = Message.make({ id: message.id, role: message.role, content, metadata: message.metadata, providerMetadata: message.providerMetadata, native: message.native })
   }
+}
+
+// A file span the model can name without the door: `path#L10-L20`, `path#L5`, `path#120-340` (bytes). Read straight
+// from disk, so a door outage never strands a snip of a file (measured: with the door down, two snips failed and the
+// model re-read the same README until the repeated-action guard closed the turn). undefined when the ref is not a span.
+export const localSpan = (ref: string, workspace = process.cwd()) => {
+  const m = /^(.+?)#(L)?(\d+)(?:-L?(\d+))?$/.exec(ref.trim())
+  if (!m) return undefined
+  const [, raw, isLine, a, b] = m
+  const file = path.resolve(workspace, raw.startsWith("~") ? path.join(os.homedir(), raw.slice(1)) : raw)
+  let text: string
+  try {
+    text = fs.readFileSync(file, "utf8")
+  } catch {
+    return undefined
+  }
+  const from = Number(a)
+  const to = b === undefined ? from : Number(b)
+  if (isLine) {
+    const lines = text.split("\n").slice(Math.max(0, from - 1), Math.max(from, to))
+    return { file, range: `L${from}-L${to}`, bytes: lines.map((line, i) => `${from + i}: ${line}`).join("\n") }
+  }
+  return { file, range: `${from}-${to}`, bytes: text.slice(from, to) }
 }
 
 const formatMeter = (meter: Record<string, unknown>) => {
@@ -1642,7 +1668,20 @@ export const Plugin = define({
                { event: "snip", sessionID, agent: sessionID, workspace, universe: process.env.FOLD_UNIVERSE ?? "world", ref: input.ref, ask: lastAsk.get(sessionID) ?? "" },
               askTimeout * 4,
             )
-            if (answer === undefined) return yield* Effect.fail(new ToolFailure({ message: `snip: the fold door is unreachable at ${base}` }))
+            if (answer === undefined) {
+              const local = localSpan(input.ref, workspace)
+              if (local)
+                return {
+                  output: { bytes: local.bytes, standing: "witnessed", from: `${local.file} ${local.range}` },
+                  content: `[snip ${input.ref} · from: ${local.file} ${local.range} · standing: mechanical · read from disk; the fold door is unreachable at ${base}]\n${local.bytes}`,
+                  metadata: { schema: "EOTSnip@1", ref: input.ref, standing: "witnessed", from: local.file, origin: "mechanical" },
+                }
+              return yield* Effect.fail(
+                new ToolFailure({
+                  message: `snip: the fold door is unreachable at ${base}, so ${input.ref} cannot be resolved. Do not retry snip; for a file use read with offset/limit, otherwise proceed without it.`,
+                }),
+              )
+            }
             if (answer.ok !== true)
               return yield* Effect.fail(new ToolFailure({ message: `snip ${String(answer.gap ?? "failed")}: ${input.ref}` }))
             const prov = (answer.provenance ?? {}) as Record<string, unknown>
