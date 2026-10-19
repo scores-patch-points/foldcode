@@ -59,3 +59,20 @@ test("FALSIFIER: the gist never leaks more than a bounded, mechanical summary", 
   expect(trailGist(huge, "k").length).toBeLessThan(900)
   expect(trailGist("", "k")).toContain("1 lines")
 })
+
+import { localSpan } from "../src/plugin/fold"
+import { mkdtempSync, writeFileSync } from "node:fs"
+import { join } from "node:path"
+import { tmpdir } from "node:os"
+
+test("localSpan resolves a file span without the door, and refuses what is not a span", () => {
+  const dir = mkdtempSync(join(tmpdir(), "span-"))
+  writeFileSync(join(dir, "a.md"), "one\ntwo\nthree\nfour\n")
+  expect(localSpan("a.md#L2-L3", dir)?.bytes).toBe("2: two\n3: three")
+  expect(localSpan("a.md#L1-4", dir)?.bytes).toBe("1: one\n2: two\n3: three\n4: four")
+  expect(localSpan("a.md#4-7", dir)?.bytes).toBe("two") // byte span
+  expect(localSpan("a.md#L3", dir)?.bytes).toBe("3: three")
+  expect(localSpan("missing.md#L1-2", dir)).toBeUndefined()
+  expect(localSpan("turn 7", dir)).toBeUndefined()
+  expect(localSpan("rs21xfd3a", dir)).toBeUndefined()
+})
