@@ -443,7 +443,8 @@ export namespace Timeline {
               messages.flatMap((message) =>
                 message.type === "compaction" ||
                 message.type === "model-switched" ||
-                message.type === "location-switched"
+                message.type === "location-switched" ||
+                (message.type === "synthetic" && message.metadata?.notice === "fold-ground")
                   ? [message.id]
                   : [],
               ),

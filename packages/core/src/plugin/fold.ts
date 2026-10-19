@@ -25,6 +25,9 @@ import os from "node:os"
 import path from "node:path"
 import { record as rulerRecord, recordTokens as rulerTokens } from "./fold-ruler.js"
 import { tap as usageTap } from "./usage-tap.js"
+import { Bus } from "../bus.js"
+import { SessionEvent } from "../session/event.js"
+import { gatherPassages, groundHead, groundPayload } from "./fold-ground.js"
 import * as Physics from "./physics.js"
 import * as Learn from "./physics-learn.js"
 import fs from "node:fs"
@@ -38,6 +41,8 @@ const off = process.env.FOLD_OFF === "1"
 // fails open fast (the turn sends native content) instead of stalling the frontier.
 // FOLD_TIMEOUT_MS moves it.
 const askTimeout = Number(process.env.FOLD_TIMEOUT_MS ?? 1500)
+// The ground is computed after the answer, off the request path, so it may take longer than a context read (the door loads its parsers on first use).
+const groundTimeout = Number(process.env.FOLD_GROUND_TIMEOUT_MS ?? 15000)
 const foldTimeout = Number(process.env.FOLD_FOLD_TIMEOUT_MS ?? 20_000)
 // The swarm is model-free but reads the material through the door's capacity
 // organs; it gets a longer budget than a recall note while still failing open.
@@ -110,6 +115,9 @@ const shadowOn = process.env.FOLD_SHADOW === "1"
 const facingOn = process.env.FOLD_FACING !== "0"
 // How much of the facing notice shows: off · line · standing · full. `/fold facing <level>` moves it.
 let facingLevel = process.env.FOLD_FACING_LEVEL ?? "full"
+// The facing renders NATIVELY on the answer (the window reads the notice's `metadata.ground`); FOLD_FACING=notice
+// keeps the text notice, so a window that cannot draw the ground (and the door-down path) still discloses.
+const facingNative = process.env.FOLD_FACING !== "notice"
 // DRAFT-LINT (the-fold/docs/DRAFT-LINT.md): draft + act are the new door
 // events. FOLD_DRAFT=0 disables them; FOLD_OFF=1 still disables everything.
 // Rollout step 1 is observe-only — the door records verdicts it never
@@ -121,23 +129,25 @@ let downUntil = 0
 // precompute share one implementation: a tool result is folded the moment it
 // lands, off the request path, so the next context assembly reads the cache
 // with no door wait (see foldOnce / foldBudget below).
-const postRaw = async (body: unknown, timeout: number) => {
-  if (off || Date.now() < downUntil) return undefined
+const postRaw = async (body: unknown, timeout: number, patient = false) => {
+  // A patient post (the ground, computed after the answer) neither waits out nor starts the cool-down: a slow first
+  // load of the door's parsers must not blank the ground the person is owed.
+  if (off || (!patient && Date.now() < downUntil)) return undefined
   const response = await fetch(`${base}/v1/hooks/opencode`, {
     method: "POST",
     headers: { "content-type": "application/json", "x-er7-surface": "opencode" },
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(timeout),
   }).catch(() => {
-    downUntil = Date.now() + coolDown
+    if (!patient) downUntil = Date.now() + coolDown
     return undefined
   })
   if (!response?.ok) return undefined
   return (await response.json().catch(() => undefined)) as Record<string, unknown> | undefined
 }
 
-const post = (body: unknown, timeout: number) =>
-  Effect.tryPromise(() => postRaw(body, timeout)).pipe(Effect.catch(() => Effect.succeed(undefined)))
+const post = (body: unknown, timeout: number, patient = false) =>
+  Effect.tryPromise(() => postRaw(body, timeout, patient)).pipe(Effect.catch(() => Effect.succeed(undefined)))
 
 const lastUserText = (messages: SessionHooks["context"]["messages"]) => {
   const message = messages.findLast((item) => item.role === "user")
@@ -1402,6 +1412,9 @@ export const Plugin = define({
   id: "fold.doorway",
   effect: Effect.fn(function* (ctx) {
     if (off) return
+    // The ground is committed as a message directly, never admitted through the inbox: an admitted synthetic is a
+    // pending input, and the runner answers it with another model step (the answer would appear twice).
+    const bus = yield* Bus.Service
 
     // The price of the model actually in use, from the operator's own catalog;
     // sent with each fold so the door's dollars are the running model's dollars.
@@ -1538,6 +1551,9 @@ export const Plugin = define({
     // The turn's ask and model, so an event-time fold knows what to fold toward,
     // and tool id -> name, so a result folded at event time is attributed to its tool.
     const lastAsk = new Map<string, string>()
+    // What the turn was handed to read (its tool results), kept so the door can ground the answer against it.
+    const turnMaterial = new Map<string, Array<{ name: string; text: string }>>()
+    const noticeWoken = new Map<string, string>()
     const lastNote = new Map<string, string>()
     const lastModel = new Map<string, { providerID: string; id: string }>()
     const toolNames = new Map<string, string>()
@@ -1801,10 +1817,19 @@ export const Plugin = define({
         // notice rendered for the PERSON (facing, chase, matrix, view, savings, audit) is stripped here before
         // anything is sent — otherwise the model ANSWERS the notice itself. Measured without this: over two
         // turns the model replied to the facing text and the window inflated to 219k tokens.
+        // A step whose newest message IS a notice was woken by the notice itself (a steer promotes at the step
+        // boundary): its answer is not a reply to the person, so it is not faced — otherwise each facing's notice
+        // wakes another step, whose facing posts another notice, without end.
+        let woken = false
         for (let i = event.messages.length - 1; i >= 0; i--) {
           const text = event.messages[i].content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n")
-          if (isPersonNotice(text)) event.messages.splice(i, 1)
+          if (isPersonNotice(text)) {
+            if (i === event.messages.length - 1) woken = true
+            event.messages.splice(i, 1)
+          }
         }
+        // The wake and everything the run does after it (tool calls, the answer) belong to one ask: remember which.
+        if (woken) noticeWoken.set(event.sessionID, lastUserText(event.messages))
         // THE LEDGER'S "BEFORE": the window exactly as the harness assembled it (messages + system), after our own
         // notices are stripped. Everything the fold changes from here on is measured against this number; the
         // tap (usage-tap.ts) joins it to the provider's own token count for the request that follows.
@@ -1867,7 +1892,9 @@ export const Plugin = define({
         }
         // Remember the turn's ask and model so a tool result that lands mid-turn
         // can be folded at event time without re-reading the message list.
-        lastAsk.set(event.sessionID, lastUserText(event.messages))
+        const ask = lastUserText(event.messages)
+        if (lastAsk.get(event.sessionID) !== ask) turnMaterial.delete(event.sessionID)
+        lastAsk.set(event.sessionID, ask)
         lastModel.set(event.sessionID, event.model)
         // Perception first: media becomes local transcription before recall
         // or folding reads the turn, so everything downstream sees text.
@@ -2538,11 +2565,25 @@ export const Plugin = define({
         const sessionID = event.data.sessionID
         const text = typeof event.data.text === "string" ? event.data.text : ""
         if (text.trim().length < 8) return
+        if (noticeWoken.get(sessionID) === lastAsk.get(sessionID)) return
         const workspace = yield* workspaceOf(sessionID)
         const answer = yield* post(
-          { event: "ground", sessionID, agent: sessionID, workspace, universe: process.env.FOLD_UNIVERSE ?? "world", text, ask: lastAsk.get(sessionID) ?? "" },
-          askTimeout,
+          { event: "ground", sessionID, agent: sessionID, workspace, universe: process.env.FOLD_UNIVERSE ?? "world", text, ask: lastAsk.get(sessionID) ?? "", passages: gatherPassages(turnMaterial.get(sessionID) ?? []) },
+          groundTimeout,
+          true,
         )
+        const ground = facingNative ? groundPayload(answer, facingLevel) : undefined
+        if (ground) {
+          // The window draws the ground on the answer from this metadata; the text only keeps the person-notice
+          // prefix (never sent to the model) and is the fallback for a window that cannot read the metadata.
+          yield* bus.publish(SessionEvent.Synthetic, {
+            sessionID: sessionID as never,
+            text: groundHead(ground),
+            description: "fold facing — how this answer grounds",
+            metadata: { notice: "fold-ground", ground },
+          })
+          return
+        }
         const note = facingNote(answer)
         if (!note) return
         yield* ctx.session.synthetic({
@@ -2638,6 +2679,7 @@ export const Plugin = define({
           const text = event.data.content.every((part) => part.type === "text")
             ? event.data.content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n")
             : ""
+          if (text) turnMaterial.set(event.data.sessionID, [...(turnMaterial.get(event.data.sessionID) ?? []), { name, text }].slice(-32))
           if (text.length >= minChars && !folded.has(event.data.id))
             void foldOnce(event.data.sessionID, name, lastAsk.get(event.data.sessionID) ?? "", lastModel.get(event.data.sessionID), event.data.id, text)
         }

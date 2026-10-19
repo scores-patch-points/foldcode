@@ -31,6 +31,8 @@ import { GenericTool } from "../components/basic-tool"
 import { SessionRetry } from "../components/session-retry"
 import { SessionError } from "../components/session-error"
 import { timelineCategory, type TimelineDetail } from "./detail"
+import { readGround, type GroundView } from "./fold-ground"
+import { FoldGround, GroundHover } from "./fold-ground-view"
 import { currentToolFailed } from "../message/current-tool-state"
 import {
   createReactiveTimelineProjection,
@@ -354,25 +356,47 @@ export function createSessionTimelineRowRenderer(input: {
       return item ? contentDefaultOpen(item) : undefined
     })
 
+    // The ground the door computed for this answer: the fold-ground notice that follows the assistant message.
+    const ground = createMemo(() => {
+      const id = ref()?.messageID
+      if (!id || content()?.type !== "text") return undefined
+      let seen = false
+      let found: GroundView | undefined
+      for (const item of input.projection.messageByID().values()) {
+        if (item.id === id) seen = true
+        else if (seen && item.type === "assistant") break
+        else if (seen && item.type === "synthetic") found = readGround(item.metadata) ?? found
+      }
+      return found
+    })
+
     const disclosureKey = () => (content()?.type === "reasoning" ? ref()!.partID : row().group.key)
 
     return (
       <Show when={message()}>
         {(message) => (
           <Show when={content()}>
-            {(content) => (
-              <SessionAssistantContent
-                message={message()}
-                content={content()}
-                contentID={ref()!.partID}
-                showAssistantCopyPartID={copyContentID(row().userMessageID)}
-                turnDurationMs={duration(row().userMessageID)}
-                defaultOpen={defaultOpen()}
-                toolOpen={input.disclosure.value(disclosureKey()) ?? defaultOpen()}
-                onToolOpenChange={(open) => input.disclosure.set(disclosureKey(), open)}
-                onContentRendered={onSizeChange}
-              />
-            )}
+            {(content) => {
+              const body = () => (
+                <SessionAssistantContent
+                  message={message()}
+                  content={content()}
+                  contentID={ref()!.partID}
+                  showAssistantCopyPartID={copyContentID(row().userMessageID)}
+                  turnDurationMs={duration(row().userMessageID)}
+                  defaultOpen={defaultOpen()}
+                  toolOpen={input.disclosure.value(disclosureKey()) ?? defaultOpen()}
+                  onToolOpenChange={(open) => input.disclosure.set(disclosureKey(), open)}
+                  onContentRendered={onSizeChange}
+                />
+              )
+
+              return (
+                <Show when={ground()} fallback={body()}>
+                  {(view) => <GroundHover view={view()}>{body()}</GroundHover>}
+                </Show>
+              )
+            }}
           </Show>
         )}
       </Show>
@@ -532,10 +556,16 @@ export function createSessionTimelineRowRenderer(input: {
       }
     })
 
+    const ground = createMemo(() => {
+      const value = message()
+
+      return value?.type === "synthetic" ? readGround(value.metadata) : undefined
+    })
+
     const content = createMemo(() => {
       const value = message()
 
-      return value ? notice(value) : undefined
+      return value && !ground() ? notice(value) : undefined
     })
 
     const childID = createMemo(() => {
@@ -594,61 +624,72 @@ export function createSessionTimelineRowRenderer(input: {
             <Show
               when={model()}
               fallback={
-                <Show when={content()}>
-                  {(content) => (
-                    <Show
-                      when={content().items?.length}
-                      fallback={
-                        <Dynamic
-                          component={href() ? "a" : "div"}
-                          data-slot="session-timeline-notice"
-                          class={`block w-full truncate ${props.grouped ? "py-1" : "pt-3 pb-1"} text-13-regular leading-text-compact text-text-weak ${inset()}`}
-                          classList={{ "cursor-pointer": clickable() }}
-                          href={href()}
-                          role={clickable() && !href() ? "link" : undefined}
-                          tabIndex={clickable() && !href() ? 0 : undefined}
-                          onClick={navigate}
-                          onKeyDown={navigateKey}
-                        >
-                          <bdi
-                            dir="auto"
-                            class="font-[530]"
-                            classList={{ "text-v2-text-text-faint": message()?.type === "agent-switched" }}
-                          >
-                            {content().label}
-                          </bdi>
-                          <Show when={content().data}>
-                            {(data) => (
-                              <span classList={{ "ms-2": message()?.type === "agent-switched" }}>
-                                <Show when={message()?.type !== "agent-switched"}>{" · "}</Show>
-                                <bdi dir="auto">{data()}</bdi>
-                              </span>
-                            )}
-                          </Show>
-                        </Dynamic>
-                      }
-                    >
-                      <div data-slot="session-timeline-notice" class={`w-full py-1 ${inset()}`}>
-                        <div class="flex min-h-5 min-w-0 items-center gap-2 overflow-hidden">
-                          <bdi
-                            dir="auto"
-                            class="shrink-0 text-[13px] font-[530] leading-text-compact tracking-[-0.04px] text-v2-text-text-faint"
-                          >
-                            {content().label}
-                          </bdi>
-                          <For each={content().items}>
-                            {(item) => (
+                <Show
+                  when={ground()}
+                  fallback={
+                    <Show when={content()}>
+                      {(content) => (
+                        <Show
+                          when={content().items?.length}
+                          fallback={
+                            <Dynamic
+                              component={href() ? "a" : "div"}
+                              data-slot="session-timeline-notice"
+                              class={`block w-full truncate ${props.grouped ? "py-1" : "pt-3 pb-1"} text-13-regular leading-text-compact text-text-weak ${inset()}`}
+                              classList={{ "cursor-pointer": clickable() }}
+                              href={href()}
+                              role={clickable() && !href() ? "link" : undefined}
+                              tabIndex={clickable() && !href() ? 0 : undefined}
+                              onClick={navigate}
+                              onKeyDown={navigateKey}
+                            >
                               <bdi
                                 dir="auto"
-                                class="min-w-0 truncate text-[13px] font-[440] leading-text-compact tracking-[-0.04px] text-v2-text-text-faint"
+                                class="font-[530]"
+                                classList={{ "text-v2-text-text-faint": message()?.type === "agent-switched" }}
                               >
-                                {item}
+                                {content().label}
                               </bdi>
-                            )}
-                          </For>
-                        </div>
-                      </div>
+                              <Show when={content().data}>
+                                {(data) => (
+                                  <span classList={{ "ms-2": message()?.type === "agent-switched" }}>
+                                    <Show when={message()?.type !== "agent-switched"}>{" · "}</Show>
+                                    <bdi dir="auto">{data()}</bdi>
+                                  </span>
+                                )}
+                              </Show>
+                            </Dynamic>
+                          }
+                        >
+                          <div data-slot="session-timeline-notice" class={`w-full py-1 ${inset()}`}>
+                            <div class="flex min-h-5 min-w-0 items-center gap-2 overflow-hidden">
+                              <bdi
+                                dir="auto"
+                                class="shrink-0 text-[13px] font-[530] leading-text-compact tracking-[-0.04px] text-v2-text-text-faint"
+                              >
+                                {content().label}
+                              </bdi>
+                              <For each={content().items}>
+                                {(item) => (
+                                  <bdi
+                                    dir="auto"
+                                    class="min-w-0 truncate text-[13px] font-[440] leading-text-compact tracking-[-0.04px] text-v2-text-text-faint"
+                                  >
+                                    {item}
+                                  </bdi>
+                                )}
+                              </For>
+                            </div>
+                          </div>
+                        </Show>
+                      )}
                     </Show>
+                  }
+                >
+                  {(view) => (
+                    <div data-slot="session-timeline-notice" data-type="fold-ground" class={`w-full ${inset()}`}>
+                      <FoldGround view={view()} />
+                    </div>
                   )}
                 </Show>
               }
