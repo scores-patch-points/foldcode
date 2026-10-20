@@ -175,7 +175,9 @@ start_door() {
 
 wait_ready() {
   i=0
-  while [ "$i" -lt 30 ]; do
+  # The door warms its models before it listens (~30-60 s cold, then ~100 ms a request): wait for it, so a slow boot is never
+  # read as a dead door and answered with a second one. FOLD_DOOR_BOOT_WAIT is in 2 s steps (default 60 = two minutes).
+  while [ "$i" -lt "${FOLD_DOOR_BOOT_WAIT:-60}" ]; do
     answering && return 0
     i=$((i + 1)); sleep 2
   done

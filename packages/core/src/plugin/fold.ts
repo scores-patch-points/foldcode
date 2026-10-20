@@ -450,6 +450,10 @@ export const foldIndex = (header: Record<string, string>, body: string) =>
 // A person-facing notice (a `synthetic` rendered for the Person, never for the model). Matched at the START
 // of the message only: with the /m flag a genuine ANSWER that happened to begin a line with a notice prefix was
 // deleted wholesale — and "fold measured ·" (P0.4) is a phrase a model could plausibly write.
+// The ground/profile notice is committed straight onto the bus and never admitted to the inbox, so it never wakes a step:
+// finding it as the newest message says nothing about who started the step, and must not mark the step as notice-woken.
+export const isGroundNotice = (text: string) => /^fold facing · the (?:ground|profile)/.test(String(text ?? ""))
+
 export const isPersonNotice = (text: string) =>
   /^(?:fold facing ·|fold measured ·|fold chase|fold matrix|fold view |fold savings|fold audit|fold door unreachable|fold physics ·)/.test(
     String(text ?? ""),
@@ -1830,7 +1834,7 @@ export const Plugin = define({
         for (let i = event.messages.length - 1; i >= 0; i--) {
           const text = event.messages[i].content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n")
           if (isPersonNotice(text)) {
-            if (i === event.messages.length - 1) woken = true
+            if (i === event.messages.length - 1 && !isGroundNotice(text)) woken = true
             event.messages.splice(i, 1)
           }
         }
