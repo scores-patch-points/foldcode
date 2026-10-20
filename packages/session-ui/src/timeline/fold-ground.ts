@@ -28,6 +28,8 @@ export type ProfileTone = "danger" | "warning" | "success" | "muted"
 /** One checkable unit of the answer (a claim or a symbol), as the door judged it. `find` is the text to point at. */
 export type ProfileItem = {
   key: string
+  /** a claim is located by its sentence, a symbol by every occurrence of its name, an argument is shown as not checked */
+  kind: "claim" | "symbol" | "argument"
   tone: ProfileTone
   label: string
   title: string
@@ -51,6 +53,8 @@ export type ProfileView = {
   rests: Array<{ source: string; n: number }>
   look: ProfileItem[]
   fine: ProfileItem[]
+  /** every unit of the answer the door typed (claims, symbols, argument), for pointing at the text itself */
+  units: ProfileItem[]
   beings: Array<{ name: string; verdict: string; label?: string; qid?: string; url?: string; basis?: string }>
   researching: boolean
   researchMs?: number
@@ -65,6 +69,7 @@ const CLAIM = {
   contradicted: { tone: "danger", label: "Contradicted" },
   unsupported: { tone: "warning", label: "Unsupported" },
   supported: { tone: "success", label: "Supported" },
+  argument: { tone: "muted", label: "Argument" },
 } as const
 const SYMBOL = {
   contradicted: { tone: "danger", label: "Contradicted" },
@@ -134,11 +139,12 @@ export function readProfile(profile: Record<string, unknown> | undefined): Profi
     return [
       {
         key: `c${i}`,
+        kind: standing === "argument" ? ("argument" as const) : ("claim" as const),
         tone: shown.tone,
         label: claim.derived === true ? "Derived" : claim.added === true ? "Added" : shown.label,
         title: text,
         find: text,
-        why: str(claim.why),
+        why: standing === "argument" ? "Not checked: nothing here is a claim about the material or the world." : str(claim.why),
         evidence: evidenceOf(claim.evidence),
         from: list(claim.from).flatMap((item) => evidenceOf(item) ?? []),
         residue: strings(claim.residue),
@@ -157,6 +163,7 @@ export function readProfile(profile: Record<string, unknown> | undefined): Profi
     return [
       {
         key: `s${i}`,
+        kind: "symbol" as const,
         tone: shown.tone,
         label: shown.label,
         title: of ? `${name} (option of ${of})` : `${name}${str(symbol.kind) === "path" ? "" : ` · ${str(symbol.kind) ?? "symbol"}`}`,
@@ -187,6 +194,7 @@ export function readProfile(profile: Record<string, unknown> | undefined): Profi
       { n: num(counts.argument), tone: "muted" as const, label: "argument (not checked)" },
     ].filter((part) => part.n > 0),
     rests: list(profile.rests).flatMap((row) => (str(row.source) ? [{ source: str(row.source)!, n: num(row.n) }] : [])),
+    units: items,
     look: items.filter((item) => item.tone === "danger" || item.tone === "warning"),
     fine: items.filter((item) => item.tone === "success"),
     beings: list(profile.beings).flatMap((being) =>
@@ -235,4 +243,53 @@ export function rowAt(rows: GroundRow[], text: string, offset: number): GroundRo
     from = start + row.text.length
     if (offset >= start && offset < from) return row
   }
+}
+
+export type Located = { unit: ProfileItem; start: number; end: number }
+
+/** The answer's text without whitespace, with each kept character's offset in the original: rendered blocks join without the
+ *  spaces the door's sentences carry, so units are found by their letters. */
+const squash = (text: string) => {
+  const map: number[] = []
+  let out = ""
+  for (let i = 0; i < text.length; i++)
+    if (!/\s/.test(text[i])) {
+      out += text[i]
+      map.push(i)
+    }
+  return { out, map }
+}
+
+const wordAt = (text: string, name: string) => {
+  const found: Array<[number, number]> = []
+  const edge = (c: string | undefined) => c === undefined || !/[\p{L}\p{N}_$]/u.test(c)
+  for (let at = text.indexOf(name); at >= 0; at = text.indexOf(name, at + name.length))
+    if (edge(text[at - 1]) && edge(text[at + name.length])) found.push([at, at + name.length])
+  return found
+}
+
+/** Where each unit sits in the answer's rendered text: a claim by its sentence (in order, so a repeated sentence is the next one),
+ *  a symbol at every occurrence of its name. Pure text; no grounding is computed here. */
+export function locate(units: ProfileItem[], text: string): Located[] {
+  const { out, map } = squash(text)
+  const found: Located[] = []
+  let cursor = 0
+  for (const unit of units) {
+    if (unit.kind === "symbol") {
+      for (const [start, end] of wordAt(text, unit.find)) found.push({ unit, start, end })
+      continue
+    }
+    const letters = squash(unit.find).out
+    if (!letters) continue
+    const at = out.indexOf(letters, cursor)
+    if (at < 0) continue
+    cursor = at + letters.length
+    found.push({ unit, start: map[at], end: map[at + letters.length - 1] + 1 })
+  }
+  return found
+}
+
+/** The most specific unit under `offset`: the smallest span that contains it (a symbol inside its sentence wins). */
+export function unitAt(located: Located[], offset: number): Located | undefined {
+  return located.filter((l) => offset >= l.start && offset < l.end).sort((a, b) => a.end - a.start - (b.end - b.start))[0]
 }

@@ -1,5 +1,5 @@
-import { For, Show, createSignal, onCleanup, type JSX } from "solid-js"
-import { rowAt, type GroundRow, type GroundView, type ProfileItem, type ProfileTone, type ProfileView } from "./fold-ground"
+import { For, Show, createEffect, createSignal, onCleanup, type JSX } from "solid-js"
+import { locate, rowAt, unitAt, type GroundRow, type GroundView, type Located, type ProfileItem, type ProfileTone, type ProfileView } from "./fold-ground"
 
 // The notice row itself says only what the answer's own hover cannot: a settled turn's superseded draw, or no step.
 export function FoldGround(props: { view: GroundView }) {
@@ -55,34 +55,70 @@ const toneBg: Record<ProfileTone, string> = {
   muted: "bg-border-weak-base",
 }
 
-// Point at a unit's text in the answer: the browser's own highlight (never wrapping or editing the answer's nodes).
-function highlight(root: HTMLElement, find: string) {
-  const registry = (globalThis.CSS as unknown as { highlights?: Map<string, unknown> } | undefined)?.highlights
+// Point at text in the answer with the browser's own highlights: never wrapping or editing the answer's nodes.
+type HighlightApi = { highlights?: Map<string, unknown> }
+const highlightApi = () => (globalThis.CSS as unknown as HighlightApi | undefined)?.highlights
+const makeHighlight = (ranges: Range[]) => {
   const Highlight = (globalThis as unknown as { Highlight?: new (...ranges: Range[]) => unknown }).Highlight
-  if (!registry || !Highlight) return
-  registry.delete("fold-ground")
-  if (!find) return
+  return Highlight && ranges.length ? new Highlight(...ranges) : undefined
+}
+
+/** The range of `[start, end)` in the root's rendered text. */
+function rangeAt(root: HTMLElement, start: number, end: number): Range | undefined {
   const doc = root.ownerDocument
   const walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT)
   const nodes: Text[] = []
   for (let node = walker.nextNode(); node; node = walker.nextNode()) nodes.push(node as Text)
-  const text = nodes.map((node) => node.data).join("")
-  const at = text.indexOf(find)
-  if (at < 0) return
-  const locate = (offset: number) => {
+  const locateAt = (offset: number) => {
     let seen = 0
     for (const node of nodes) {
       if (offset <= seen + node.data.length) return { node, offset: offset - seen }
       seen += node.data.length
     }
   }
-  const from = locate(at)
-  const to = locate(at + find.length)
-  if (!from || !to) return
+  const from = locateAt(start)
+  const to = locateAt(end)
+  if (!from || !to) return undefined
   const range = doc.createRange()
   range.setStart(from.node, from.offset)
   range.setEnd(to.node, to.offset)
-  registry.set("fold-ground", new Highlight(range))
+  return range
+}
+
+function highlight(root: HTMLElement, find: string) {
+  const registry = highlightApi()
+  if (!registry) return
+  registry.delete("fold-ground")
+  if (!find) return
+  const text = root.textContent ?? ""
+  const at = text.indexOf(find)
+  const range = at < 0 ? undefined : rangeAt(root, at, at + find.length)
+  const made = range ? makeHighlight([range]) : undefined
+  if (made) registry.set("fold-ground", made)
+}
+
+// The text the door CONTRADICTED (or could not find) stays marked in the answer itself; every other unit is read on hover. One
+// highlight for every answer on screen: each root keeps its own ranges.
+const marked = new Map<HTMLElement, Range[]>()
+function mark(root: HTMLElement, ranges: Range[]) {
+  const registry = highlightApi()
+  if (!registry) return
+  if (ranges.length) marked.set(root, ranges)
+  else marked.delete(root)
+  const made = makeHighlight([...marked.values()].flat())
+  if (made) registry.set("fold-bad", made)
+  else registry.delete("fold-bad")
+}
+
+let styled = false
+function ensureStyle() {
+  if (styled || typeof document === "undefined") return
+  styled = true
+  const style = document.createElement("style")
+  style.textContent =
+    "::highlight(fold-ground){background-color:color-mix(in srgb,var(--v2-state-fg-info,#4f8cff) 28%,transparent)}" +
+    "::highlight(fold-bad){text-decoration:underline wavy var(--v2-state-fg-danger,#e5484d);text-decoration-skip-ink:none}"
+  document.head.appendChild(style)
 }
 
 function Item(props: { item: ProfileItem; onPick: (find: string) => void }) {
@@ -263,56 +299,137 @@ export function ProfilePanel(props: { profile: ProfileView; onPick: (find: strin
   )
 }
 
-// The answer, untouched, with its profile panel under it. The hover tip below is the older per-sentence reading and
-// shows only for a ground that carries no profile.
+// The answer, untouched, with its profile panel under it. Point at any of its text and the tooltip is that unit's grounding (the
+// door's own reading of it, with the evidence and where it was found); text the door contradicted stays underlined in place.
 export function GroundHover(props: { view: GroundView; children: JSX.Element }) {
   let root: HTMLDivElement | undefined
-  const [tip, setTip] = createSignal<{ x: number; y: number; row: GroundRow }>()
-  onCleanup(() => highlight(document.body, ""))
+  let answer: HTMLDivElement | undefined
+  const [tip, setTip] = createSignal<{ x: number; y: number; row?: GroundRow; unit?: ProfileItem }>()
+  const located = (): Located[] => (props.view.profile && answer ? locate(props.view.profile.units, answer.textContent ?? "") : [])
+  ensureStyle()
+  onCleanup(() => {
+    highlight(document.body, "")
+    if (answer) mark(answer, [])
+  })
+  // the contradicted and not-found units stay underlined in the answer, recomputed as the answer renders
+  createEffect(() => {
+    const profile = props.view.profile
+    if (!profile) return
+    const redo = () => {
+      if (!answer) return
+      mark(
+        answer,
+        locate(profile.units, answer.textContent ?? "")
+          .filter((l) => l.unit.tone === "danger")
+          .flatMap((l) => rangeAt(answer!, l.start, l.end) ?? []),
+      )
+    }
+    redo()
+    const later = setTimeout(redo, 400)
+    onCleanup(() => clearTimeout(later))
+  })
 
   return (
-    <div
-      ref={root}
-      data-slot="fold-ground-hover"
-      onMouseMove={(event) => {
-        if (!root || props.view.profile) return
-        const offset = offsetAt(root, event.clientX, event.clientY)
-        const row = offset === undefined ? undefined : rowAt(props.view.rows, root.textContent ?? "", offset)
-        setTip(row ? { x: event.clientX, y: event.clientY, row } : undefined)
-      }}
-      onMouseLeave={() => setTip(undefined)}
-    >
-      {props.children}
+    <div ref={root} data-slot="fold-ground-hover">
+      <div
+        ref={answer}
+        data-slot="fold-ground-answer"
+        onMouseMove={(event) => {
+          if (!answer) return
+          const offset = offsetAt(answer, event.clientX, event.clientY)
+          if (offset === undefined) return setTip(undefined)
+          if (props.view.profile) {
+            const hit = unitAt(located(), offset)
+            const range = hit ? rangeAt(answer, hit.start, hit.end) : undefined
+            const registry = highlightApi()
+            const made = range ? makeHighlight([range]) : undefined
+            if (registry) made ? registry.set("fold-ground", made) : registry.delete("fold-ground")
+            return setTip(hit ? { x: event.clientX, y: event.clientY, unit: hit.unit } : undefined)
+          }
+          const row = rowAt(props.view.rows, answer.textContent ?? "", offset)
+          setTip(row ? { x: event.clientX, y: event.clientY, row } : undefined)
+        }}
+        onMouseLeave={() => {
+          setTip(undefined)
+          highlight(document.body, "")
+        }}
+      >
+        {props.children}
+      </div>
       <Show when={props.view.profile}>
-        {(profile) => <ProfilePanel profile={profile()} onPick={(find) => root && highlight(root, find)} />}
+        {(profile) => <ProfilePanel profile={profile()} onPick={(find) => answer && highlight(answer, find)} />}
       </Show>
       <Show when={tip()}>
         {(tip) => (
           <div
             data-slot="fold-ground-tip"
             class="pointer-events-none fixed z-50 max-w-[420px] rounded-md border border-border-weak-base bg-background-base p-2 text-13-regular leading-text-compact shadow-md"
-            style={{ left: `${tip().x + 12}px`, top: `${tip().y + 16}px` }}
+            style={{ left: `${Math.min(tip().x + 12, window.innerWidth - 440)}px`, top: `${tip().y + 16}px` }}
           >
-            <div class="font-[530] text-v2-text-text-faint">[{tip().row.tag}]</div>
-            <Show
-              when={tip().row.sources[0]}
-              fallback={
-                <div>
-                  {tip().row.standing === "self:model"
-                    ? "Nothing in what this turn read states this."
-                    : "No passage sentence located."}
-                </div>
-              }
-            >
-              {(source) => (
+            <Show when={tip().unit}>{(unit) => <UnitTip unit={unit()} />}</Show>
+            <Show when={tip().row}>
+              {(row) => (
                 <>
-                  <div>{source().text}</div>
-                  <div class="text-v2-text-text-faint">{source().passage}</div>
+                  <div class="font-[530] text-v2-text-text-faint">[{row().tag}]</div>
+                  <Show
+                    when={row().sources[0]}
+                    fallback={<div>{row().standing === "self:model" ? "Nothing in what this turn read states this." : "No passage sentence located."}</div>}
+                  >
+                    {(source) => (
+                      <>
+                        <div>{source().text}</div>
+                        <div class="text-v2-text-text-faint">{source().passage}</div>
+                      </>
+                    )}
+                  </Show>
                 </>
               )}
             </Show>
           </div>
         )}
+      </Show>
+    </div>
+  )
+}
+
+/** One unit's grounding, as the door read it: the verdict and why, what it rests on (its own bytes, addressed), what it leaves
+ *  uncarried, and where the door looked. Everything shown is the door's payload. */
+function UnitTip(props: { unit: ProfileItem }) {
+  return (
+    <div class="flex flex-col gap-1">
+      <div>
+        <span class={`font-[530] ${toneText[props.unit.tone]}`}>{props.unit.label}</span>
+        <Show when={props.unit.kind === "symbol"}>
+          <span class="text-v2-text-text-faint"> · {props.unit.title}</span>
+        </Show>
+      </div>
+      <Show when={props.unit.why}>{(why) => <div class="text-v2-text-text-faint">{why()}</div>}</Show>
+      <Show when={props.unit.evidence}>
+        {(evidence) => (
+          <div>
+            <div class="break-words rounded bg-border-weak-base px-1.5 py-1 font-mono text-12-regular">{evidence().text}</div>
+            <div class="text-v2-text-text-faint">
+              {evidence().source}
+              <Show when={evidence().ref && evidence().ref !== evidence().source}>{` · ${evidence().ref}`}</Show>
+            </div>
+          </div>
+        )}
+      </Show>
+      <For each={props.unit.from.slice(0, 3)}>
+        {(source) => (
+          <div>
+            <div class="break-words rounded bg-border-weak-base px-1.5 py-1 font-mono text-12-regular">{source.text}</div>
+            <div class="text-v2-text-text-faint">{source.ref ?? source.source}</div>
+          </div>
+        )}
+      </For>
+      <Show when={props.unit.residue.length > 0}>
+        <div class="text-v2-text-text-faint">Not in the source: {props.unit.residue.join(", ")}</div>
+      </Show>
+      <Show when={props.unit.janus}>{(finding) => <div class="text-v2-text-text-faint">Janus: {finding()}</div>}</Show>
+      <Show when={props.unit.who}>{(who) => <div class="text-v2-text-text-faint">Resolved to {who()}</div>}</Show>
+      <Show when={props.unit.tone === "warning" && props.unit.searched.length > 0}>
+        <div class="text-v2-text-text-faint">Looked in: {props.unit.searched.join(" \u2192 ")}</div>
       </Show>
     </div>
   )

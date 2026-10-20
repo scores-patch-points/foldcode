@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { readGround, rowAt } from "./fold-ground"
+import { locate, readGround, rowAt, unitAt } from "./fold-ground"
 
 const meta = (ground: unknown) => ({ notice: "fold-ground", ground })
 const step = {
@@ -100,5 +100,45 @@ describe("fold ground profile", () => {
   })
   test("a payload with no profile reads as none", () => {
     expect(readGround(meta({ step }))!.profile).toBeUndefined()
+  })
+})
+
+describe("pointing at the answer's text", () => {
+  const profile = {
+    kind: "essay",
+    counts: {},
+    claims: [
+      { text: "Marie Curie was born in 1869.", standing: "contradicted", why: "date of birth is 1867, not 1869" },
+      { text: "Yet discovery is never free.", standing: "argument" },
+      { text: "Marie Curie was born in 1869.", standing: "supported", evidence: { text: "x", ref: "a:1" } },
+      { text: "Wrap the call in withRetry from the file.", standing: "supported" },
+    ],
+    symbols: [{ kind: "call", name: "withRetry", standing: "found", ref: "retry.ts:1" }],
+  }
+  const units = readGround({ notice: "fold-ground", ground: { step: { grounded: [], profile } } })!.profile!.units
+  // the rendered text joins blocks with no space ("1869.Yet") and has other characters the sentences never carried
+  const text = "Marie Curie was born in 1869.Yet discovery is never free.\nMarie Curie was born in 1869.Wrap the call in withRetry from the file."
+
+  test("a claim is found by its letters across the joins the renderer makes", () => {
+    const at = locate(units, text).filter((l) => l.unit.kind !== "symbol")
+    expect(at.map((l) => text.slice(l.start, l.end))).toEqual([
+      "Marie Curie was born in 1869.",
+      "Yet discovery is never free.",
+      "Marie Curie was born in 1869.",
+      "Wrap the call in withRetry from the file.",
+    ])
+  })
+  test("a sentence said twice is two units, in order, not the first one twice", () => {
+    const second = text.lastIndexOf("Marie Curie")
+    expect(unitAt(locate(units, text), second + 3)!.unit.label).toBe("Supported")
+    expect(unitAt(locate(units, text), 3)!.unit.label).toBe("Contradicted")
+  })
+  test("argument is located too, and marked as not checked; a symbol inside its sentence wins where it is pointed at", () => {
+    expect(unitAt(locate(units, text), text.indexOf("discovery"))!.unit.label).toBe("Argument")
+    expect(unitAt(locate(units, text), text.indexOf("withRetry") + 2)!.unit.kind).toBe("symbol")
+    expect(unitAt(locate(units, text), text.indexOf("the file"))!.unit.kind).toBe("claim")
+  })
+  test("text no unit covers is not guessed at", () => {
+    expect(unitAt(locate(units, text + " Something the door never typed."), text.length + 5)).toBeUndefined()
   })
 })
