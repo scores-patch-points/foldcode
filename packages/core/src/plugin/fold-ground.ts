@@ -165,3 +165,14 @@ export const groundSteer = (profile: Profile | undefined): string | undefined =>
   )
   return lines.join("\n")
 }
+
+/** Is the check's finding handed back to the model? Not when there is nothing to say, a note is already outstanding, a gather answered the ask,
+ *  the turn already used tools (a hand-back restores them: measured 86 more requests, 832k tokens, on a 2.9k-token answer), or this ask was already steered once. */
+export const shouldHandBack = (s: {
+  note: string | undefined
+  outstanding: boolean
+  gathered: boolean
+  toolResults: number
+  steeredAsk: string | undefined
+  ask: string
+}): boolean => Boolean(s.note) && !s.outstanding && !s.gathered && s.toolResults === 0 && s.steeredAsk !== s.ask

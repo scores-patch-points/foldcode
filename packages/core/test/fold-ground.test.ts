@@ -103,7 +103,7 @@ describe("fold grounding hand-back", () => {
   }
 
   test("the note carries the door's own findings: what a source says, the name that differs, the figures resting on nothing", async () => {
-    const { groundSteer, GROUND_STEER_HEAD } = await import("../src/plugin/fold-ground")
+    const { groundSteer, shouldHandBack, GROUND_STEER_HEAD } = await import("../src/plugin/fold-ground")
     const note = groundSteer(profile)!
     expect(note.startsWith(GROUND_STEER_HEAD)).toBe(true)
     expect(note).toContain('"Marie Curie was born in 1869." — date of birth is 1867, not 1869; wikidata: Marie Curie (Q7186) says: "date of birth: 1867-11-07" (Q7186#P569)')
@@ -126,5 +126,22 @@ describe("fold grounding hand-back", () => {
   test("what the model is told is facts and instructions to read, never a prohibition (a small mouth's safety gate trips on those)", async () => {
     const { GROUND_LEGEND, groundSteer } = await import("../src/plugin/fold-ground")
     for (const text of [GROUND_LEGEND, groundSteer(profile)!]) expect(text).not.toMatch(/\b(do not|don't|never|must not|cannot|forbidden)\b/i)
+  })
+})
+
+describe("shouldHandBack", () => {
+  const base = { note: "found something", outstanding: false, gathered: false, toolResults: 0, steeredAsk: undefined as string | undefined, ask: "what is x" }
+  test("a plain answer with a finding is handed back once", async () => {
+    const { shouldHandBack } = await import("../src/plugin/fold-ground")
+    expect(shouldHandBack(base)).toBe(true)
+    expect(shouldHandBack({ ...base, steeredAsk: "what is x" })).toBe(false)
+    expect(shouldHandBack({ ...base, steeredAsk: "an earlier ask" })).toBe(true)
+  })
+  test("never when there is no note, one is outstanding, a gather answered, or the turn used tools", async () => {
+    const { shouldHandBack } = await import("../src/plugin/fold-ground")
+    expect(shouldHandBack({ ...base, note: undefined })).toBe(false)
+    expect(shouldHandBack({ ...base, outstanding: true })).toBe(false)
+    expect(shouldHandBack({ ...base, gathered: true })).toBe(false)
+    expect(shouldHandBack({ ...base, toolResults: 3 })).toBe(false)
   })
 })
