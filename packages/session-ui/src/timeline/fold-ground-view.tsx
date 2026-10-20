@@ -40,6 +40,8 @@ const offsetAt = (root: HTMLElement, x: number, y: number) => {
   }
 }
 
+const UNSETTLED_SHOWN = 3
+
 const toneText: Record<ProfileTone, string> = {
   danger: "text-v2-state-fg-danger",
   warning: "text-v2-state-fg-warning",
@@ -159,6 +161,9 @@ function Item(props: { item: ProfileItem; onPick: (find: string) => void }) {
 export function ProfilePanel(props: { profile: ProfileView; onPick: (find: string) => void }) {
   const total = () => props.profile.bar.reduce((sum, part) => sum + part.n, 0)
   const [fine, setFine] = createSignal(false)
+  const [more, setMore] = createSignal(false)
+  // contradicted and not-found items always show; a long run of merely unsupported ones is collapsed behind a count
+  const unsettled = () => props.profile.look.filter((item) => item.tone !== "danger")
   return (
     <div
       data-slot="fold-profile"
@@ -194,10 +199,19 @@ export function ProfilePanel(props: { profile: ProfileView; onPick: (find: strin
       <Show when={props.profile.researching}>
         <div class="text-v2-text-text-faint">Checking the unsupported claims against the workspace and Wikipedia…</div>
       </Show>
+      <Show when={props.profile.noMaterial}>
+        <div class="text-v2-text-text-faint">Nothing was read this turn, so these claims rest on the model's own knowledge.</div>
+      </Show>
       <Show when={props.profile.look.length > 0}>
         <div class="flex flex-col gap-1">
           <div class="text-v2-text-text-faint">Needs a look · {props.profile.look.length}</div>
-          <For each={props.profile.look}>{(item) => <Item item={item} onPick={props.onPick} />}</For>
+          <For each={props.profile.look.filter((item) => item.tone === "danger")}>{(item) => <Item item={item} onPick={props.onPick} />}</For>
+          <For each={more() ? unsettled() : unsettled().slice(0, UNSETTLED_SHOWN)}>{(item) => <Item item={item} onPick={props.onPick} />}</For>
+          <Show when={unsettled().length > UNSETTLED_SHOWN}>
+            <button type="button" class="cursor-pointer text-start text-v2-text-text-faint" onClick={() => setMore(!more())}>
+              {more() ? "Show fewer" : `Show ${unsettled().length - UNSETTLED_SHOWN} more unsupported`}
+            </button>
+          </Show>
         </div>
       </Show>
       <Show when={props.profile.leftOut}>
