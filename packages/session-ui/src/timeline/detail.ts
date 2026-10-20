@@ -114,7 +114,9 @@ export function timelineNoticeRequired(message: SessionMessageInfo) {
   if (message.type !== "synthetic") return false
   const metadata = message.metadata
 
+  // The ground rides the answer: a detail level that hides notices never hides it.
   return (
+    metadata?.notice === "fold-ground" ||
     metadata?.state === "error" ||
     (metadata?.source === "shell" && metadata.state === "completed" && shellResultFailed(metadata))
   )
