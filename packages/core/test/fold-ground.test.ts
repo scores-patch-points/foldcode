@@ -71,3 +71,13 @@ describe("fold ground payload", () => {
     expect(groundHead(p)).toBe("fold facing · the profile · essay · 2 supported · 1 contradicted · 1 unsupported · researching")
   })
 })
+
+describe("fold ground notice", () => {
+  test("the ground and profile notices never read as a wake (they are committed on the bus, not admitted)", async () => {
+    const { isGroundNotice, isPersonNotice } = await import("../src/plugin/fold")
+    expect(isGroundNotice("fold facing · the profile · essay · 2 supported")).toBe(true)
+    expect(isGroundNotice("fold facing · the ground · no step this turn")).toBe(true)
+    expect(isGroundNotice("fold facing · 3 grounded · 1 self")).toBe(false)
+    expect(isPersonNotice("fold facing · the profile · essay")).toBe(true)
+  })
+})
