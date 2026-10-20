@@ -74,7 +74,7 @@ describe("fold ground profile", () => {
   test("items that need a look are the contradicted, unsupported and not-found ones, with the door's own reasons", () => {
     expect(view().look.map((item) => [item.label, item.tone])).toEqual([
       ["Contradicted", "danger"],
-      ["Added", "warning"],
+      ["Not in the sources", "warning"],
       ["Contradicted", "danger"],
     ])
     expect(view().look[0].why).toBe("date of birth is 1867, not 1869")
@@ -82,7 +82,7 @@ describe("fold ground profile", () => {
   })
   test("a derived sentence carries the several source sentences it abstracts; Janus's finding and the residue ride along", () => {
     const fine = view().fine
-    expect(fine.map((item) => item.label)).toEqual(["Derived", "Supported"])
+    expect(fine.map((item) => item.label)).toEqual(["From the sources", "Supported"])
     expect(fine[0].from[0].ref).toBe("minutes.md:1:66")
     expect(fine[1].janus).toBe("the declared oracle confirms it (mathjs)")
     expect(fine[1].residue).toEqual(["prizes"])

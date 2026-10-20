@@ -141,7 +141,7 @@ export function readProfile(profile: Record<string, unknown> | undefined): Profi
         key: `c${i}`,
         kind: standing === "argument" ? ("argument" as const) : ("claim" as const),
         tone: shown.tone,
-        label: claim.derived === true ? "Derived" : claim.added === true ? "Added" : shown.label,
+        label: claim.derived === true ? "From the sources" : claim.added === true ? "Not in the sources" : shown.label,
         title: text,
         find: text,
         why: standing === "argument" ? "Not checked: nothing here is a claim about the material or the world." : str(claim.why),
