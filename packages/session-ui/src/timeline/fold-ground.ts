@@ -54,6 +54,8 @@ export type ProfileView = {
   beings: Array<{ name: string; verdict: string; label?: string; qid?: string; url?: string; basis?: string }>
   researching: boolean
   researchMs?: number
+  /** nothing was read this turn: every claim rests on the model's own knowledge */
+  noMaterial: boolean
   /** a summary's second reading: what it left out (beings the material speaks of, figures it states, never carried) */
   leftOut?: { beings: Array<{ name: string; mentions: number }>; figures: Array<{ figure: string; text: string; ref?: string }> }
 }
@@ -201,6 +203,7 @@ export function readProfile(profile: Record<string, unknown> | undefined): Profi
           ]
         : [],
     ),
+    noMaterial: profile.noMaterial === true,
     researching: research?.on === false && num(research.pending) > 0,
     researchMs: research?.on === true ? num(research.ms) : undefined,
     leftOut: readLeftOut(record(record(profile.summary)?.leftOut)),

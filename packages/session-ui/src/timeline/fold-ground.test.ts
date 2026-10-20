@@ -92,6 +92,12 @@ describe("fold ground profile", () => {
     expect(view().leftOut?.beings).toEqual([{ name: "the mayor", mentions: 2 }])
     expect(view().leftOut?.figures[0].figure).toBe("7 to 4")
   })
+  test("a turn that read nothing says so, and the unsettled items are kept apart from the contradicted", () => {
+    const quiet = readGround(meta({ step: { grounded: [], profile: { ...profile, noMaterial: true } } }))!.profile!
+    expect(quiet.noMaterial).toBe(true)
+    expect(view().noMaterial).toBe(false)
+    expect(quiet.look.filter((item) => item.tone === "danger").length).toBeGreaterThan(0)
+  })
   test("a payload with no profile reads as none", () => {
     expect(readGround(meta({ step }))!.profile).toBeUndefined()
   })
