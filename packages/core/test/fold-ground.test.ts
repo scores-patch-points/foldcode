@@ -51,7 +51,23 @@ describe("fold ground payload", () => {
       { name: "grep", text: "bbbb" },
     ])
     expect(gatherPassages([{ name: "read", text: "Read file /a/mat.txt, lines 1-2\n1: Marie Curie." }])).toEqual([
-      { name: "/a/mat.txt", text: "1: Marie Curie." },
+      { name: "/a/mat.txt", text: "Marie Curie." },
     ])
+    expect(gatherPassages([{ name: "read", text: "Read file /a/mat.txt, lines 3-4\n3: She won twice.\n4: 12 papers." }])).toEqual([
+      { name: "/a/mat.txt", text: "\n\nShe won twice.\n12 papers." },
+    ])
+  })
+  test("the door's profile rides the payload untouched and heads the notice", () => {
+    const profile = {
+      v: 2 as const,
+      kind: "essay",
+      counts: { supported: 2, contradicted: 1, unsupported: 1, not_found: 0, symbol_contradicted: 0 },
+      claims: [{ text: "She was born in 1869.", standing: "contradicted" }],
+      symbols: [],
+      research: { on: false, pending: 1 },
+    }
+    const p = groundPayload({ step: { ...answer.step, profile } }, "full")!
+    expect(p.step?.profile).toEqual(profile)
+    expect(groundHead(p)).toBe("fold facing · the profile · essay · 2 supported · 1 contradicted · 1 unsupported · researching")
   })
 })

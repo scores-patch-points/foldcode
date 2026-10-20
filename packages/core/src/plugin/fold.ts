@@ -43,6 +43,10 @@ const off = process.env.FOLD_OFF === "1"
 const askTimeout = Number(process.env.FOLD_TIMEOUT_MS ?? 1500)
 // The ground is computed after the answer, off the request path, so it may take longer than a context read (the door loads its parsers on first use).
 const groundTimeout = Number(process.env.FOLD_GROUND_TIMEOUT_MS ?? 15000)
+// The falsifier's research (the workspace, then Wikidata/Wikipedia/Wiktionary at one request per 10 s) runs as a second
+// pass after the quick profile is already on the answer; names never looked up before can take a minute.
+const researchTimeout = Number(process.env.FOLD_RESEARCH_TIMEOUT_MS ?? 120_000)
+const researchOn = process.env.FOLD_RESEARCH !== "0"
 const foldTimeout = Number(process.env.FOLD_FOLD_TIMEOUT_MS ?? 20_000)
 // The swarm is model-free but reads the material through the door's capacity
 // organs; it gets a longer budget than a recall note while still failing open.
@@ -1553,6 +1557,8 @@ export const Plugin = define({
     const lastAsk = new Map<string, string>()
     // What the turn was handed to read (its tool results), kept so the door can ground the answer against it.
     const turnMaterial = new Map<string, Array<{ name: string; text: string }>>()
+    // What the model itself said earlier in the session, so the door never reads its own words back as evidence for them.
+    const ownTexts = new Map<string, string[]>()
     const noticeWoken = new Map<string, string>()
     const lastNote = new Map<string, string>()
     const lastModel = new Map<string, { providerID: string; id: string }>()
@@ -2567,21 +2573,27 @@ export const Plugin = define({
         if (text.trim().length < 8) return
         if (noticeWoken.get(sessionID) === lastAsk.get(sessionID)) return
         const workspace = yield* workspaceOf(sessionID)
-        const answer = yield* post(
-          { event: "ground", sessionID, agent: sessionID, workspace, universe: process.env.FOLD_UNIVERSE ?? "world", text, ask: lastAsk.get(sessionID) ?? "", passages: gatherPassages(turnMaterial.get(sessionID) ?? []) },
-          groundTimeout,
-          true,
-        )
+        const own = ownTexts.get(sessionID) ?? []
+        ownTexts.set(sessionID, [...own, text].slice(-20))
+        const body = { event: "ground", sessionID, agent: sessionID, workspace, universe: process.env.FOLD_UNIVERSE ?? "world", text, ask: lastAsk.get(sessionID) ?? "", passages: gatherPassages(turnMaterial.get(sessionID) ?? []), own }
+        // Two passes, one answer: the quick profile (the turn's own material) lands at once; the falsifier's research
+        // follows and its profile supersedes the first on the answer (the window shows the latest).
+        const answer = yield* post({ ...body, ...(facingNative && researchOn ? { research: false } : {}) }, groundTimeout, true)
         const ground = facingNative ? groundPayload(answer, facingLevel) : undefined
         if (ground) {
           // The window draws the ground on the answer from this metadata; the text only keeps the person-notice
           // prefix (never sent to the model) and is the fallback for a window that cannot read the metadata.
-          yield* bus.publish(SessionEvent.Synthetic, {
-            sessionID: sessionID as never,
-            text: groundHead(ground),
-            description: "fold facing — how this answer grounds",
-            metadata: { notice: "fold-ground", ground },
-          })
+          const publish = (payload: typeof ground) =>
+            bus.publish(SessionEvent.Synthetic, {
+              sessionID: sessionID as never,
+              text: groundHead(payload),
+              description: "fold facing — how this answer grounds",
+              metadata: { notice: "fold-ground", ground: payload },
+            })
+          yield* publish(ground)
+          if (!researchOn || (ground.step?.profile?.research?.pending ?? 0) === 0) return
+          const researched = groundPayload(yield* post({ ...body, research: true }, researchTimeout, true), facingLevel)
+          if (researched?.step?.profile) yield* publish(researched)
           return
         }
         const note = facingNote(answer)
