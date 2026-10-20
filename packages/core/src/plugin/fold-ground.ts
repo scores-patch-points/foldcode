@@ -108,3 +108,60 @@ export const gatherPassages = (chunks: Array<{ name: string; text: string }>, bu
   }
   return out
 }
+
+/** What the model is told BEFORE it answers, in facts: how its sentences are checked and what makes one supported. Positive
+ *  statements only (a prohibition in text handed to a small model trips its safety gate). */
+export const GROUND_LEGEND = [
+  "# How your sentences are checked",
+  "After you answer, each sentence of your answer is typed against what can be read: this turn's tool results (read, grep, fetch),",
+  "the workspace, Wikipedia and Wikidata. The person sees every sentence marked supported (with the source's own sentence and its",
+  "address), contradicted (with what the source says instead), or unsupported (nothing read states it). Dates, counts, names and",
+  "figures are checked hardest.",
+  "A sentence is supported when a source read this turn states it. A sentence from memory is shown as unsupported until a source",
+  "states it. When a question has a checkable answer, reading or looking it up first and then writing what the source says gives the",
+  "person sentences marked supported, each with its source. A sentence that comes from memory can say so.",
+].join("\n")
+
+/** The head of the grounding note, so the plugin can tell an answer to a steer from an answer to the person. */
+export const GROUND_STEER_HEAD = "Grounding check of your last answer"
+
+const clip = (value: unknown, max = 200) => (typeof value === "string" ? value.replace(/\s+/g, " ").trim().slice(0, max) : "")
+const field = (row: Record<string, unknown>, key: string) => {
+  const value = row[key]
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined
+}
+
+/** The door's finding, handed back to the model as facts: what a source contradicts (with the source's own text), the symbols that do
+ *  not match what was read, and the figures that rest on nothing read. undefined when the check found nothing worth a second look.
+ *  Mechanical: every line is the door's payload; the model is told, never graded by itself. */
+export const groundSteer = (profile: Profile | undefined): string | undefined => {
+  if (!profile) return undefined
+  const contradicted = profile.claims.filter((c) => c.standing === "contradicted" && clip(c.text))
+  const symbols = profile.symbols.filter((c) => (c.standing === "contradicted" || c.standing === "not_found") && clip(c.name))
+  const bare = profile.claims.filter((c) => (c.standing === "unsupported" || c.added === true) && /\d/.test(clip(c.text)) && clip(c.text))
+  if (contradicted.length + symbols.length === 0 && bare.length < 2) return undefined
+  const lines: string[] = [
+    `${GROUND_STEER_HEAD} (mechanical: this turn's reads, the workspace, Wikipedia and Wikidata). The person sees these marks on it.`,
+  ]
+  if (contradicted.length) {
+    lines.push("Contradicted by a source:")
+    for (const c of contradicted.slice(0, 4)) {
+      const evidence = field(c, "evidence")
+      lines.push(
+        `- "${clip(c.text)}" — ${clip(c.why) || "a source states otherwise"}${evidence ? `; ${clip(evidence.source, 80)} says: "${clip(evidence.text, 220)}"${clip(evidence.ref, 60) ? ` (${clip(evidence.ref, 60)})` : ""}` : ""}`,
+      )
+    }
+  }
+  if (symbols.length) {
+    lines.push("Names that differ from what was read:")
+    for (const c of symbols.slice(0, 3)) lines.push(`- \`${clip(c.name, 80)}\` — ${clip(c.why) || "no definition in what was read"}`)
+  }
+  if (bare.length) {
+    lines.push("Resting on nothing read this turn:")
+    for (const c of bare.slice(0, 4)) lines.push(`- "${clip(c.text)}"`)
+  }
+  lines.push(
+    "A sentence becomes supported when a source you have read states it. Reading the source for the sentences above and restating them in what it says gives the person a corrected answer with its sources; a sentence that stays from memory can say so.",
+  )
+  return lines.join("\n")
+}

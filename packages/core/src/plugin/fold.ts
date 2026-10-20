@@ -27,7 +27,7 @@ import { record as rulerRecord, recordTokens as rulerTokens } from "./fold-ruler
 import { tap as usageTap } from "./usage-tap.js"
 import { Bus } from "../bus.js"
 import { SessionEvent } from "../session/event.js"
-import { gatherPassages, groundHead, groundPayload } from "./fold-ground.js"
+import { GROUND_LEGEND, gatherPassages, groundHead, groundPayload, groundSteer } from "./fold-ground.js"
 import * as Physics from "./physics.js"
 import * as Learn from "./physics-learn.js"
 import fs from "node:fs"
@@ -47,6 +47,10 @@ const groundTimeout = Number(process.env.FOLD_GROUND_TIMEOUT_MS ?? 15000)
 // pass after the quick profile is already on the answer; names never looked up before can take a minute.
 const researchTimeout = Number(process.env.FOLD_RESEARCH_TIMEOUT_MS ?? 120_000)
 const researchOn = process.env.FOLD_RESEARCH !== "0"
+// The check is handed back to the model once per answer (a contradicted sentence, a name that does not match, figures resting on
+// nothing read) so the next answer carries its sources. FOLD_GROUND_STEER=0 turns the hand-back off, FOLD_GROUND_LEGEND=0 the legend.
+const groundSteerOn = process.env.FOLD_GROUND_STEER !== "0"
+const groundLegendOn = process.env.FOLD_GROUND_LEGEND !== "0"
 const foldTimeout = Number(process.env.FOLD_FOLD_TIMEOUT_MS ?? 20_000)
 // The swarm is model-free but reads the material through the door's capacity
 // organs; it gets a longer budget than a recall note while still failing open.
@@ -1563,6 +1567,8 @@ export const Plugin = define({
     const turnMaterial = new Map<string, Array<{ name: string; text: string }>>()
     // What the model itself said earlier in the session, so the door never reads its own words back as evidence for them.
     const ownTexts = new Map<string, string[]>()
+    // A session whose last answer was handed a grounding note: the NEXT answer replies to that note and is not handed another.
+    const steerOutstanding = new Set<string>()
     const noticeWoken = new Map<string, string>()
     const lastNote = new Map<string, string>()
     const lastModel = new Map<string, { providerID: string; id: string }>()
@@ -2074,6 +2080,9 @@ export const Plugin = define({
         if (folded) lastNote.set(event.sessionID, proj)
         // THE LEGEND, once, only when a projection was injected — the frontier's schema for the blocks above.
         if (folded && process.env.FOLD_LEGEND !== "0") event.system.push({ type: "text", text: FOLD_LEGEND })
+        // HOW THE ANSWER IS CHECKED, told before it is written: a model that knows its sentences are typed against what it read
+        // reads first. Facts only; the person sees the same marks. FOLD_GROUND_LEGEND=0 turns it off.
+        if (facingOn && facingNative && groundLegendOn) event.system.push({ type: "text", text: GROUND_LEGEND })
         yield* foldMessages(event)
         if (trailOn) yield* trailMessages(event)
         // THE HARD CAP: after every fold, the frontier's window is bounded absolutely (FOLD_MAX_CHARS).
@@ -2595,10 +2604,25 @@ export const Plugin = define({
               metadata: { notice: "fold-ground", ground: payload },
             })
           yield* publish(ground)
-          if (!researchOn || (ground.step?.profile?.research?.pending ?? 0) === 0) return
+          const replyToSteer = steerOutstanding.delete(sessionID)
+          // the hand-back: once the check is final (after research when research is pending), the model is told what it found
+          const handBack = (final: typeof ground | undefined) =>
+            Effect.gen(function* () {
+              const note = groundSteerOn && !replyToSteer ? groundSteer(final?.step?.profile) : undefined
+              if (!note || steerOutstanding.has(sessionID)) return
+              steerOutstanding.add(sessionID)
+              yield* ctx.session.synthetic({
+                sessionID,
+                text: note,
+                description: "fold grounding — what the check found",
+                delivery: "queue",
+                resume: true,
+              })
+            })
+          if (!researchOn || (ground.step?.profile?.research?.pending ?? 0) === 0) return yield* handBack(ground)
           const researched = groundPayload(yield* post({ ...body, research: true }, researchTimeout, true), facingLevel)
           if (researched?.step?.profile) yield* publish(researched)
-          return
+          return yield* handBack(researched?.step?.profile ? researched : ground)
         }
         const note = facingNote(answer)
         if (!note) return

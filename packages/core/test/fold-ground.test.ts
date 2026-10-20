@@ -81,3 +81,50 @@ describe("fold ground notice", () => {
     expect(isPersonNotice("fold facing · the profile · essay")).toBe(true)
   })
 })
+
+describe("fold grounding hand-back", () => {
+  const profile = {
+    v: 2 as const,
+    kind: "essay",
+    counts: {},
+    claims: [
+      {
+        text: "Marie Curie was born in 1869.",
+        standing: "contradicted",
+        why: "date of birth is 1867, not 1869",
+        evidence: { source: "wikidata: Marie Curie (Q7186)", ref: "Q7186#P569", text: "date of birth: 1867-11-07" },
+      },
+      { text: "She won two Nobel Prizes.", standing: "supported" },
+      { text: "Sponge-tool use was first documented in 1984.", standing: "unsupported" },
+      { text: "The Marine Mammal Protection Act passed in 1972.", standing: "unsupported" },
+      { text: "Dolphins are graceful.", standing: "argument" },
+    ],
+    symbols: [{ kind: "key", name: "backoffMs", standing: "contradicted", why: "withRetry takes { attempts, delayMs }" }],
+  }
+
+  test("the note carries the door's own findings: what a source says, the name that differs, the figures resting on nothing", async () => {
+    const { groundSteer, GROUND_STEER_HEAD } = await import("../src/plugin/fold-ground")
+    const note = groundSteer(profile)!
+    expect(note.startsWith(GROUND_STEER_HEAD)).toBe(true)
+    expect(note).toContain('"Marie Curie was born in 1869." — date of birth is 1867, not 1869; wikidata: Marie Curie (Q7186) says: "date of birth: 1867-11-07" (Q7186#P569)')
+    expect(note).toContain("`backoffMs` — withRetry takes { attempts, delayMs }")
+    expect(note).toContain('"Sponge-tool use was first documented in 1984."')
+    expect(note).not.toContain("Dolphins are graceful")
+    expect(note).not.toContain("She won two Nobel Prizes")
+  })
+  test("nothing worth a second look is not handed back: supported claims, argument, a single bare figure", async () => {
+    const { groundSteer } = await import("../src/plugin/fold-ground")
+    expect(groundSteer({ ...profile, claims: profile.claims.filter((c) => c.standing === "supported" || c.standing === "argument"), symbols: [] })).toBeUndefined()
+    expect(groundSteer({ ...profile, claims: [profile.claims[2]], symbols: [] })).toBeUndefined()
+    expect(groundSteer(undefined)).toBeUndefined()
+  })
+  test("a contradiction alone is enough, and two bare figures are enough", async () => {
+    const { groundSteer } = await import("../src/plugin/fold-ground")
+    expect(groundSteer({ ...profile, claims: [profile.claims[0]], symbols: [] })).toContain("Contradicted by a source:")
+    expect(groundSteer({ ...profile, claims: [profile.claims[2], profile.claims[3]], symbols: [] })).toContain("Resting on nothing read this turn:")
+  })
+  test("what the model is told is facts and instructions to read, never a prohibition (a small mouth's safety gate trips on those)", async () => {
+    const { GROUND_LEGEND, groundSteer } = await import("../src/plugin/fold-ground")
+    for (const text of [GROUND_LEGEND, groundSteer(profile)!]) expect(text).not.toMatch(/\b(do not|don't|never|must not|cannot|forbidden)\b/i)
+  })
+})
