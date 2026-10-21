@@ -11,6 +11,9 @@ import fs from "node:fs"
 import path from "node:path"
 import * as Void from "./physics-void.js"
 import * as Learn from "./physics-learn.js"
+import * as Gather from "./physics-gather.js"
+
+export { Gather }
 
 // ── the derived act ─────────────────────────────────────────────────────────
 
@@ -104,15 +107,27 @@ export const findAdd = (reply: string) => {
 
 // ── the resolver: does a derived path serve this turn ───────────────────────
 
-export type Class = "read" | "edit" | "shell" | "other"
+export type Class = "read" | "edit" | "shell" | "search" | "other"
 
 const EDIT = /\b(change|replace|rename|fix|add|insert|remove|delete|update|set|make|edit|modify|rewrite|append|refactor|correct|swap|convert|bump)\b/i
 const READ = /\b(read|show|what|which|explain|summari[sz]e|describe|look at|open|print|list|tell me|how does|why)\b/i
 const SHELL = /\b(run|execute|install|build|test|compile|start|npm|bun|pip|git|make|curl|brew|ls|cd)\b/i
 
+/** An ask that names the codebase's own things (the code, a repo, a file, a function, a test, a config) or is shaped like code (a backtick, a call, a
+ *  camelCase or snake_case identifier): what it wants is in the workspace, and the web has nothing to say about it. */
+const WORKSPACE = /\b(?:code|codebase|repo|repos|repository|project|projects|files?|folders?|director(?:y|ies)|functions?|class(?:es)?|methods?|modules?|tests?|specs?|bugs?|errors?|commits?|branch(?:es)?|workspace|src|configs?|configuration|imports?|variables?|symbols?|lint|builds?|compile|usages?|references|dependenc(?:y|ies)|packages?|stack ?trace|logs?)\b/i
+const CODEY = /`|\(\)|\b[a-z]+[A-Z][A-Za-z]*\b|\b[A-Za-z]+_[A-Za-z_]+\b|::|=>/
+export const workspaceish = (ask: string) => WORKSPACE.test(ask) || CODEY.test(ask)
+
+/** A long piece asked for by its kind and a writing verb ("write me an essay about ..."): written section by section from the pages (opencode-essay.mjs). */
+export const essayAsk = (ask: string) => /\b(?:essay|article|report|paper|white ?paper|write-?up|blog post|analysis|long[- ]?form)\b/i.test(ask) && /\b(?:write|draft|compose|produce|prepare|create|make)\b/i.test(ask)
+
 export const classify = (ask: string): Class => {
   if (EDIT.test(ask)) return "edit"
   if (/\b(run|execute|install|npm|bun|pip|git|curl|brew)\b/i.test(ask)) return "shell"
+  // a search names no file and none of the workspace's own things: "find the bug in calc.py" is a read of calc.py, "search the codebase for TODO"
+  // is the workspace's to search, "find me a corpus for OCR" is a gather. When in doubt it is NOT a search: the tool path can still search the web.
+  if (Gather.SEARCH.test(ask) && named(ask).length === 0 && Gather.terms(ask).length >= 2 && !workspaceish(ask)) return "search"
   if (READ.test(ask)) return "read"
   if (SHELL.test(ask)) return "shell"
   return "other"
@@ -130,6 +145,7 @@ export const repetitive = (code: string) => {
 export type Plan =
   | { kind: "read"; file: string; abs: string; content: string }
   | { kind: "edit"; file: string; abs: string; before: string; form: "file" | "pair" }
+  | { kind: "gather"; ask: string; queries: string[] }
   | { kind: "decline"; reason: string }
 
 export const WHOLE_MAX = Number(process.env.FOLD_PHYSICS_WHOLE_MAX ?? 3500)
@@ -145,6 +161,8 @@ export const resolve = (ask: string, workspace: string): Plan => {
   const cls = classify(ask)
   if (cls === "shell") return { kind: "decline", reason: "shell-class: the machine does not run a command the model merely wrote" }
   if (cls === "other") return { kind: "decline", reason: "the ask is not read/edit-class" }
+  // the queries are the ask's own words; the gather itself (search, fetch) happens where there is IO
+  if (cls === "search") return { kind: "gather", ask, queries: Gather.queries(ask) }
   const hits: { file: string; abs: string }[] = []
   for (const w of named(ask)) {
     const abs = path.resolve(workspace, w)
@@ -172,7 +190,7 @@ export const resolve = (ask: string, workspace: string): Plan => {
 
 const lang = (file: string) => path.extname(file).slice(1)
 
-export const present = (plan: Exclude<Plan, { kind: "decline" }>, ask: string) => {
+export const present = (plan: Exclude<Plan, { kind: "decline" | "gather" }>, ask: string) => {
   const block = (plan.kind === "read" ? plan.content : plan.before).replace(/\n$/, "")
   const shown = `${plan.file}:\n\`\`\`${lang(plan.file)}\n${block}\n\`\`\``
   if (plan.kind === "read") return `${ask}\n\n${shown}`

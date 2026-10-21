@@ -27,7 +27,7 @@ import { record as rulerRecord, recordTokens as rulerTokens } from "./fold-ruler
 import { tap as usageTap } from "./usage-tap.js"
 import { Bus } from "../bus.js"
 import { SessionEvent } from "../session/event.js"
-import { GROUND_LEGEND, gatherPassages, groundHead, groundPayload, groundSteer } from "./fold-ground.js"
+import { GROUND_LEGEND, gatherPassages, groundHead, groundPayload, groundSteer, shouldHandBack } from "./fold-ground.js"
 import * as Physics from "./physics.js"
 import * as Learn from "./physics-learn.js"
 import fs from "node:fs"
@@ -42,7 +42,7 @@ const off = process.env.FOLD_OFF === "1"
 // FOLD_TIMEOUT_MS moves it.
 const askTimeout = Number(process.env.FOLD_TIMEOUT_MS ?? 1500)
 // The ground is computed after the answer, off the request path, so it may take longer than a context read (the door loads its parsers on first use).
-const groundTimeout = Number(process.env.FOLD_GROUND_TIMEOUT_MS ?? 15000)
+const groundTimeout = Number(process.env.FOLD_GROUND_TIMEOUT_MS ?? 45000)
 // The falsifier's research (the workspace, then Wikidata/Wikipedia/Wiktionary at one request per 10 s) runs as a second
 // pass after the quick profile is already on the answer; names never looked up before can take a minute.
 const researchTimeout = Number(process.env.FOLD_RESEARCH_TIMEOUT_MS ?? 120_000)
@@ -94,6 +94,34 @@ const physicsAskFrontier = async (prompt: string) => {
   return ((await res.json()) as { choices?: { message?: { content?: string } }[] }).choices?.[0]?.message?.content
 }
 const physicsServes = (providerID: string) => physicsMode === "1" || (physicsMode === "auto" && physicsProviders.includes(providerID))
+// GATHER (physics-gather.ts). A search ask ("find me a corpus of sample documents for OCR training") is answered from what the
+// machine read: it runs the searches and fetches itself, offers the model no tool, and hands over the sentences it read. That is a
+// cost cut, not a reliability workaround, so it serves every provider; FOLD_GATHER=0 turns it off. Same heimdall search as the
+// "this machine" engine below.
+const gatherOn = process.env.FOLD_GATHER !== "0"
+// The research itself runs in the door (khora opencode-gather.mjs: the Holodeck's research and its summary selected by the asker's
+// stance, in a worker thread, no model). By default the door also ANSWERS: one model call is pointed at the door's local endpoint, which
+// replies with the text it assembled, so no model runs and no token is spent. FOLD_GATHER_MODEL=1 has a real model write the answer from
+// the lines read instead. Only providers listed in FOLD_GATHER_VIA_DOOR are pointed at the door (it speaks the OpenAI chat wire format).
+const gatherZero = process.env.FOLD_GATHER_MODEL !== "1"
+// THE CONVERSATION ROUTER (khora opencode-route.mjs, by the door): each ask is routed by intent before any model is called, and grounding is ON by
+// default: an ACCOUNT ask (essay, explain, a question about a world topic) is gathered first and the MODEL WRITES from the sources; a SEARCH ask
+// stays zero-model; basic chat, invented work, arithmetic, follow-ups and anything about the workspace take the paths they always took (no research).
+// FOLD_ROUTE=0 turns it off. When the door gives no route (a gap, an error, a door that is down) the classifier below decides, as it always did.
+const routeOn = process.env.FOLD_ROUTE !== "0"
+// ESSAY (khora opencode-essay.mjs): an essay is a file written one section at a time across model responses, each section graded against its own
+// material, repair capped, with short prompts (a section's lines and the sentence before it, never the essay). The door keeps the job; the model
+// calls are this session's own (a synthetic message resumes the turn for each section). Off by default (measured: 10 min and 28k tokens an essay); FOLD_ESSAY=1 turns it on.
+const essayOn = process.env.FOLD_ESSAY === "1"
+const ESSAY_MARK = "fold essay ·"
+const gatherViaDoor = (process.env.FOLD_GATHER_VIA_DOOR ?? "opencode-go,opencode,ollama").split(",").map((p) => p.trim())
+const gatherBudgetMs = Number(process.env.FOLD_GATHER_BUDGET_MS ?? 90_000)
+// A broad topic never saturates the Holodeck's stopping rule, and a handful of good pages is enough to write an account from: an account ask is cut sooner.
+const gatherAccountSoftMs = Number(process.env.FOLD_GATHER_ACCOUNT_SOFT_MS ?? 20_000)
+type GatherResult = { voids?: Array<{ id: string; label: string; sentences: Array<{ text: string; host: string }> }>; text: string; sources: Array<{ url: string }>; passages: Array<{ name: string; text: string }>; notes?: string[]; gaps: unknown[]; calls?: unknown; stop?: unknown }
+// When the door cannot gather, the turn is NOT handed to the tool loop (it searches through the same engine and measured 81 requests,
+// 693k tokens, on one ask); it takes one small request that says so. FOLD_GATHER_FALLBACK=tools restores the tool path.
+const gatherFallbackTools = process.env.FOLD_GATHER_FALLBACK === "tools"
 const physicsRecord = (row: Record<string, unknown>) => {
   try {
     fs.mkdirSync(path.dirname(physicsLog), { recursive: true })
@@ -1565,10 +1593,24 @@ export const Plugin = define({
     const lastAsk = new Map<string, string>()
     // What the turn was handed to read (its tool results), kept so the door can ground the answer against it.
     const turnMaterial = new Map<string, Array<{ name: string; text: string }>>()
+    const gatheredMaterial = new Map<string, Array<{ name: string; text: string }>>()
+    // sessions whose current ask a gather answered: the grounding check still renders for the person, but is never handed back to the
+    // model (measured: its hand-back on a gathered answer restored the tools and ran 86 more requests, 832k tokens, on a 2.9k-token answer)
+    const gatheredTurn = new Set<string>()
+    // sessions whose next primary model call is pointed at the door's gather answer (id of the answer the door kept)
+    const gatherRedirect = new Map<string, string>()
+    // the lines of a door-served answer that measure the run rather than quote a page: shown to the person, never sent to be graded as claims
+    const gatherNotes = new Map<string, Set<string>>()
+    // an essay in progress: the door's job id, and the prompt the next model call is asked (a resume replaces the whole window with it)
+    const essayJobs = new Map<string, { job: string; finished: boolean }>()
+    const essayPending = new Map<string, string>()
     // What the model itself said earlier in the session, so the door never reads its own words back as evidence for them.
     const ownTexts = new Map<string, string[]>()
     // A session whose last answer was handed a grounding note: the NEXT answer replies to that note and is not handed another.
     const steerOutstanding = new Set<string>()
+    // The ask a session was last handed a grounding note for: a person's turn is steered once, and never when the turn already used tools
+    // (measured: a hand-back on an answer built from fetched pages restored the tools and ran 86 more requests, 832k tokens, on a 2.9k-token answer).
+    const steeredAsk = new Map<string, string>()
     const noticeWoken = new Map<string, string>()
     const lastNote = new Map<string, string>()
     const lastModel = new Map<string, { providerID: string; id: string }>()
@@ -1852,13 +1894,44 @@ export const Plugin = define({
         const windowBefore = contextChars(event.messages) + systemChars(event.system)
         // PHYSICS: serve a read/edit-class turn without tool definitions; decline (recorded) and fall through otherwise.
         let withheld = 0
-        if (physicsServes(event.model.providerID)) {
+        const physicsOn = physicsServes(event.model.providerID)
+        if (physicsOn || gatherOn) {
           const last = event.messages.at(-1)
           const realAsk = last?.role === "user" && last.content.every((part) => part.type === "text")
           const ask = lastUserText(event.messages)
           armed.delete(event.sessionID)
-          const answered = last?.role === "assistant" && !last.content.some((part) => part.type === "tool-call") && servedTurn.has(event.sessionID)
-          if (answered) {
+          const answered = physicsOn && last?.role === "assistant" && !last.content.some((part) => part.type === "tool-call") && servedTurn.has(event.sessionID)
+          // the context hook can run more than once for one step (a retry, a title call): the pending prompt stays until the next one replaces it
+          const essayResume = realAsk && (essayPending.has(event.sessionID) || essayJobs.has(event.sessionID)) && ask.startsWith(ESSAY_MARK)
+          const routed = !essayResume && realAsk && gatherOn && routeOn ? yield* post({ event: "route", ask, hasHistory: event.messages.length > 1 }, 4000, true) : undefined
+          const routeKnown = typeof routed?.research === "boolean"
+          // an ask that names the workspace's own things is never gathered from the web, whatever the router said: the tool path searches the workspace
+          const searching = !essayResume && realAsk && gatherOn && !Physics.workspaceish(ask) && (routeKnown ? routed.research === true : Physics.classify(ask) === "search")
+          if (realAsk && !essayResume) { gatheredTurn.delete(event.sessionID); gatherNotes.delete(event.sessionID); essayJobs.delete(event.sessionID); essayPending.delete(event.sessionID) }
+          // an ESSAY ask is started at the door (gather, outline, the file, the first section's prompt); when it cannot start, the generic gather below takes it
+          const essayStartRes = searching && essayOn && routeKnown && routed?.kind === "account" && Physics.essayAsk(ask)
+            ? yield* post({ event: "essay", op: "start", sessionID: event.sessionID, ask, ...(typeof routed?.topic === "string" && routed.topic ? { topic: routed.topic } : {}), softMs: gatherAccountSoftMs, budgetMs: gatherBudgetMs }, gatherBudgetMs + 15_000, true)
+            : undefined
+          const essayStarted = essayStartRes?.ok === true && typeof essayStartRes.prompt === "string" && typeof essayStartRes.job === "string"
+          // the window for an essay call is one short message: the section's prompt, never the history and never the essay
+          const essayWindow = (prompt: string) => {
+            withheld = toolChars(event.tools)
+            for (const name of Object.keys(event.tools)) delete event.tools[name]
+            event.system.splice(0, event.system.length, { type: "text", text: "You write one section of an essay, from the lines you are given." })
+            event.messages.splice(0, event.messages.length, Message.make({ id: last!.id, role: last!.role, content: [{ type: "text", text: prompt }], metadata: last!.metadata, providerMetadata: last!.providerMetadata, native: last!.native }))
+          }
+          if (essayResume) {
+            const pending = essayPending.get(event.sessionID) ?? ""
+            essayWindow(pending)
+            physicsRecord({ sessionID: event.sessionID, served: true, kind: "essay-section", job: essayJobs.get(event.sessionID)?.job, chars: pending.length, withheldToolChars: withheld })
+          } else if (essayStarted) {
+            essayJobs.set(event.sessionID, { job: String(essayStartRes!.job), finished: false })
+            const ps = Array.isArray(essayStartRes!.passages) ? (essayStartRes!.passages as Array<{ name: string; text: string }>) : []
+            if (ps.length) gatheredMaterial.set(event.sessionID, ps)
+            gatheredTurn.add(event.sessionID)
+            essayWindow(String(essayStartRes!.prompt))
+            physicsRecord({ sessionID: event.sessionID, served: true, kind: "essay-start", route: { kind: routed?.kind, topic: routed?.topic }, job: essayStartRes!.job, sections: essayStartRes!.sections, sources: essayStartRes!.sources, withheldToolChars: withheld })
+          } else if (answered) {
             // an answer that missed is restructured here, inside the request, so the session stays open while REC runs
             yield* settle(event.sessionID)
             // the loop's own follow-up after a derived reply: no tools to call, so none are sent
@@ -1866,13 +1939,74 @@ export const Plugin = define({
             for (const name of Object.keys(event.tools)) delete event.tools[name]
             event.system.splice(0, event.system.length, { type: "text", text: "You are a coding assistant." })
             physicsRecord({ sessionID: event.sessionID, served: true, kind: "follow-up", withheldToolChars: withheld })
-          } else if (!realAsk) physicsRecord({ sessionID: event.sessionID, served: false, reason: "mid-turn: tool results are in the window" })
-          else if (refused.delete(event.sessionID)) physicsRecord({ sessionID: event.sessionID, served: false, reason: "fallback: the previous derived edit was refused", ask })
-          else {
+          } else if (!realAsk) {
+            if (physicsOn) physicsRecord({ sessionID: event.sessionID, served: false, reason: "mid-turn: tool results are in the window" })
+          } else if (refused.delete(event.sessionID) && physicsOn) physicsRecord({ sessionID: event.sessionID, served: false, reason: "fallback: the previous derived edit was refused", ask })
+          else if (searching) {
+            // GATHER, THROUGH THE DOOR: the research (search, gate, read, stop) and the reading (statements selected by the asker's
+            // stance) run in the door's worker; this turn waits for that and no model is asked to search or to write.
+            const door = yield* post({ event: "gather", sessionID: event.sessionID, ask, budgetMs: gatherBudgetMs, ...(routeKnown && typeof routed?.topic === "string" && routed.topic ? { topic: routed.topic } : {}), ...(routeKnown && typeof routed?.kind === "string" ? { kind: routed.kind } : {}), ...(routeKnown && routed?.kind === "account" ? { softMs: gatherAccountSoftMs } : {}) }, gatherBudgetMs + 10_000, true)
+            const result = door?.ok === true ? (door.result as GatherResult | undefined) : undefined
+            const id = typeof door?.id === "string" ? door.id : undefined
+            const strip = () => {
+              withheld = toolChars(event.tools)
+              for (const name of Object.keys(event.tools)) delete event.tools[name]
+              event.system.splice(0, event.system.length, { type: "text", text: "You answer from the sources you are given." })
+            }
+            const say = (text: string) => {
+              const index = event.messages.length - 1
+              event.messages[index] = Message.make({ id: last.id, role: last.role, content: [{ type: "text", text }], metadata: last.metadata, providerMetadata: last.providerMetadata, native: last.native })
+            }
+            if (result && result.sources.length === 0) {
+              // nothing was read (a throttled search, a typo that matches no page); serving "Nothing was read" as the answer would end the turn on a non-answer
+              // The model answers WITHOUT its tools: left with them it searches for itself, step after step (measured 2026-10-21: 45 and 67 steps,
+              // 385k and 541k tokens for one factual question), and its footnotes are not the pages'. It is told plainly that nothing was read.
+              strip()
+              say(`${ask}\n\nNo page could be read for this. Answer briefly from general knowledge, and say that the answer is not sourced.`)
+              gatheredTurn.add(event.sessionID)
+              physicsRecord({ sessionID: event.sessionID, served: true, kind: "gather-empty", ask, gaps: result.gaps, stop: result.stop, withheldToolChars: withheld })
+            } else if (!result && gatherFallbackTools) {
+              physicsRecord({ sessionID: event.sessionID, served: false, reason: "gather: the door did not gather", ask, error: door?.error })
+            } else if (!result) {
+              strip()
+              say(`${ask}\n\nNothing could be read for this ask (the research service did not answer: ${String(door?.error ?? "unreachable")}). In one or two sentences, tell the person that no sources were read, say why, and offer to try again.`)
+              gatheredTurn.add(event.sessionID)
+              physicsRecord({ sessionID: event.sessionID, served: true, kind: "gather-down", error: door?.error, withheldToolChars: withheld })
+            } else {
+              // what was read is this turn's material, so the ground check weighs the answer against the pages (applied after the new-ask reset below)
+              gatheredMaterial.set(event.sessionID, result.passages)
+              strip()
+              const viaDoor = gatherZero && routed?.kind !== "account" && id !== undefined && gatherViaDoor.includes(event.model.providerID)
+              if (viaDoor) {
+                gatherRedirect.set(event.sessionID, id)
+                gatherNotes.set(event.sessionID, new Set((result.notes ?? []).map((l) => String(l).trim())))
+              } else {
+                gatherNotes.delete(event.sessionID)
+                // the pages, parsed: each read page's own holograph (its selected sentences and their neighbours), by site, bounded; the
+                // research record (the run's measurements) stays out. The model writes the piece in its own prose from them, and the
+                // ground check weighs that prose against the same passages afterwards. Asked to write "from these lines only", it strung
+                // quotations together with "according to" after each, which is neither an essay nor graded as support.
+                const pages = result.passages.filter((p) => /^https?:/.test(p.name)).slice(0, 10)
+                const notes = pages.map((p) => `From ${new URL(p.name).hostname.replace(/^www\./, "")}:\n${p.text.replace(/\s*\n\s*/g, " ").slice(0, 1200)}`).join("\n\n")
+                const form = Physics.essayAsk(ask) ? "the essay: a title, an opening paragraph, body paragraphs that each develop one idea, and a closing paragraph" : "the answer as connected prose"
+                // THE VOID: the gaps an account has to fill, defined from the corpus (what several independent pages say several things
+                // about), each with the pages' sentences that bear on it; the essay is those gaps filled, in order
+                const voids = (result.voids ?? []).filter((v) => v.sentences.length >= 3)
+                const gaps = voids.map((v) => `About ${v.label}:\n${v.sentences.map((s) => `- ${s.text}`).join("\n")}`).join("\n\n")
+                say(voids.length >= 2 && Physics.essayAsk(ask)
+                  ? `${ask}\n\nThe facts the pages state, grouped by what they are about:\n\n${gaps}\n\nWrite it as you would write any essay: your own structure, voice and transitions. Every fact and figure in it comes from the facts above.`
+                  : `${ask}\n\nWhat the pages read for this say (each block is one page's own sentences):\n\n${notes || result.text}\n\nWrite ${form}, in your own words. Its facts and figures are the pages' own, and its sentences name no page.`)
+              }
+              gatheredTurn.add(event.sessionID)
+              physicsRecord({ sessionID: event.sessionID, served: true, kind: viaDoor ? "gather-door" : "gather-model", route: routeKnown ? { kind: routed?.kind, topic: routed?.topic } : undefined, modelCalls: viaDoor ? 0 : 1, sources: result.sources.length, calls: result.calls, stop: result.stop, gaps: result.gaps, withheldToolChars: withheld })
+            }
+          } else if (!physicsOn) {
+            // not a gather ask, and physics does not serve this provider: the normal path
+          } else {
             const workspace = yield* workspaceOf(event.sessionID)
             const plan = Physics.resolve(ask, workspace)
             if (plan.kind === "decline") servedTurn.delete(event.sessionID)
-            if (plan.kind === "decline") physicsRecord({ sessionID: event.sessionID, served: false, reason: plan.reason, ask, workspace })
+            if (plan.kind === "decline" || plan.kind === "gather") physicsRecord({ sessionID: event.sessionID, served: false, reason: plan.kind === "decline" ? plan.reason : "gather resolved off the gather path", ask, workspace })
             else {
               // TAUGHT: a recipe the machine learned earlier answers this ask with no model; the model is only asked to say what changed.
               const made =
@@ -1911,6 +2045,11 @@ export const Plugin = define({
         const ask = lastUserText(event.messages)
         if (lastAsk.get(event.sessionID) !== ask) turnMaterial.delete(event.sessionID)
         lastAsk.set(event.sessionID, ask)
+        const gathered = gatheredMaterial.get(event.sessionID)
+        if (gathered) {
+          turnMaterial.set(event.sessionID, gathered)
+          gatheredMaterial.delete(event.sessionID)
+        }
         lastModel.set(event.sessionID, event.model)
         // Perception first: media becomes local transcription before recall
         // or folding reads the turn, so everything downstream sees text.
@@ -2562,6 +2701,17 @@ export const Plugin = define({
       event.system.splice(0, event.system.length, { type: "text", text: "You are a coding assistant." })
       return Effect.void
     })
+    // A gather turn's one model call goes to the door, which answers with what it assembled. No key is sent there: the provider's
+    // credentials are removed from the request before it leaves for the local endpoint.
+    yield* ctx.session.hook("model.request", (event) => {
+      const id = gatherRedirect.get(event.sessionID)
+      if (!id || event.kind !== "primary") return Effect.void
+      gatherRedirect.delete(event.sessionID)
+      event.baseURL = `${base}/v1/gather`
+      for (const key of Object.keys(event.headers)) if (/^(authorization|x-api-key|api-key|x-goog-api-key)$/i.test(key)) delete event.headers[key]
+      event.headers["x-gather-id"] = id
+      return Effect.void
+    })
     yield* ctx.session.hook("http.request", (event) => {
       capturePrompt(event)
       return Effect.void
@@ -2588,7 +2738,14 @@ export const Plugin = define({
         const workspace = yield* workspaceOf(sessionID)
         const own = ownTexts.get(sessionID) ?? []
         ownTexts.set(sessionID, [...own, text].slice(-20))
-        const body = { event: "ground", sessionID, agent: sessionID, workspace, universe: process.env.FOLD_UNIVERSE ?? "world", text, ask: lastAsk.get(sessionID) ?? "", passages: gatherPassages(turnMaterial.get(sessionID) ?? []), own }
+        const notes = gatherNotes.get(sessionID)
+        // Citation markup is provenance, not a claim: [^1^] / [1] markers and the footnote lines they point to would otherwise be graded as sentences
+        // (and, left in a claim, read as "a source comes close, short of stating it").
+        const graded = (notes?.size ? text.split("\n").filter((line) => !notes.has(line.trim())).join("\n") : text)
+          .replace(/^[ \t]*\[\^[^\]\s]{1,12}\]:.*$/gm, "")
+          .replace(/\s?\[\^[^\]\s]{1,12}\](?!:)/g, "")
+          .replace(/\s?\[\d{1,2}\](?!\()/g, "")
+        const body = { event: "ground", sessionID, agent: sessionID, workspace, universe: process.env.FOLD_UNIVERSE ?? "world", text: graded, ask: lastAsk.get(sessionID) ?? "", passages: gatherPassages(turnMaterial.get(sessionID) ?? []), own }
         // Two passes, one answer: the quick profile (the turn's own material) lands at once; the falsifier's research
         // follows and its profile supersedes the first on the answer (the window shows the latest).
         const answer = yield* post({ ...body, ...(facingNative && researchOn ? { research: false } : {}) }, groundTimeout, true)
@@ -2609,7 +2766,9 @@ export const Plugin = define({
           const handBack = (final: typeof ground | undefined) =>
             Effect.gen(function* () {
               const note = groundSteerOn && !replyToSteer ? groundSteer(final?.step?.profile) : undefined
-              if (!note || steerOutstanding.has(sessionID)) return
+              const ask = lastAsk.get(sessionID) ?? ""
+              if (!note || !shouldHandBack({ note, outstanding: steerOutstanding.has(sessionID), gathered: gatheredTurn.has(sessionID), toolResults: turnMaterial.get(sessionID)?.length ?? 0, steeredAsk: steeredAsk.get(sessionID), ask })) return
+              steeredAsk.set(sessionID, ask)
               steerOutstanding.add(sessionID)
               yield* ctx.session.synthetic({
                 sessionID,
@@ -2682,6 +2841,37 @@ export const Plugin = define({
         yield* ctx.session.synthetic({ sessionID: sessionID as never, text: Physics.notice(plan.file, outcome) + (outcome.ok && by !== "local" ? ` · by ${by}` : "") + (taught ? " · taught" : ""), description: "fold physics — the derived operation", resume: false })
       }).pipe(Effect.ignore)
 
+    // THE ESSAY ADVANCES when a section's reply ends: the door applies it to the file and grades it, and says what the next call is asked; a synthetic
+    // message resumes the turn for that call. After the last section the door has the assembled essay, and the following call is answered by it at no cost.
+    const essayAdvance = (event: Observed) =>
+      Effect.gen(function* () {
+        if (event.type !== "session.text.ended") return
+        const sessionID = event.data.sessionID
+        const entry = essayJobs.get(sessionID)
+        if (!entry) return
+        if (entry.finished) { essayJobs.delete(sessionID); return }
+        const text = typeof event.data.text === "string" ? event.data.text : ""
+        if (!text.trim()) return
+        const r = yield* post({ event: "essay", op: "step", job: entry.job, text }, 180_000, true)
+        if (!r || r.ok !== true) {
+          physicsRecord({ sessionID, served: false, reason: `essay: the door could not advance (${String(r?.error ?? "no answer")})`, job: entry.job })
+          essayJobs.delete(sessionID)
+          return
+        }
+        const done = r.done as { path?: string } | undefined
+        const next = r.next as { prompt?: string; section?: string; round?: number } | undefined
+        if (done && typeof r.id === "string") {
+          entry.finished = true
+          gatherRedirect.set(sessionID, r.id)
+          essayPending.set(sessionID, "Return the assembled essay.")
+          physicsRecord({ sessionID, served: true, kind: "essay-done", job: entry.job, done })
+        } else if (next && typeof next.prompt === "string") {
+          essayPending.set(sessionID, next.prompt)
+          physicsRecord({ sessionID, served: true, kind: "essay-next", job: entry.job, section: next.section, round: next.round })
+        } else { essayJobs.delete(sessionID); return }
+        yield* ctx.session.synthetic({ sessionID: sessionID as never, text: `${ESSAY_MARK} ${done ? "the essay is assembled" : `section ${String(next?.section ?? "")}${next?.round ? `, repair round ${next.round}` : ""}`}`, description: "fold essay — the next call", delivery: "queue", resume: true })
+      }).pipe(Effect.ignore)
+
     const physicsApply = (event: Observed) =>
       Effect.gen(function* () {
         if (event.type !== "session.text.ended") return
@@ -2734,6 +2924,7 @@ export const Plugin = define({
         const side: Array<Effect.Effect<void, never, never>> = [record]
         if (facingOn && event.type === "session.text.ended") side.push(facing(event))
         if (derivedApply) side.push(derivedApply)
+        if (essayOn && event.type === "session.text.ended") side.push(essayAdvance(event))
         if (shadowOn) {
           const shadow = shadowOf(event)
           if (shadow && sessionID) side.push(post({ event: "shadow", sessionID, ...shadow }, askTimeout).pipe(Effect.asVoid))
