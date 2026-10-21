@@ -1,4 +1,4 @@
-import type { SessionUserActions } from "@opencode/session-ui/message"
+import type { FoldRevise, SessionUserActions } from "@opencode/session-ui/message"
 import { getFilename, sameDirectory } from "@opencode/util/path"
 import { useDialog } from "@opencode/ui/context/dialog"
 import { isScrollKeyTarget, scrollKey, scrollKeyOwner } from "@opencode/ui/scroll-view"
@@ -7,6 +7,7 @@ import { useNavigate } from "@solidjs/router"
 import { createEffect, createMemo, on, onMount, Show, type Accessor } from "solid-js"
 import { Composer } from "@/composer/composer"
 import { useComposerState } from "@/composer/persistence"
+import { uuid } from "@/runtime/persistence/uuid"
 import { createComposerControls } from "@/composer/selection"
 import { setCursorPosition } from "@/composer/editor/dom"
 import { promptLength } from "@/composer/prompt-parts"
@@ -262,6 +263,22 @@ export function createActiveSessionRegion(input: {
     ),
   )
 
+  // A contested sentence goes to the composer as the fold's note: the reader sends it (and may say more), the model restates
+  // the sentence, and the next ground records the revision against it. The answer it corrects stays as it was.
+  const reviseSentence = (revise: FoldRevise) => {
+    const source = revise.evidence ? ` The source (${revise.evidence.ref ?? revise.evidence.source ?? "material"}) says: \u201C${revise.evidence.text}\u201D.` : ""
+    prompt.context.add({
+      type: "note",
+      origin: "fold",
+      label: language.t("fold.revise.label"),
+      icon: "pencil-line",
+      subject: `\u201C${revise.sentence}\u201D`,
+      comment: `${revise.label}${revise.why ? `: ${revise.why}` : "."}${source} Revise this sentence so it is correct; the original stays on the record.`,
+      commentID: uuid(),
+    })
+    promptRef?.focus()
+  }
+
   return {
     active,
     drop: {
@@ -281,6 +298,11 @@ export function createActiveSessionRegion(input: {
           return pendingSteer
         },
         openAttachment,
+        get revise() {
+          if (input.session.data.isChild()) return
+
+          return reviseSentence
+        },
       } satisfies SessionUserActions,
     },
     requests: state,

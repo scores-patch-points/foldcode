@@ -25,7 +25,18 @@ export type SessionUserAttachmentReference = {
   path: string
 }
 
+/** A sentence of an answer the fold's door contested, as the reader asks for it to be revised. The answer itself is never
+ *  edited: the request rides the next prompt, and the revision is a new entry that names the sentence it corrects. */
+export type FoldRevise = {
+  messageID: string
+  sentence: string
+  label: string
+  why?: string
+  evidence?: { text: string; source?: string; ref?: string; url?: string }
+}
+
 export type SessionUserActions = {
+  revise?: (input: FoldRevise) => void
   openAttachment?: (file: PromptFileAttachment) => void
   revert?: (input: { sessionID: string; messageID: string }) => Promise<void> | void
   /**

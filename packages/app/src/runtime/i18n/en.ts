@@ -304,6 +304,7 @@ export const dict = {
   "common.attachment": "attachment",
 
   "prompt.placeholder.shell": "Enter shell command… {{example}}",
+  "fold.revise.label": "Revise",
   "prompt.placeholder.normal": 'Ask anything… "{{example}}"',
   "prompt.mode.shell": "Shell",
   "prompt.mode.normal": "Prompt",

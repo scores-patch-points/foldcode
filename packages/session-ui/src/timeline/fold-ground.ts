@@ -44,7 +44,12 @@ export type ProfileItem = {
   janus?: string
   searched: string[]
   who?: string
+  /** the earlier sentence this one revises, kept as said (the door's REC pair) */
+  revised?: string
 }
+
+/** A source the evidence cites, whole, as the door read it. */
+export type ProfileSource = { name: string; url?: string; text: string }
 
 export type ProfileView = {
   kind: string
@@ -60,6 +65,10 @@ export type ProfileView = {
   researchMs?: number
   /** nothing was read this turn: every claim rests on the model's own knowledge */
   noMaterial: boolean
+  /** the sources the evidence cites, whole, so a claim can be shown where it stands in its source */
+  sources: ProfileSource[]
+  /** sentences the reader asked to revise that no sentence of this answer stands for */
+  unrevised: string[]
   /** a summary's second reading: what it left out (beings the material speaks of, figures it states, never carried) */
   leftOut?: { beings: Array<{ name: string; mentions: number }>; figures: Array<{ figure: string; text: string; ref?: string }> }
 }
@@ -176,7 +185,11 @@ export function readProfile(profile: Record<string, unknown> | undefined): Profi
       },
     ]
   })
-  const items = [...claims, ...symbols]
+  const revises = list(profile.revises).flatMap((pair) => (str(pair.was) ? [{ was: str(pair.was)!, now: str(pair.now) }] : []))
+  const items = [...claims, ...symbols].map((item) => {
+    const was = revises.find((pair) => pair.now === item.title)?.was
+    return was ? { ...item, revised: was } : item
+  })
   const research = record(profile.research)
   const code = num(profile.codeLines)
   return {
@@ -212,6 +225,10 @@ export function readProfile(profile: Record<string, unknown> | undefined): Profi
         : [],
     ),
     noMaterial: profile.noMaterial === true,
+    unrevised: revises.filter((pair) => !pair.now).map((pair) => pair.was),
+    sources: list(profile.sources).flatMap((source) =>
+      str(source.name) && Predicate.isString(source.text) ? [{ name: str(source.name)!, url: str(source.url), text: source.text }] : [],
+    ),
     researching: research?.on === false && num(research.pending) > 0,
     researchMs: research?.on === true ? num(research.ms) : undefined,
     leftOut: readLeftOut(record(record(profile.summary)?.leftOut)),
@@ -232,6 +249,32 @@ function evidenceOf(value: unknown): ProfileEvidence | undefined {
   const text = str(evidence?.text)
   if (!evidence || !text) return undefined
   return { text, ref: str(evidence.ref), url: str(evidence.url), source: str(evidence.source) }
+}
+
+/** Where a quote stands in a text, found by its letters (whitespace and the door's clipping ellipses aside): `[start, end)`. */
+export function spanIn(text: string, quote: string): [number, number] | undefined {
+  const hay = squash(text)
+  const letters = squash(quote.replace(/^\s*\u2026|\u2026\s*$/g, "")).out
+  const at = letters ? hay.out.indexOf(letters) : -1
+  if (at < 0) return undefined
+  return [hay.map[at], hay.map[at + letters.length - 1] + 1]
+}
+
+// A proposition of the answer, located in a source the door read: which source, and where in its text the evidence stands.
+export type Proposition = { n: number; unit: ProfileItem; source: ProfileSource; start: number; end: number }
+
+/** Every proposition of the answer that rests on (or is contradicted by) a source the door shipped, in the answer's order. */
+export function propositionsOf(units: ProfileItem[], sources: ProfileSource[]): Proposition[] {
+  return units
+    .flatMap((unit) =>
+      [unit.evidence, ...unit.from].flatMap((evidence) => {
+        if (!evidence) return []
+        const source = sources.find((s) => s.name === evidence.source || (!!s.url && s.url === evidence.url))
+        const span = source ? spanIn(source.text, evidence.text) : undefined
+        return source && span ? [{ unit, source, start: span[0], end: span[1] }] : []
+      }),
+    )
+    .map((p, i) => ({ ...p, n: i + 1 }))
 }
 
 /** The ground row whose sentence covers `offset` in the answer's rendered text, found by walking the sentences in order. */

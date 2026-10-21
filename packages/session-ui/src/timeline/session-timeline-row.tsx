@@ -393,7 +393,25 @@ export function createSessionTimelineRowRenderer(input: {
 
               return (
                 <Show when={ground()} fallback={body()}>
-                  {(view) => <GroundHover view={view()}>{body()}</GroundHover>}
+                  {(view) => (
+                    <GroundHover
+                      view={view()}
+                      onRevise={
+                        input.actions?.revise
+                          ? (unit) =>
+                              input.actions?.revise?.({
+                                messageID: message().id,
+                                sentence: unit.title,
+                                label: unit.label,
+                                why: unit.why,
+                                evidence: unit.evidence,
+                              })
+                          : undefined
+                      }
+                    >
+                      {body()}
+                    </GroundHover>
+                  )}
                 </Show>
               )
             }}

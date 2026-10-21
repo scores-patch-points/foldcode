@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { locate, readGround, rowAt, unitAt } from "./fold-ground"
+import { locate, propositionsOf, readGround, rowAt, spanIn, unitAt } from "./fold-ground"
 
 const meta = (ground: unknown) => ({ notice: "fold-ground", ground })
 const step = {
@@ -140,5 +140,56 @@ describe("pointing at the answer's text", () => {
   })
   test("text no unit covers is not guessed at", () => {
     expect(unitAt(locate(units, text + " Something the door never typed."), text.length + 5)).toBeUndefined()
+  })
+})
+
+describe("the source behind a proposition", () => {
+  const profile = (extra: Record<string, unknown>) =>
+    readGround({
+      notice: "fold-ground",
+      ground: {
+        step: {
+          grounded: [],
+          profile: {
+            claims: [
+              { standing: "contradicted", text: "She won it for physics.", evidence: { text: "…she won it for chemistry.", source: "wiki" } },
+              { standing: "supported", text: "She found radium.", evidence: { text: "She found radium.", source: "notes.md" } },
+            ],
+            sources: [
+              { name: "notes.md", text: "# Notes\nShe found radium. Then more." },
+              { name: "wiki", url: "https://en.wikipedia.org/wiki/X", text: "Early life. Later she won it for chemistry. The end." },
+            ],
+            ...extra,
+          },
+        },
+      },
+    })!.profile!
+
+  test("a clipped quote is found by its letters, whitespace and ellipses aside", () => {
+    const text = "Early life.  Later she won it\nfor chemistry. The end."
+    const span = spanIn(text, "…she won it for chemistry.")!
+    expect(text.slice(span[0], span[1])).toBe("she won it\nfor chemistry.")
+    expect(spanIn(text, "not there")).toBeUndefined()
+  })
+
+  test("each proposition is located in its own source, numbered in the answer's order", () => {
+    const view = profile({})
+    const found = propositionsOf(view.units, view.sources)
+    expect(found.map((p) => [p.n, p.source.name, p.source.text.slice(p.start, p.end)])).toEqual([
+      [1, "wiki", "she won it for chemistry."],
+      [2, "notes.md", "She found radium."],
+    ])
+  })
+
+  test("a revision names the sentence it revises; one with no successor is kept as asked", () => {
+    const view = profile({
+      revises: [
+        { was: "She won it in physics.", now: "She won it for physics." },
+        { was: "It glows blue.", now: null },
+      ],
+    })
+    expect(view.units[0].revised).toBe("She won it in physics.")
+    expect(view.units[1].revised).toBeUndefined()
+    expect(view.unrevised).toEqual(["It glows blue."])
   })
 })
