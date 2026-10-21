@@ -103,7 +103,7 @@ describe("fold grounding hand-back", () => {
   }
 
   test("the note carries the door's own findings: what a source says, the name that differs, the figures resting on nothing", async () => {
-    const { groundSteer, shouldHandBack, GROUND_STEER_HEAD } = await import("../src/plugin/fold-ground")
+    const { groundSteer, GROUND_STEER_HEAD } = await import("../src/plugin/fold-ground")
     const note = groundSteer(profile)!
     expect(note.startsWith(GROUND_STEER_HEAD)).toBe(true)
     expect(note).toContain('"Marie Curie was born in 1869." — date of birth is 1867, not 1869; wikidata: Marie Curie (Q7186) says: "date of birth: 1867-11-07" (Q7186#P569)')
