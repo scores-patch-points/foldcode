@@ -32,6 +32,8 @@ export type Profile = {
   rests?: Array<{ source: string; n: number }>
   beings?: Array<Record<string, unknown>>
   research?: { on: boolean; pending?: number; ms?: number; log?: Array<Record<string, unknown>> }
+  // the door's REC pairs: each revised sentence and the sentence of this answer that now stands for it (null when none does)
+  revises?: Array<{ was: string; now: string | null; standing?: string | null }>
 }
 
 type Answer = {
@@ -83,6 +85,21 @@ export const groundPayload = (
       }
     : { v: 1, step: null, gap: "no step this turn" }
 }
+
+// The app's fold note asks for a sentence to be revised; the composer formats every note as "The user made the following comment
+// regarding <subject>: <comment>", and the fold's subject is the sentence in curly quotes.
+const REVISE_NOTE = /regarding \u201C([^\u201D]+)\u201D: ([^\n]*?)Revise this sentence so it is correct/g
+const NOTE_SOURCE = /says: \u201C([^\u201D]+)\u201D/
+
+/** A sentence to revise, and the source sentence it was found against (the correction is expected to rest on it). */
+export type Revise = { was: string; against?: string }
+
+/** The sentences a prompt asks the fold to revise, in order, each with the source sentence the note quotes. */
+export const revisedIn = (ask: string): Revise[] =>
+  [...ask.matchAll(REVISE_NOTE)].map((match) => {
+    const against = NOTE_SOURCE.exec(match[2])?.[1]
+    return against ? { was: match[1], against } : { was: match[1] }
+  })
 
 /** A read tool's result opens with a header line naming the file; the file is the passage, the header is its name. */
 const readHeader = /^Read file (.+?), lines (\d+)-\d+\n/
@@ -166,8 +183,31 @@ export const groundSteer = (profile: Profile | undefined): string | undefined =>
   return lines.join("\n")
 }
 
+/** The answer as it is graded: citation markup is provenance, not a claim. Footnote markers ([^1^], [1]) and the footnote lines they
+ *  point to, and file:line tags ([curie.md:7], [src/a.ts:12-14]), would otherwise be graded as sentences — and a tag after a full stop
+ *  glues the next sentence onto the one before it. A markdown link ([text](url)) is left alone. */
+export const withoutCitations = (text: string) =>
+  text
+    .replace(/^[ \t]*\[\^[^\]\s]{1,12}\]:.*$/gm, "")
+    .replace(/\s?\[\^[^\]\s]{1,12}\](?!:)/g, "")
+    .replace(/\s?\[\d{1,2}\](?!\()/g, "")
+    .replace(/\s?\[[\w./@-]+\.\w{1,8}(?::\d+(?:[-–]\d+)?)?\](?![(:])/g, "")
+
+/** The revised sentences the door paired with a sentence of this answer (its REC pairs that found a successor). */
+export const pairedIn = (profile: Profile | undefined) =>
+  (profile?.revises ?? []).flatMap((pair) => (pair.now ? [pair.was] : []))
+
+/** The answer's sentences a source contradicted: the ones its hand-back asks the model to restate, recorded as revisions. */
+export const contradictedIn = (profile: Profile | undefined): Revise[] =>
+  (profile?.claims ?? []).flatMap((c) => {
+    if (c.standing !== "contradicted" || typeof c.text !== "string" || !c.text) return []
+    const against = field(c, "evidence")?.text
+    return [typeof against === "string" && against ? { was: c.text, against } : { was: c.text }]
+  })
+
 /** Is the check's finding handed back to the model? Not when there is nothing to say, a note is already outstanding, a gather answered the ask,
- *  the turn already used tools (a hand-back restores them: measured 86 more requests, 832k tokens, on a 2.9k-token answer), or this ask was already steered once. */
+ *  the turn already used tools (a hand-back restores them: measured 86 more requests, 832k tokens, on a 2.9k-token answer), or this ask was already steered once.
+ *  Never for the reply to a hand-back. A contradicted sentence is the exception to the tools rule: the source's words ride the note, so the model can restate it without reading again. */
 export const shouldHandBack = (s: {
   note: string | undefined
   outstanding: boolean
@@ -175,4 +215,12 @@ export const shouldHandBack = (s: {
   toolResults: number
   steeredAsk: string | undefined
   ask: string
-}): boolean => Boolean(s.note) && !s.outstanding && !s.gathered && s.toolResults === 0 && s.steeredAsk !== s.ask
+  contradicted?: number
+}): boolean =>
+  Boolean(s.note) &&
+  !s.outstanding &&
+  !s.gathered &&
+  (s.toolResults === 0 || (s.contradicted ?? 0) > 0) &&
+  s.steeredAsk !== s.ask &&
+  // a hand-back's own reply is never handed back: one round per ask, however many texts the reply comes in
+  !s.ask.startsWith(GROUND_STEER_HEAD)

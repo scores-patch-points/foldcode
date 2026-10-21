@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { gatherPassages, groundHead, groundPayload } from "../src/plugin/fold-ground"
+import { gatherPassages, groundHead, groundPayload, revisedIn } from "../src/plugin/fold-ground"
 
 const answer = {
   sentences: [{ text: "Curie discovered radium." }],
@@ -143,5 +143,85 @@ describe("shouldHandBack", () => {
     expect(shouldHandBack({ ...base, outstanding: true })).toBe(false)
     expect(shouldHandBack({ ...base, gathered: true })).toBe(false)
     expect(shouldHandBack({ ...base, toolResults: 3 })).toBe(false)
+  })
+  test("a contradiction is handed back even after tools, still once per ask", async () => {
+    const { shouldHandBack } = await import("../src/plugin/fold-ground")
+    expect(shouldHandBack({ ...base, toolResults: 3, contradicted: 1 })).toBe(true)
+    expect(shouldHandBack({ ...base, toolResults: 3, contradicted: 1, steeredAsk: "what is x" })).toBe(false)
+    expect(shouldHandBack({ ...base, toolResults: 3, contradicted: 1, outstanding: true })).toBe(false)
+  })
+  test("never for the reply to a hand-back", async () => {
+    const { shouldHandBack, GROUND_STEER_HEAD } = await import("../src/plugin/fold-ground")
+    expect(shouldHandBack({ ...base, contradicted: 1, ask: `${GROUND_STEER_HEAD} (mechanical: …)` })).toBe(false)
+  })
+})
+
+describe("contradictedIn", () => {
+  test("names the sentences a source contradicted, and only those", async () => {
+    const { contradictedIn } = await import("../src/plugin/fold-ground")
+    const profile = {
+      v: 2 as const,
+      kind: "answer",
+      counts: {},
+      symbols: [],
+      claims: [
+        { text: "She won it for physics.", standing: "contradicted", evidence: { text: "She won it for chemistry." } },
+        { text: "She found radium.", standing: "supported" },
+        { text: "It glows.", standing: "unsupported" },
+      ],
+    }
+    expect(contradictedIn(profile)).toEqual([{ was: "She won it for physics.", against: "She won it for chemistry." }])
+    expect(contradictedIn(undefined)).toEqual([])
+  })
+})
+
+describe("revisedIn", () => {
+  test("reads the sentences the app's fold note asks to revise, and nothing else", () => {
+    const ask = [
+      "please fix it",
+      "The user made the following comment regarding “She won a Nobel Prize in 1911 for physics.”: Contradicted: The source gives the 1911 prize as Chemistry, not Physics. The source (Q7186) says: “In 1911 she was awarded the Nobel Prize in Chemistry.”. Revise this sentence so it is correct; the original stays on the record.",
+      "The user made the following comment regarding “src/app.ts”: rename this",
+    ].join("\n")
+    expect(revisedIn(ask)).toEqual([
+      { was: "She won a Nobel Prize in 1911 for physics.", against: "In 1911 she was awarded the Nobel Prize in Chemistry." },
+    ])
+    expect(revisedIn("no notes here")).toEqual([])
+  })
+})
+
+describe("withoutCitations", () => {
+  test("drops footnote and file:line markers, keeps links and the sentences apart", async () => {
+    const { withoutCitations } = await import("../src/plugin/fold-ground")
+    const reply = [
+      "- Marie Curie discovered radium in 1898. (The Curies announced it.) [curie.md:5]",
+      "- She won the 1911 Nobel Prize in Chemistry. [curie.md:7]",
+      "See [the notes](notes.md) and [src/a.ts:12-14] and [1].",
+    ].join("\n")
+    expect(withoutCitations(reply)).toBe(
+      [
+        "- Marie Curie discovered radium in 1898. (The Curies announced it.)",
+        "- She won the 1911 Nobel Prize in Chemistry.",
+        "See [the notes](notes.md) and and.",
+      ].join("\n"),
+    )
+  })
+})
+
+describe("pairedIn", () => {
+  test("names only the revised sentences the door found a successor for", async () => {
+    const { pairedIn } = await import("../src/plugin/fold-ground")
+    const profile = {
+      v: 2 as const,
+      kind: "answer",
+      counts: {},
+      claims: [],
+      symbols: [],
+      revises: [
+        { was: "She won it for physics.", now: "She won it for chemistry." },
+        { was: "It glows blue.", now: null },
+      ],
+    }
+    expect(pairedIn(profile)).toEqual(["She won it for physics."])
+    expect(pairedIn(undefined)).toEqual([])
   })
 })

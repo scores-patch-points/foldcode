@@ -27,7 +27,7 @@ import { record as rulerRecord, recordTokens as rulerTokens } from "./fold-ruler
 import { tap as usageTap } from "./usage-tap.js"
 import { Bus } from "../bus.js"
 import { SessionEvent } from "../session/event.js"
-import { GROUND_LEGEND, gatherPassages, groundHead, groundPayload, groundSteer, shouldHandBack } from "./fold-ground.js"
+import { GROUND_LEGEND, GROUND_STEER_HEAD, contradictedIn, gatherPassages, groundHead, groundPayload, groundSteer, pairedIn, revisedIn, shouldHandBack, withoutCitations, type Revise } from "./fold-ground.js"
 import * as Physics from "./physics.js"
 import * as Learn from "./physics-learn.js"
 import fs from "node:fs"
@@ -1591,6 +1591,10 @@ export const Plugin = define({
     // The turn's ask and model, so an event-time fold knows what to fold toward,
     // and tool id -> name, so a result folded at event time is attributed to its tool.
     const lastAsk = new Map<string, string>()
+    // the sentences the reader asked to revise this turn (the app's fold note), handed to the door with the answer's ground
+    const revising = new Map<string, Revise[]>()
+    // the sentences a hand-back asked the model to restate: its reply is their revision
+    const selfRevising = new Map<string, Revise[]>()
     // What the turn was handed to read (its tool results), kept so the door can ground the answer against it.
     const turnMaterial = new Map<string, Array<{ name: string; text: string }>>()
     const gatheredMaterial = new Map<string, Array<{ name: string; text: string }>>()
@@ -2045,6 +2049,9 @@ export const Plugin = define({
         const ask = lastUserText(event.messages)
         if (lastAsk.get(event.sessionID) !== ask) turnMaterial.delete(event.sessionID)
         lastAsk.set(event.sessionID, ask)
+        revising.set(event.sessionID, revisedIn(ask))
+        // a new prompt from the reader ends the hand-back's reply: a sentence it never restated stays as it was said
+        if (!ask.startsWith(GROUND_STEER_HEAD)) selfRevising.delete(event.sessionID)
         const gathered = gatheredMaterial.get(event.sessionID)
         if (gathered) {
           turnMaterial.set(event.sessionID, gathered)
@@ -2741,15 +2748,19 @@ export const Plugin = define({
         const notes = gatherNotes.get(sessionID)
         // Citation markup is provenance, not a claim: [^1^] / [1] markers and the footnote lines they point to would otherwise be graded as sentences
         // (and, left in a claim, read as "a source comes close, short of stating it").
-        const graded = (notes?.size ? text.split("\n").filter((line) => !notes.has(line.trim())).join("\n") : text)
-          .replace(/^[ \t]*\[\^[^\]\s]{1,12}\]:.*$/gm, "")
-          .replace(/\s?\[\^[^\]\s]{1,12}\](?!:)/g, "")
-          .replace(/\s?\[\d{1,2}\](?!\()/g, "")
-        const body = { event: "ground", sessionID, agent: sessionID, workspace, universe: process.env.FOLD_UNIVERSE ?? "world", text: graded, ask: lastAsk.get(sessionID) ?? "", passages: gatherPassages(turnMaterial.get(sessionID) ?? []), own }
+        const graded = withoutCitations(notes?.size ? text.split("\n").filter((line) => !notes.has(line.trim())).join("\n") : text)
+        // the reply to a hand-back revises the sentences it was handed; the reader's own revise notes ride the ask
+        // the hand-back's reply revises the sentences it was handed, in whichever of its texts restates them (a reply can open
+        // with a preamble before it reads); each is dropped once the door pairs it
+        const handed = selfRevising.get(sessionID) ?? []
+        const revises = [...(revising.get(sessionID) ?? []), ...handed].filter((r, i, all) => all.findIndex((o) => o.was === r.was) === i)
+        const body = { event: "ground", sessionID, agent: sessionID, workspace, universe: process.env.FOLD_UNIVERSE ?? "world", text: graded, ask: lastAsk.get(sessionID) ?? "", passages: gatherPassages(turnMaterial.get(sessionID) ?? []), own, ...(revises.length ? { revises } : {}) }
         // Two passes, one answer: the quick profile (the turn's own material) lands at once; the falsifier's research
         // follows and its profile supersedes the first on the answer (the window shows the latest).
         const answer = yield* post({ ...body, ...(facingNative && researchOn ? { research: false } : {}) }, groundTimeout, true)
         const ground = facingNative ? groundPayload(answer, facingLevel) : undefined
+        const paired = new Set(pairedIn(ground?.step?.profile))
+        if (handed.length) selfRevising.set(sessionID, handed.filter((r) => !paired.has(r.was)))
         if (ground) {
           // The window draws the ground on the answer from this metadata; the text only keeps the person-notice
           // prefix (never sent to the model) and is the fallback for a window that cannot read the metadata.
@@ -2767,9 +2778,11 @@ export const Plugin = define({
             Effect.gen(function* () {
               const note = groundSteerOn && !replyToSteer ? groundSteer(final?.step?.profile) : undefined
               const ask = lastAsk.get(sessionID) ?? ""
-              if (!note || !shouldHandBack({ note, outstanding: steerOutstanding.has(sessionID), gathered: gatheredTurn.has(sessionID), toolResults: turnMaterial.get(sessionID)?.length ?? 0, steeredAsk: steeredAsk.get(sessionID), ask })) return
+              const contradicted = contradictedIn(final?.step?.profile)
+              if (!note || !shouldHandBack({ note, outstanding: steerOutstanding.has(sessionID), gathered: gatheredTurn.has(sessionID), toolResults: turnMaterial.get(sessionID)?.length ?? 0, steeredAsk: steeredAsk.get(sessionID), ask, contradicted: contradicted.length })) return
               steeredAsk.set(sessionID, ask)
               steerOutstanding.add(sessionID)
+              if (contradicted.length) selfRevising.set(sessionID, contradicted)
               yield* ctx.session.synthetic({
                 sessionID,
                 text: note,
