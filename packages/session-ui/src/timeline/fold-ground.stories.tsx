@@ -114,31 +114,38 @@ const contestedView = ground(contested)
 const supportedView = ground(supported)
 const revisedView = ground(revised, [{ was: "She won a Nobel Prize in 1911 for physics.", now: "She won the 1911 Nobel Prize in Chemistry." }])
 
+// The app's own frame: a scrolling timeline with the answer in its centred session column (--container-session, 744px)
+const Column = (props: { children: unknown }) => (
+  <div style={{ height: "100vh", "overflow-y": "auto" }}>
+    <div style={{ "max-width": "744px", margin: "0 auto", padding: "24px 16px" }}>{props.children as never}</div>
+  </div>
+)
+
 export default { title: "OpenCode/Fold/Ground facing page" }
 
 export const Contested = () => (
-  <div style={{ padding: "24px", "max-width": "860px" }}>
+  <Column>
     <GroundHover view={contestedView} onRevise={(unit) => console.log("revise", unit.title)}>
       <Answer />
     </GroundHover>
-  </div>
+  </Column>
 )
 
 export const Uncontested = () => (
-  <div style={{ padding: "24px", "max-width": "860px" }}>
+  <Column>
     <GroundHover view={supportedView}>
       <Answer />
     </GroundHover>
-  </div>
+  </Column>
 )
 
 export const Revised = () => (
-  <div style={{ padding: "24px", "max-width": "860px" }}>
+  <Column>
     <GroundHover view={revisedView}>
       <p class="text-14-regular leading-text-base">
         Marie Curie was a Polish and naturalised-French physicist and chemist. Curie discovered radium in 1898 with her husband
         Pierre. She won the 1911 Nobel Prize in Chemistry.
       </p>
     </GroundHover>
-  </div>
+  </Column>
 )

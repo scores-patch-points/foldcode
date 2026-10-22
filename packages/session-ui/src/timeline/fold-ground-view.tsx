@@ -85,6 +85,19 @@ const STACKS: Array<{ tone: ProfileTone; title: string }> = [
 const CONTESTED: ProfileTone[] = ["danger", "warning"]
 // Below this width the two pages do not fit side by side and the ground drops under the answer.
 const FACING_MIN = 640
+// The page hangs in the margin outside the answer's column when the margin holds at least this much; it never grows past HANG_MAX.
+const HANG_MIN = 280
+const HANG_MAX = 400
+const HANG_GAP = 16
+
+/** The nearest ancestor that scrolls: its right edge is where the margin ends. */
+const scrollerOf = (el: HTMLElement): HTMLElement => {
+  for (let at = el.parentElement; at; at = at.parentElement) {
+    const overflow = getComputedStyle(at).overflowY
+    if (overflow === "auto" || overflow === "scroll") return at
+  }
+  return document.documentElement
+}
 
 type Mark = { unit: ProfileItem; top: number; height: number }
 
@@ -107,6 +120,9 @@ function FacingPage(props: {
   collapsed: boolean
   onCollapse: (collapsed: boolean) => void
   corner: JSX.Element
+  /** the page's width when it hangs in the margin; inline it takes 20rem */
+  width?: number
+  onHeight?: (height: number) => void
 }) {
   let gutter: HTMLDivElement | undefined
   let sheet: HTMLDivElement | undefined
@@ -169,7 +185,18 @@ function FacingPage(props: {
   }
 
   return (
-    <div data-slot="fold-facing" data-collapsed={props.collapsed} class="flex shrink-0" style={{ width: props.collapsed ? "2.25rem" : "20rem" }}>
+    <div
+      ref={(el) => {
+        if (!props.onHeight) return
+        const observer = new ResizeObserver(() => props.onHeight?.(el.offsetHeight))
+        observer.observe(el)
+        onCleanup(() => observer.disconnect())
+      }}
+      data-slot="fold-facing"
+      data-collapsed={props.collapsed}
+      class="flex shrink-0"
+      style={{ width: props.collapsed ? "2.25rem" : props.width ? `${props.width}px` : "20rem" }}
+    >
       <div ref={gutter} data-slot="fold-gutter" class="relative w-3 shrink-0">
         <For each={marks()}>
           {(mark) => (
@@ -568,7 +595,12 @@ export function GroundHover(props: { view: GroundView; children: JSX.Element; on
     if (at >= 0) setSourceAt(at)
   }
   listenForPrompt()
-  const facing = () => layout() === "facing" && !!props.view.profile && width() >= FACING_MIN
+  // the room to the right of the answer's column, inside the scroller: when the page fits there it hangs in the margin and the answer
+  // keeps the whole column; otherwise it faces inline, or (narrower still) drops under the answer
+  const [margin, setMargin] = createSignal(0)
+  const [pageHeight, setPageHeight] = createSignal(0)
+  const hangs = () => layout() === "facing" && !!props.view.profile && margin() >= HANG_MIN
+  const facing = () => layout() === "facing" && !!props.view.profile && (hangs() || width() >= FACING_MIN)
   // a revision always shows beside its sentence; any other unit opens with its stack
   const isOpen = (unit: ProfileItem) => (!!unit.revised || stacks().has(unit.tone)) !== toggled().has(unit.key)
   const flip = <T,>(set: Set<T>, value: T) => {
@@ -616,13 +648,19 @@ export function GroundHover(props: { view: GroundView; children: JSX.Element; on
   return (
     <div
       ref={(el) => {
-        const observer = new ResizeObserver(() => setWidth(el.clientWidth))
+        const measure = () => {
+          setWidth(el.clientWidth)
+          setMargin(scrollerOf(el).getBoundingClientRect().right - el.getBoundingClientRect().right - HANG_GAP)
+        }
+        const observer = new ResizeObserver(measure)
         observer.observe(el)
+        observer.observe(scrollerOf(el))
         onCleanup(() => observer.disconnect())
       }}
       data-slot="fold-ground-hover"
-      data-layout={facing() ? "facing" : "stacked"}
-      class={facing() ? "flex gap-1" : undefined}
+      data-layout={hangs() ? "margin" : facing() ? "facing" : "stacked"}
+      class={hangs() ? "relative" : facing() ? "flex gap-1" : undefined}
+      style={hangs() ? { "min-height": `${pageHeight()}px` } : undefined}
     >
       <div
         ref={(el) => {
@@ -630,7 +668,7 @@ export function GroundHover(props: { view: GroundView; children: JSX.Element; on
           setAnswerEl(el)
         }}
         data-slot="fold-ground-answer"
-        class={facing() ? "min-w-0 flex-1" : undefined}
+        class={facing() && !hangs() ? "min-w-0 flex-1" : undefined}
         onMouseMove={(event) => {
           if (!answer) return
           const offset = offsetAt(answer, event.clientX, event.clientY)
@@ -667,7 +705,10 @@ export function GroundHover(props: { view: GroundView; children: JSX.Element; on
             fallback={<ProfilePanel profile={profile()} onPick={pick} corner={corner()} />}
           >
             {(el) => (
+              <div class={hangs() ? "absolute top-0" : "contents"} style={hangs() ? { left: `calc(100% + ${HANG_GAP}px)` } : undefined}>
               <FacingPage
+                width={hangs() ? Math.min(margin() - HANG_GAP, HANG_MAX) : undefined}
+                onHeight={setPageHeight}
                 profile={profile()}
                 answer={el()}
                 hovered={hovered()}
@@ -687,6 +728,7 @@ export function GroundHover(props: { view: GroundView; children: JSX.Element; on
                 onCollapse={(shut) => (shut ? setClosedAt(Date.now()) : setOpenedAt(Date.now()))}
                 corner={corner()}
               />
+              </div>
             )}
           </Show>
         )}
