@@ -1978,7 +1978,7 @@ export const Plugin = define({
               physicsRecord({ sessionID: event.sessionID, served: true, kind: "gather-down", error: door?.error, withheldToolChars: withheld })
             } else {
               // what was read is this turn's material, so the ground check weighs the answer against the pages (applied after the new-ask reset below)
-              gatheredMaterial.set(event.sessionID, result.passages)
+              gatheredMaterial.set(event.sessionID, result.passages.filter((p) => !/wikipedia\.org|wikimedia\.org/i.test(p.name)))
               strip()
               const viaDoor = gatherZero && routed?.kind !== "account" && id !== undefined && gatherViaDoor.includes(event.model.providerID)
               if (viaDoor) {
@@ -1990,12 +1990,12 @@ export const Plugin = define({
                 // research record (the run's measurements) stays out. The model writes the piece in its own prose from them, and the
                 // ground check weighs that prose against the same passages afterwards. Asked to write "from these lines only", it strung
                 // quotations together with "according to" after each, which is neither an essay nor graded as support.
-                const pages = result.passages.filter((p) => /^https?:/.test(p.name)).slice(0, 10)
+                const pages = result.passages.filter((p) => /^https?:/.test(p.name) && !/wikipedia\.org|wikimedia\.org/i.test(p.name)).slice(0, 10)
                 const notes = pages.map((p) => `From ${new URL(p.name).hostname.replace(/^www\./, "")}:\n${p.text.replace(/\s*\n\s*/g, " ").slice(0, 1200)}`).join("\n\n")
                 const form = Physics.essayAsk(ask) ? "the essay: a title, an opening paragraph, body paragraphs that each develop one idea, and a closing paragraph" : "the answer as connected prose"
                 // THE VOID: the gaps an account has to fill, defined from the corpus (what several independent pages say several things
                 // about), each with the pages' sentences that bear on it; the essay is those gaps filled, in order
-                const voids = (result.voids ?? []).filter((v) => v.sentences.length >= 3)
+                const voids = (result.voids ?? []).map((v) => ({ ...v, sentences: v.sentences.filter((s) => !/wikipedia/i.test(s.host)) })).filter((v) => v.sentences.length >= 3)
                 const gaps = voids.map((v) => `About ${v.label}:\n${v.sentences.map((s) => `- ${s.text}`).join("\n")}`).join("\n\n")
                 say(voids.length >= 2 && Physics.essayAsk(ask)
                   ? `${ask}\n\nThe facts the pages state, grouped by what they are about:\n\n${gaps}\n\nWrite it as you would write any essay: your own structure, voice and transitions, in your own words. Do not copy or quote the lines above; weave their facts into your own sentences, one fact per sentence, so each sentence can be checked against the facts above. Every fact and figure in it comes from the facts above.`
