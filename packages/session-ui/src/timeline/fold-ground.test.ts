@@ -193,3 +193,13 @@ describe("the source behind a proposition", () => {
     expect(view.unrevised).toEqual(["It glows blue."])
   })
 })
+
+describe("a support found by lookup", () => {
+  test("reads as a lead, not a proof", () => {
+    const view = readGround({
+      notice: "fold-ground",
+      ground: { step: { grounded: [], profile: { claims: [{ standing: "supported", tier: "index", text: "Dolphins are fish." }, { standing: "supported", text: "She found radium." }] } } },
+    })!.profile!
+    expect(view.units.map((u) => u.label)).toEqual(["Likely supported", "Supported"])
+  })
+})

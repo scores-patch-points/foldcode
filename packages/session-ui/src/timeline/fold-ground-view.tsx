@@ -1,4 +1,5 @@
 import { For, Show, createEffect, createSignal, onCleanup, onMount, type JSX } from "solid-js"
+import { SourceChip, SourceClip } from "./fold-clip"
 import { SourceModal } from "./fold-source"
 import { locate, propositionsOf, rowAt, unitAt, type Proposition, type GroundRow, type GroundView, type Located, type ProfileItem, type ProfileSource, type ProfileTone, type ProfileView } from "./fold-ground"
 
@@ -153,7 +154,7 @@ function FacingPage(props: {
         const top = Math.max(floor, mark.top - offset)
         el.style.top = `${top}px`
         el.style.visibility = "visible"
-        return top + el.offsetHeight + 6
+        return top + el.offsetHeight + 4
       }, 0)
       sheet.style.height = `${bottom}px`
     })
@@ -168,8 +169,8 @@ function FacingPage(props: {
   }
 
   return (
-    <div data-slot="fold-facing" data-collapsed={props.collapsed} class="flex shrink-0" style={{ width: props.collapsed ? "2.25rem" : "19rem" }}>
-      <div ref={gutter} data-slot="fold-gutter" class="relative w-4 shrink-0">
+    <div data-slot="fold-facing" data-collapsed={props.collapsed} class="flex shrink-0" style={{ width: props.collapsed ? "2.25rem" : "20rem" }}>
+      <div ref={gutter} data-slot="fold-gutter" class="relative w-3 shrink-0">
         <For each={marks()}>
           {(mark) => (
             <button
@@ -205,8 +206,8 @@ function FacingPage(props: {
           {"\u2039"}
         </button>
       </Show>
-      <div class="min-w-0 flex-1 text-13-regular leading-text-compact" classList={{ hidden: props.collapsed }}>
-        <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1 pb-2 text-v2-text-text-faint">
+      <div class="min-w-0 flex-1 pl-1 text-13-regular leading-text-compact" classList={{ hidden: props.collapsed }}>
+        <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1 px-2 pb-2 text-v2-text-text-faint">
           <For each={STACKS.filter((stack) => unitsOf(stack.tone).length)}>
             {(stack) => (
               <button
@@ -221,12 +222,6 @@ function FacingPage(props: {
               </button>
             )}
           </For>
-          <span class="ms-auto flex gap-2">
-            <button type="button" class="cursor-pointer hover:text-v2-text-text-base" title="Fold the ground away" aria-label="Fold the ground away" onClick={() => props.onCollapse(true)}>
-              {"\u203A"}
-            </button>
-            {props.corner}
-          </span>
         </div>
         <Show when={props.profile.noMaterial}>
           <div class="pb-2 text-v2-text-text-faint">Nothing was read this turn, so these claims rest on the model's own knowledge.</div>
@@ -239,15 +234,14 @@ function FacingPage(props: {
             {(unit) => (
               <div
                 data-gloss={unit.key}
-                class={`absolute inset-x-0 cursor-pointer rounded-md px-1.5 py-1 ${props.hovered === unit.key ? "bg-border-weak-base" : ""}`}
+                class={`absolute inset-x-0 rounded-md px-2 py-1 transition-colors ${props.hovered === unit.key ? "bg-border-weak-base" : ""}`}
                 style={{ visibility: "hidden" }}
-                title="Fold this note away"
                 onMouseEnter={() => enter(unit)}
                 onMouseLeave={leave}
-                onClick={() => props.onToggle(unit)}
               >
                 <UnitTip
                   unit={unit}
+                  onFold={() => props.onToggle(unit)}
                   onSource={props.hasSource(unit) ? () => props.onSource(unit) : undefined}
                   onRevise={props.onRevise && (unit.tone === "danger" || unit.tone === "warning") ? () => props.onRevise?.(unit) : undefined}
                 />
@@ -262,29 +256,25 @@ function FacingPage(props: {
             </div>
           )}
         </For>
-        <Show when={props.profile.rests.length > 0}>
-          <div class="text-v2-text-text-faint">
-            Rests on{" "}
-            <For each={props.profile.rests}>
-              {(row, i) => {
-                const source = () => props.profile.sources.find((s) => s.name === row.source)
-                return (
-                  <span>
-                    {i() ? ", " : ""}
-                    <Show when={source()} fallback={row.source}>
-                      {(s) => (
-                        <button type="button" class="cursor-pointer underline decoration-dotted underline-offset-2 hover:text-v2-text-text-base" onClick={() => props.onSource(s())}>
-                          {row.source}
-                        </button>
-                      )}
-                    </Show>{" "}
-                    ({row.n})
-                  </span>
-                )
-              }}
-            </For>
+        <div class="flex flex-col gap-1.5 px-2 pt-2 text-v2-text-text-faint">
+          <Show when={props.profile.rests.length > 0}>
+            <div class="flex flex-wrap items-center gap-1.5">
+              <span>Rests on</span>
+              <For each={props.profile.rests}>
+                {(row) => {
+                  const source = () => props.profile.sources.find((s) => s.name === row.source)
+                  return <SourceChip name={row.source} url={source()?.url} n={row.n} onOpen={source() ? () => props.onSource(source()!) : undefined} />
+                }}
+              </For>
+            </div>
+          </Show>
+          <div class="flex gap-3">
+            <button type="button" class="cursor-pointer hover:text-v2-text-text-base" onClick={() => props.onCollapse(true)}>
+              Fold the ground {"\u203A"}
+            </button>
+            {props.corner}
           </div>
-        </Show>
+        </div>
       </div>
     </div>
   )
@@ -597,7 +587,7 @@ export function GroundHover(props: { view: GroundView; children: JSX.Element; on
       aria-label={facing() ? "Put the ground under the answer" : "Put the ground beside the answer"}
       onClick={() => setLayout(facing() ? "stacked" : "facing")}
     >
-      {facing() ? "\u2193" : "\u2192"}
+      {facing() ? "Under the answer \u2193" : "Beside the answer \u2192"}
     </button>
   )
   ensureStyle()
@@ -632,7 +622,7 @@ export function GroundHover(props: { view: GroundView; children: JSX.Element; on
       }}
       data-slot="fold-ground-hover"
       data-layout={facing() ? "facing" : "stacked"}
-      class={facing() ? "flex gap-2" : undefined}
+      class={facing() ? "flex gap-1" : undefined}
     >
       <div
         ref={(el) => {
@@ -749,7 +739,7 @@ export function GroundHover(props: { view: GroundView; children: JSX.Element; on
 
 /** One unit's grounding, as the door read it: the verdict and why, what it rests on (its own bytes, addressed), what it leaves
  *  uncarried, and where the door looked. Everything shown is the door's payload. */
-function UnitTip(props: { unit: ProfileItem; onSource?: () => void; onRevise?: () => void }) {
+function UnitTip(props: { unit: ProfileItem; onSource?: () => void; onRevise?: () => void; onFold?: () => void }) {
   return (
     <div class="flex flex-col gap-1">
       <Show when={props.unit.revised}>
@@ -760,31 +750,58 @@ function UnitTip(props: { unit: ProfileItem; onSource?: () => void; onRevise?: (
           </div>
         )}
       </Show>
-      <div>
-        <span class={`font-[530] ${toneText[props.unit.tone]}`}>{props.unit.label}</span>
-        <Show when={props.unit.kind === "symbol"}>
-          <span class="text-v2-text-text-faint"> · {props.unit.title}</span>
-        </Show>
-      </div>
+      <Show
+        when={props.onFold}
+        fallback={
+          <div>
+            <span class={`font-[530] ${toneText[props.unit.tone]}`}>{props.unit.label}</span>
+            <Show when={props.unit.kind === "symbol"}>
+              <span class="text-v2-text-text-faint"> · {props.unit.title}</span>
+            </Show>
+          </div>
+        }
+      >
+        {(fold) => (
+          <button
+            type="button"
+            class="flex w-full cursor-pointer items-baseline gap-1 text-start"
+            title="Fold this note away"
+            onClick={(event) => {
+              event.stopPropagation()
+              fold()()
+            }}
+          >
+            <span class={`font-[530] ${toneText[props.unit.tone]}`}>{props.unit.label}</span>
+            <Show when={props.unit.kind === "symbol"}>
+              <span class="text-v2-text-text-faint">· {props.unit.title}</span>
+            </Show>
+            <Show when={props.onRevise}>
+              {(revise) => (
+                <span
+                  role="button"
+                  tabIndex={0}
+                  class="ms-auto shrink-0 cursor-pointer rounded px-1.5 text-v2-text-text-base hover:bg-border-weak-base"
+                  title="Ask for this sentence to be revised"
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    revise()()
+                  }}
+                >
+                  Revise
+                </span>
+              )}
+            </Show>
+          </button>
+        )}
+      </Show>
       <Show when={props.unit.why}>{(why) => <div class="text-v2-text-text-faint">{why()}</div>}</Show>
       <Show when={props.unit.evidence}>
         {(evidence) => (
-          <div class="border-l-2 border-border-weak-base pl-2">
-            <div class="break-words">{evidence().text}</div>
-            <div class="text-v2-text-text-faint">
-              {evidence().ref?.startsWith(evidence().source ?? "\u0000") ? evidence().ref : evidence().source}
-              <Show when={evidence().ref && !evidence().ref!.startsWith(evidence().source ?? "\u0000")}>{` · ${evidence().ref}`}</Show>
-            </div>
-          </div>
+          <SourceClip text={evidence().text} source={evidence().source} url={evidence().url} refText={evidence().ref} onOpen={props.onSource} />
         )}
       </Show>
       <For each={props.unit.from.slice(0, 3)}>
-        {(source) => (
-          <div class="border-l-2 border-border-weak-base pl-2">
-            <div class="break-words">{source.text}</div>
-            <div class="text-v2-text-text-faint">{source.ref ?? source.source}</div>
-          </div>
-        )}
+        {(source) => <SourceClip text={source.text} source={source.source} url={source.url} refText={source.ref} onOpen={props.onSource} />}
       </For>
       <Show when={props.unit.residue.length > 0}>
         <div class="text-v2-text-text-faint">Not in the source: {props.unit.residue.join(", ")}</div>
@@ -793,38 +810,6 @@ function UnitTip(props: { unit: ProfileItem; onSource?: () => void; onRevise?: (
       <Show when={props.unit.who}>{(who) => <div class="text-v2-text-text-faint">Resolved to {who()}</div>}</Show>
       <Show when={props.unit.tone === "warning" && props.unit.searched.length > 0}>
         <div class="text-v2-text-text-faint">Looked in: {props.unit.searched.join(" \u2192 ")}</div>
-      </Show>
-      <Show when={props.onSource || props.onRevise}>
-        <div class="flex gap-3">
-          <Show when={props.onSource}>
-            {(open) => (
-              <button
-                type="button"
-                class="w-fit cursor-pointer text-v2-text-text-faint underline decoration-dotted underline-offset-2 hover:text-v2-text-text-base"
-                onClick={(event) => {
-                  event.stopPropagation()
-                  open()()
-                }}
-              >
-                See it in the source
-              </button>
-            )}
-          </Show>
-          <Show when={props.onRevise}>
-            {(revise) => (
-              <button
-                type="button"
-                class="w-fit cursor-pointer text-v2-text-text-base underline decoration-dotted underline-offset-2"
-                onClick={(event) => {
-                  event.stopPropagation()
-                  revise()()
-                }}
-              >
-                Revise
-              </button>
-            )}
-          </Show>
-        </div>
       </Show>
     </div>
   )

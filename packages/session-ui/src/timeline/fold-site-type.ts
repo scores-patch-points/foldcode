@@ -74,3 +74,13 @@ export function typeOf(source: { name: string; url?: string }): SiteType {
   if (!domain && /\.\w{1,6}$/.test(source.name)) return { ...FILE_TYPE, fav: source.name.charAt(0).toUpperCase() }
   return T({ fav: (domain.charAt(0) || source.name.charAt(0) || "?").toUpperCase() })
 }
+
+/** How a source names itself: the site (or "Workspace file") and the page or file, as a reader would say it. */
+export function siteOf(source: { name: string; url?: string; ref?: string }) {
+  const domain = domainOf(source.url)
+  if (source.name.startsWith("wikipedia:")) return { site: "Wikipedia", title: source.name.replace(/^wikipedia:\s*/, "") }
+  if (domain) return { site: domain, title: source.name }
+  // a workspace file names itself by its base name (and the line the evidence sits on, when the ref carries one)
+  const ref = source.ref && source.ref.startsWith(source.name) ? source.ref : source.name
+  return { site: "Workspace file", title: ref.split("/").pop() ?? ref }
+}
