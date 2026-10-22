@@ -68,7 +68,7 @@ export const domainOf = (url?: string) => {
 
 /** The typesetting for a source: a listed site (or any of its subdomains), a workspace file, else the neutral reading style. */
 // A page the turn read is often named by its own URL (the door's passage name), with no separate url: the name is then the address.
-const urlOf = (source: { name: string; url?: string }) => source.url || (/^https?:\/\//.test(source.name) ? source.name : undefined)
+export const urlOf = (source: { name: string; url?: string }) => source.url || (/^https?:\/\//.test(source.name) ? source.name : undefined)
 
 export function typeOf(source: { name: string; url?: string }): SiteType {
   const domain = domainOf(urlOf(source)) || (source.name.startsWith("wikipedia:") ? "wikipedia.org" : "")

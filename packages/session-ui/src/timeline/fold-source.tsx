@@ -1,7 +1,7 @@
 import { For, Show, createEffect, createMemo, onCleanup, onMount } from "solid-js"
 import { Portal } from "solid-js/web"
 import type { ProfileItem, ProfileTone, Proposition } from "./fold-ground"
-import { domainOf, typeOf } from "./fold-site-type"
+import { siteOf, typeOf, urlOf } from "./fold-site-type"
 
 
 const tint: Record<ProfileTone, string> = {
@@ -33,12 +33,11 @@ export function SourceModal(props: {
   const source = () => current()?.source
   const here = createMemo(() => props.propositions.filter((p) => p.source.name === source()?.name))
   const type = () => (source() ? typeOf(source()!) : undefined)
-  const domain = () => domainOf(source()?.url)
-  const title = () => {
-    const name = source()?.name ?? ""
-    return name.replace(/^wikipedia:\s*/, "")
-  }
-  const site = () => (source()?.name.startsWith("wikipedia:") ? "Wikipedia" : domain() || "Workspace file")
+  // a page is named as it names itself (siteOf), never by its raw address; a page named by its URL still opens
+  const named = () => (source() ? siteOf(source()!) : { site: "", title: "" })
+  const title = () => named().title
+  const site = () => named().site
+  const href = () => (source() ? urlOf(source()!) : undefined)
   const step = (by: number) => props.onAt((props.at + by + props.propositions.length) % props.propositions.length)
   const otherSources = () => props.propositions.map((p) => p.source).filter((s, i, all) => all.findIndex((t) => t.name === s.name) === i)
 
@@ -136,14 +135,14 @@ export function SourceModal(props: {
                       class={`shrink-0 cursor-pointer rounded-full px-2 py-0.5 ${s.name === source()?.name ? "bg-border-weak-base text-v2-text-text-base" : "text-v2-text-text-faint hover:text-v2-text-text-base"}`}
                       onClick={() => props.onAt(props.propositions.findIndex((p) => p.source.name === s.name))}
                     >
-                      {s.name.replace(/^wikipedia:\s*/, "")}
+                      {siteOf(s).title}
                     </button>
                   )}
                 </For>
               </div>
             </Show>
             <div class="ms-auto flex items-center gap-3 text-v2-text-text-faint">
-              <Show when={source()?.url}>
+              <Show when={href()}>
                 {(url) => (
                   <a href={url()} target="_blank" rel="noreferrer" class="hover:text-v2-text-text-base">
                     Open page {"↗"}

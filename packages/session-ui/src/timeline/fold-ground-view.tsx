@@ -90,6 +90,8 @@ const FACING_MIN = 640
 const HANG_MIN = 280
 const HANG_MAX = 400
 const HANG_GAP = 16
+// the margin page is never shorter than this, however short the answer; nor taller than the answer, past this
+const MARGIN_FLOOR = 240
 
 /** Where the door looked, in the reader's words: each place once, in order, with how many lookups it took ("Wikidata ×3"); the door's
  *  own log of each lookup stays on hover. "material" is what this turn read. */
@@ -152,8 +154,12 @@ function FacingPage(props: {
 }) {
   let gutter: HTMLDivElement | undefined
   let sheet: HTMLDivElement | undefined
-  let references: HTMLDivElement | undefined
   const [marks, setMarks] = createSignal<Mark[]>([])
+  const [answerHeight, setAnswerHeight] = createSignal(0)
+  const [allSources, setAllSources] = createSignal(false)
+  let scroller: HTMLDivElement | undefined
+  // re-places every item when any one changes size (a card expanded, a note folded, a quote reflowed); each is observed as it is placed
+  const sized = new ResizeObserver(() => place())
   const unitsOf = (tone: ProfileTone) => props.profile.units.filter((unit) => unit.tone === tone)
   // What sits beside the answer, in reading order, each beside its first occurrence: a RUN of consecutive supported sentences that rest
   // on one page (quoted in that page's words), or a NOTE for a contested, revised or argued unit.
@@ -178,6 +184,7 @@ function FacingPage(props: {
   const lit = (unit: ProfileItem) => props.hovered === unit.key || (!!props.hovered && runOf().get(unit.key) === props.hovered)
   const measure = () => {
     if (!gutter) return
+    setAnswerHeight(props.answer.offsetHeight)
     const base = gutter.getBoundingClientRect().top
     setMarks(
       locate(props.profile.units, props.answer.textContent ?? "")
@@ -189,34 +196,45 @@ function FacingPage(props: {
         })
         .sort((x, y) => x.top - y.top),
     )
+    requestAnimationFrame(place)
   }
   onMount(() => {
     measure()
     const observer = new ResizeObserver(measure)
     observer.observe(props.answer)
-    onCleanup(() => observer.disconnect())
+    // the host lays the answer out in passes; place again once it has settled
+    const settle = [setTimeout(measure, 300), setTimeout(measure, 1200)]
+    onCleanup(() => {
+      observer.disconnect()
+      settle.forEach(clearTimeout)
+    })
   })
   createEffect(() => {
     props.profile
     measure()
   })
-  // place each item level with its sentence, below the one before it
+  // place each item level with its sentence, below the one before it; again whenever one changes size (a card expanded, a note
+  // folded, a quote reflowed), so nothing ever overlaps
+  const place = () => {
+    if (!sheet || !gutter) return
+    const offset = sheet.getBoundingClientRect().top - gutter.getBoundingClientRect().top + (scroller?.scrollTop ?? 0)
+    const bottom = items().reduce((floor, item) => {
+      const el = sheet!.querySelector<HTMLElement>(`[data-gloss="${item.key}"]`)
+      if (!el) return floor
+      sized.observe(el)
+      const top = Math.max(floor, item.top - offset)
+      el.style.top = `${top}px`
+      el.style.visibility = "visible"
+      return top + el.offsetHeight + 6
+    }, 0)
+    // the reference list follows the last note; the page scrolls when the two run longer than the answer
+    sheet.style.height = `${bottom}px`
+  }
+  onCleanup(() => sized.disconnect())
   createEffect(() => {
-    const list = items()
-    requestAnimationFrame(() => {
-      if (!sheet || !gutter) return
-      const offset = sheet.getBoundingClientRect().top - gutter.getBoundingClientRect().top
-      const bottom = list.reduce((floor, item) => {
-        const el = sheet!.querySelector<HTMLElement>(`[data-gloss="${item.key}"]`)
-        if (!el) return floor
-        const top = Math.max(floor, item.top - offset)
-        el.style.top = `${top}px`
-        el.style.visibility = "visible"
-        return top + el.offsetHeight + 6
-      }, 0)
-      // the reference list starts where the answer ends (never in the middle of it), or below the last note
-      sheet.style.height = `${Math.max(bottom, props.answer.offsetHeight - offset)}px`
-    })
+    items()
+    allSources()
+    requestAnimationFrame(place)
   })
   const enter = (unit: ProfileItem) => {
     props.onPick(unit.find)
@@ -280,7 +298,14 @@ function FacingPage(props: {
           {"\u2039"}
         </button>
       </Show>
-      <div class="min-w-0 flex-1 pl-1 text-13-regular leading-text-compact" classList={{ hidden: props.collapsed }}>
+      <div
+        ref={scroller}
+        data-slot="fold-facing-page"
+        class="min-w-0 flex-1 overflow-y-auto overscroll-contain pl-1 text-13-regular leading-text-compact"
+        classList={{ hidden: props.collapsed }}
+        // the ground is never longer than the answer it grounds: past the answer's height it scrolls in place
+        style={{ "max-height": `${Math.max(answerHeight(), MARGIN_FLOOR)}px`, "scrollbar-width": "thin" }}
+      >
         <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1 px-2 pb-2 text-v2-text-text-faint">
           <For each={STACKS.filter((stack) => unitsOf(stack.tone).length)}>
             {(stack) => (
@@ -299,14 +324,37 @@ function FacingPage(props: {
           <Show when={props.profile.rests.length > 0}>
             <button
               type="button"
-              class="cursor-pointer whitespace-nowrap hover:text-v2-text-text-base"
-              title="Go to the list of sources"
-              onClick={() => references?.scrollIntoView({ block: "nearest", behavior: "smooth" })}
+              aria-expanded={allSources()}
+              class={`cursor-pointer whitespace-nowrap hover:text-v2-text-text-base ${allSources() ? "text-v2-text-text-base" : ""}`}
+              title={allSources() ? "Hide the list of sources" : "Show every source this answer rests on"}
+              onClick={() => setAllSources(!allSources())}
             >
-              {"\u00B7"} {props.profile.rests.length} {props.profile.rests.length === 1 ? "source" : "sources"} {"\u2193"}
+              {"\u00B7"} {props.profile.rests.length} {props.profile.rests.length === 1 ? "source" : "sources"}{" "}
+              {allSources() ? "\u25B4" : "\u25BE"}
             </button>
           </Show>
         </div>
+        <Show when={allSources() && props.profile.rests.length > 0}>
+          <div data-slot="fold-references" class="mb-2 flex flex-col border-b border-border-weak-base pb-2">
+            <For each={props.profile.rests}>
+              {(row, i) => {
+                const source = () => props.profile.sources.find((s) => s.name === row.source)
+                const units = () => props.profile.units.filter((unit) => unit.evidence?.source === row.source || unit.from.some((f) => f.source === row.source))
+                return (
+                  <SourceRow
+                    n={i() + 1}
+                    name={row.source}
+                    url={source()?.url}
+                    count={row.n}
+                    onOpen={source() ? () => props.onSource(source()!) : undefined}
+                    onEnter={() => props.onPick(units().map((unit) => unit.find))}
+                    onLeave={() => props.onPick("")}
+                  />
+                )
+              }}
+            </For>
+          </div>
+        </Show>
         <Show when={props.profile.noMaterial}>
           <div class="pb-2 text-v2-text-text-faint">Nothing was read this turn, so these claims rest on the model's own knowledge.</div>
         </Show>
@@ -373,28 +421,6 @@ function FacingPage(props: {
             </div>
           )}
         </For>
-        <Show when={props.profile.rests.length > 0}>
-          <div ref={references} data-slot="fold-references" class="flex flex-col pt-3">
-            <div class="px-2 pb-1 text-11-medium uppercase tracking-wide text-v2-text-text-faint">Sources</div>
-            <For each={props.profile.rests}>
-              {(row, i) => {
-                const source = () => props.profile.sources.find((s) => s.name === row.source)
-                const units = () => props.profile.units.filter((unit) => unit.evidence?.source === row.source || unit.from.some((f) => f.source === row.source))
-                return (
-                  <SourceRow
-                    n={i() + 1}
-                    name={row.source}
-                    url={source()?.url}
-                    count={row.n}
-                    onOpen={source() ? () => props.onSource(source()!) : undefined}
-                    onEnter={() => props.onPick(units().map((unit) => unit.find))}
-                    onLeave={() => props.onPick("")}
-                  />
-                )
-              }}
-            </For>
-          </div>
-        </Show>
         <div class="flex flex-col gap-1.5 px-2 pt-2 text-v2-text-text-faint">
           <div class="flex gap-3">
             <button type="button" class="cursor-pointer hover:text-v2-text-text-base" onClick={() => props.onCollapse(true)}>
@@ -696,6 +722,29 @@ export function GroundHover(props: { view: GroundView; children: JSX.Element; on
     if (at >= 0) setSourceAt(at)
   }
   listenForPrompt()
+  // measured once the row is in the page (its scroller is only known then), and again whenever the row or its scroller resizes
+  let rootEl: HTMLDivElement | undefined
+  onMount(() => {
+    const el = rootEl
+    if (!el) return
+    const measure = () => {
+      setWidth(el.clientWidth)
+      setMargin(scrollerOf(el).getBoundingClientRect().right - el.getBoundingClientRect().right - HANG_GAP)
+    }
+    const observer = new ResizeObserver(measure)
+    observer.observe(el)
+    observer.observe(scrollerOf(el))
+    if (answer) observer.observe(answer)
+    window.addEventListener("resize", measure)
+    // the host lays the row out in passes (a hidden mount, fonts, the answer's markdown): measure again once it has settled
+    requestAnimationFrame(measure)
+    const settle = [setTimeout(measure, 300), setTimeout(measure, 1200)]
+    onCleanup(() => {
+      observer.disconnect()
+      window.removeEventListener("resize", measure)
+      settle.forEach(clearTimeout)
+    })
+  })
   // the room to the right of the answer's column, inside the scroller: when the page fits there it hangs in the margin and the answer
   // keeps the whole column; otherwise it faces inline, or (narrower still) drops under the answer
   const [margin, setMargin] = createSignal(0)
@@ -748,16 +797,7 @@ export function GroundHover(props: { view: GroundView; children: JSX.Element; on
 
   return (
     <div
-      ref={(el) => {
-        const measure = () => {
-          setWidth(el.clientWidth)
-          setMargin(scrollerOf(el).getBoundingClientRect().right - el.getBoundingClientRect().right - HANG_GAP)
-        }
-        const observer = new ResizeObserver(measure)
-        observer.observe(el)
-        observer.observe(scrollerOf(el))
-        onCleanup(() => observer.disconnect())
-      }}
+      ref={rootEl}
       data-slot="fold-ground-hover"
       data-layout={hangs() ? "margin" : facing() ? "facing" : "stacked"}
       class={hangs() ? "relative" : facing() ? "flex gap-1" : undefined}
