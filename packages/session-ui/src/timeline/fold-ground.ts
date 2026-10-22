@@ -162,13 +162,15 @@ export function readProfile(profile: Record<string, unknown> | undefined): Profi
       {
         key: `c${i}`,
         kind: standing === "argument" ? ("argument" as const) : ("claim" as const),
-        tone: shown.tone,
+        tone: claim.added === true && standing === "unsupported" ? "muted" : shown.tone,
         // a support found by looking the claim's subject up (tier "index") is a lead to read, not a proof: it says so
         label:
           claim.derived === true
             ? "From the sources"
             : claim.added === true
-              ? "Not in the sources"
+              ? standing === "unsupported"
+                ? "From the model"
+                : "Not in the sources"
               : standing === "supported" && claim.tier === "index"
                 ? "Likely supported"
                 : shown.label,

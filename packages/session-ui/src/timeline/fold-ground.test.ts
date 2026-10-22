@@ -74,7 +74,6 @@ describe("fold ground profile", () => {
   test("items that need a look are the contradicted, unsupported and not-found ones, with the door's own reasons", () => {
     expect(view().look.map((item) => [item.label, item.tone])).toEqual([
       ["Contradicted", "danger"],
-      ["Not in the sources", "warning"],
       ["Contradicted", "danger"],
     ])
     expect(view().look[0].why).toBe("date of birth is 1867, not 1869")
