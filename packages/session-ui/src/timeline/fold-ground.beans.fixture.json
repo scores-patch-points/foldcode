@@ -1253,7 +1253,22 @@
         "discriminates": true
        },
        "searched": [
-        "material"
+        "material",
+        "cited source: none (read_failed:HTTP 403)"
+       ],
+       "tier": "index",
+       "via": {
+        "source": "https://en.wikipedia.org/wiki/Phaseolus_vulgaris",
+        "url": "https://en.wikipedia.org/wiki/Phaseolus_vulgaris",
+        "text": "In Species Plantarum in 1753, Carl Linnaeus classified the beans known by him into genus Phaseolus and genus Dolichos, naming 11 species of Phaseolus, including 6 cultivated species and 5 \"wild\" species.",
+        "ref": "https://en.wikipedia.org/wiki/Phaseolus_vulgaris:1"
+       },
+       "cites": [
+        {
+         "text": "Linnaei, Caroli (1753). Species plantarum: exhibentes plantas rite cognitas... (thanks to biodiversitylibrary.org ) (in Latin). pp. 723– 725. Retrieved 2023-11-18.",
+         "url": "https://www.biodiversitylibrary.org/page/358744#page/165/mode/1up",
+         "status": "untried"
+        }
        ]
       },
       {
@@ -1277,8 +1292,18 @@
         "discriminates": true
        },
        "searched": [
-        "material"
-       ]
+        "material",
+        "cited source: none (index_cites_nothing:that sentence carries no footnote)"
+       ],
+       "tier": "index",
+       "via": {
+        "source": "https://en.wikipedia.org/wiki/Phaseolus_vulgaris",
+        "url": "https://en.wikipedia.org/wiki/Phaseolus_vulgaris",
+        "text": "In Species Plantarum in 1753, Carl Linnaeus classified the beans known by him into genus Phaseolus and genus Dolichos, naming 11 species of Phaseolus, including 6 cultivated species and 5 \"wild\" species. The beans cultivated in Europe prior to the Columbian Exchange were of Asian origin and are unrelated to New Worl…",
+        "ref": "https://en.wikipedia.org/wiki/Phaseolus_vulgaris:1"
+       },
+       "cites": [],
+       "citesWhy": "that sentence carries no footnote"
       },
       {
        "text": "The Eurasian species were transferred to other genera including Vigna, Vicia and Lablab, so members of the Phaseolus genus are now all from the Americas.",
@@ -1303,7 +1328,23 @@
         "discriminates": true
        },
        "searched": [
-        "material"
+        "material",
+        "cited source: none (missing_stem:eurasian,speci,transferr)"
+       ],
+       "tier": "index",
+       "via": {
+        "source": "https://en.wikipedia.org/wiki/Phaseolus_vulgaris",
+        "url": "https://en.wikipedia.org/wiki/Phaseolus_vulgaris",
+        "text": "The beans cultivated in Europe prior to the Columbian Exchange were of Asian origin and are unrelated to New World Phaseolus species. The Eurasian species were transferred to other genera including Vigna, Vicia and Lablab, so members of the Phaseolus genus are now all from the Americas.",
+        "ref": "https://en.wikipedia.org/wiki/Phaseolus_vulgaris:2"
+       },
+       "cites": [
+        {
+         "text": "Chauvet, M. (1982). \"Le point sur la nomenclature des haricots, à l'occasion de la parution de la monographie de Maréchal, Mascherpa et Stainie\". Journal d'agriculture traditionnelle et de botanique appliquée (in French). 29 (1): 31– 39.…",
+         "url": "https://www.persee.fr/doc/jatba_0183-5173_1982_num_29_1_3857",
+         "status": "read",
+         "why": "missing_stem:eurasian,speci,transferr"
+        }
        ]
       },
       {
@@ -1327,8 +1368,18 @@
         "discriminates": true
        },
        "searched": [
-        "material"
-       ]
+        "material",
+        "cited source: none (index_cites_nothing:that sentence carries no footnote)"
+       ],
+       "tier": "index",
+       "via": {
+        "source": "https://en.wikipedia.org/wiki/Phaseolus_vulgaris",
+        "url": "https://en.wikipedia.org/wiki/Phaseolus_vulgaris",
+        "text": "The Eurasian species were transferred to other genera including Vigna, Vicia and Lablab, so members of the Phaseolus genus are now all from the Americas. When Phaseolus vulgaris arrived in Europe in the 16th century, this species was yet another seed in a pod, thus there were already words in the European languages …",
+        "ref": "https://en.wikipedia.org/wiki/Phaseolus_vulgaris:3"
+       },
+       "cites": [],
+       "citesWhy": "that sentence carries no footnote"
       },
       {
        "text": "Genetic analyses of the common bean Phaseolus indicate that it originated in Mesoamerica and subsequently spread southward along with maize and squash, traditional companion crops.",
@@ -1351,7 +1402,23 @@
         "discriminates": true
        },
        "searched": [
-        "material"
+        "material",
+        "cited source: none (missing_stem:genetic,analys,indicat)"
+       ],
+       "tier": "index",
+       "via": {
+        "source": "https://en.wikipedia.org/wiki/Rice_and_beans",
+        "url": "https://en.wikipedia.org/wiki/Rice_and_beans",
+        "text": "The New Orleans specialty known as \"red beans and rice\" is often accompanied by a side of smoked sausage or a fried pork chop. Genetic analyses of the common bean Phaseolus indicate that it originated in Mesoamerica and subsequently spread southward along with maize and squash, traditional companion crops.",
+        "ref": "https://en.wikipedia.org/wiki/Rice_and_beans:3"
+       },
+       "cites": [
+        {
+         "text": "Bitocchi, Elena; Nanni, Laura; Bellucci, Elisa; Rossi, Monica; Giardini, Alessandro; Zeuli, Pierluigi Spagnoletti; Logozzo, Giuseppina; Stougaard, Jens; McClean, Phillip; Attene, Giovanna; Papa, Roberto (2012). \"Mesoamerican origin of th…",
+         "url": "https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3325731",
+         "status": "read",
+         "why": "missing_stem:genetic,analys,indicat"
+        }
        ]
       },
       {
@@ -1380,7 +1447,29 @@
         "discriminates": true
        },
        "searched": [
-        "material"
+        "material",
+        "cited source: none (unrelated)"
+       ],
+       "tier": "index",
+       "via": {
+        "source": "https://en.wikipedia.org/wiki/Lima_bean",
+        "url": "https://en.wikipedia.org/wiki/Lima_bean",
+        "text": "They were discovered in Peru and may have been the first plant that was brought up under civilization by the native farmers.",
+        "ref": "https://en.wikipedia.org/wiki/Lima_bean:1"
+       },
+       "cites": [
+        {
+         "text": "\"Cookbook:Lima Bean - Wikibooks, open books for an open world\".",
+         "url": "https://en.m.wikibooks.org/wiki/Cookbook:Lima_Bean",
+         "status": "mirror",
+         "why": "mirror_host"
+        },
+        {
+         "text": "Leonard, Jonathan Norton (1970). Recipes, Latin American cooking. Time-Life International (Nederlands). p. 21. ISBN 978-0-8094-0063-8.",
+         "url": "https://books.google.com/books?id=J8SLxAEACAAJ",
+         "status": "read",
+         "why": "unrelated"
+        }
        ]
       },
       {
@@ -1405,7 +1494,23 @@
         "discriminates": true
        },
        "searched": [
-        "material"
+        "material",
+        "cited source: none (read_failed:HTTP 403)"
+       ],
+       "tier": "index",
+       "via": {
+        "source": "https://en.wikipedia.org/wiki/Lima_bean",
+        "url": "https://en.wikipedia.org/wiki/Lima_bean",
+        "text": "The Andean domestication took place around 2000 BC and produced a large-seeded variety (lima type), while the second, taking place in Mesoamerica around AD 800, produced a small-seeded variety (Sieva type). By around 1300, cultivation had spread north of the Rio Grande, and, in the 1500s, the plant began to be culti…",
+        "ref": "https://en.wikipedia.org/wiki/Lima_bean:2"
+       },
+       "cites": [
+        {
+         "text": "Motta-Aldana, Jenny R.; Serrano-Serrano, Martha L.; Hernández-Torres, Jorge; Castillo-Villamizar, Genis; Debouck, Daniel G.; Chacóns, Maria I. (September 2010). \"Multiple Origins of Lima Bean Landraces in the Americas: Evidence from Chlo…",
+         "url": "https://doi.org/10.2135%2Fcropsci2009.12.0706",
+         "status": "unreadable",
+         "why": "read_failed:HTTP 403"
+        }
        ]
       },
       {
@@ -1454,7 +1559,23 @@
         "discriminates": true
        },
        "searched": [
-        "material"
+        "material",
+        "cited source: none (read_failed:HTTP 403)"
+       ],
+       "tier": "index",
+       "via": {
+        "source": "https://en.wikipedia.org/wiki/Lima_bean",
+        "url": "https://en.wikipedia.org/wiki/Lima_bean",
+        "text": "They were discovered in Peru and may have been the first plant that was brought up under civilization by the native farmers. The Andean domestication took place around 2000 BC and produced a large-seeded variety (lima type), while the second, taking place in Mesoamerica around AD 800, produced a small-seeded variety…",
+        "ref": "https://en.wikipedia.org/wiki/Lima_bean:1"
+       },
+       "cites": [
+        {
+         "text": "Motta-Aldana, Jenny R.; Serrano-Serrano, Martha L.; Hernández-Torres, Jorge; Castillo-Villamizar, Genis; Debouck, Daniel G.; Chacóns, Maria I. (September 2010). \"Multiple Origins of Lima Bean Landraces in the Americas: Evidence from Chlo…",
+         "url": "https://doi.org/10.2135%2Fcropsci2009.12.0706",
+         "status": "unreadable",
+         "why": "read_failed:HTTP 403"
+        }
        ]
       },
       {
@@ -1476,7 +1597,27 @@
         "discriminates": true
        },
        "searched": [
-        "material"
+        "material",
+        "cited source: none (unrelated)"
+       ],
+       "tier": "index",
+       "via": {
+        "source": "https://en.wikipedia.org/wiki/Lima_bean",
+        "url": "https://en.wikipedia.org/wiki/Lima_bean",
+        "text": "By around 1300, cultivation had spread north of the Rio Grande, and, in the 1500s, the plant began to be cultivated in the Old World. The Moche culture (AD 1–800) cultivated lima beans heavily and often depicted them in their art.",
+        "ref": "https://en.wikipedia.org/wiki/Lima_bean:3"
+       },
+       "cites": [
+        {
+         "text": "Larco Hoyle, Rafael. Los Mochicas. Museo Arqueológico Rafael Larco Herrera. Lima 2001. ISBN 9972-9341-0-1.",
+         "status": "offline"
+        },
+        {
+         "text": "Leonard, Jonathan Norton (1970). Recipes, Latin American cooking. Time-Life International (Nederlands). p. 21. ISBN 978-0-8094-0063-8.",
+         "url": "https://books.google.com/books?id=J8SLxAEACAAJ",
+         "status": "read",
+         "why": "unrelated"
+        }
        ]
       },
       {
@@ -1503,7 +1644,27 @@
         "discriminates": true
        },
        "searched": [
-        "material"
+        "material",
+        "cited source: none (no_candidates)"
+       ],
+       "tier": "index",
+       "via": {
+        "source": "https://en.wikipedia.org/wiki/Lima_bean",
+        "url": "https://en.wikipedia.org/wiki/Lima_bean",
+        "text": "The Moche culture (AD 1–800) cultivated lima beans heavily and often depicted them in their art. During the Spanish Viceroyalty of Peru, lima beans were exported to the rest of the Americas and Europe, and since the boxes of such goods had their place of origin labeled \"Lima, Peru\", the beans got named as such.",
+        "ref": "https://en.wikipedia.org/wiki/Lima_bean:4"
+       },
+       "cites": [
+        {
+         "text": "Larco Hoyle, Rafael. Los Mochicas. Museo Arqueológico Rafael Larco Herrera. Lima 2001. ISBN 9972-9341-0-1.",
+         "status": "offline"
+        },
+        {
+         "text": "Leonard, Jonathan Norton (1970). Recipes, Latin American cooking. Time-Life International (Nederlands). p. 21. ISBN 978-0-8094-0063-8.",
+         "url": "https://books.google.com/books?id=J8SLxAEACAAJ",
+         "status": "read",
+         "why": "no_candidates"
+        }
        ]
       },
       {
@@ -1525,7 +1686,21 @@
         "discriminates": true
        },
        "searched": [
-        "material"
+        "material",
+        "cited source: none (index_cites_nothing:its footnotes cite no web page)"
+       ],
+       "tier": "index",
+       "via": {
+        "source": "https://en.wikipedia.org/wiki/Lima_bean",
+        "url": "https://en.wikipedia.org/wiki/Lima_bean",
+        "text": "During the Spanish Viceroyalty of Peru, lima beans were exported to the rest of the Americas and Europe, and since the boxes of such goods had their place of origin labeled \"Lima, Peru\", the beans got named as such. The term \"butter bean\" is widely used in North and South Carolina for a large, flat and yellow/white …",
+        "ref": "https://en.wikipedia.org/wiki/Lima_bean:5"
+       },
+       "cites": [
+        {
+         "text": "Oxford English Dictionary, 45th Edition, various quotations",
+         "status": "offline"
+        }
        ]
       },
       {
@@ -1543,8 +1718,18 @@
        "verdict": "held",
        "chains": 1,
        "searched": [
-        "material"
-       ]
+        "material",
+        "cited source: none (index_cites_nothing:that sentence carries no footnote)"
+       ],
+       "tier": "index",
+       "via": {
+        "source": "https://en.wikipedia.org/wiki/Lima_bean",
+        "url": "https://en.wikipedia.org/wiki/Lima_bean",
+        "text": "In the U.S., it is a warm-season crop, grown mainly in Delaware and the mid-Atlantic region for processing and in the Midwest and California for dry beans. Baby lima beans are planted in early June and harvested about ten to twelve weeks later.",
+        "ref": "https://en.wikipedia.org/wiki/Lima_bean:8"
+       },
+       "cites": [],
+       "citesWhy": "that sentence carries no footnote"
       },
       {
        "text": "How to Plant and Space Lima Beans: Row, Hill, and Trellis Planting Methods By Stephen Albert After decades of growing both bush and pole lima beans, I’ve learned that good spacing and the right planting method make a big difference in germination, airflow, and overall yield.",
@@ -1684,8 +1869,17 @@
         "discriminates": true
        },
        "searched": [
-        "material"
-       ]
+        "material",
+        "cited source: not followed (budget)"
+       ],
+       "tier": "index",
+       "via": {
+        "source": "https://en.wikipedia.org/wiki/Vicia_faba",
+        "url": "https://en.wikipedia.org/wiki/Vicia_faba",
+        "text": "In Rome, broad beans are popular either cooked with guanciale or with globe artichokes , as side dish together with lamb or kid, or raw with pecorino romano .",
+        "ref": "https://en.wikipedia.org/wiki/Vicia_faba:7"
+       },
+       "citesWhy": "that sentence carries no footnote"
       },
       {
        "text": "Fave e pecorino is the traditional dish for 1 May picnic in Liguria , Tuscany , Marche , Umbria and Latium .",
@@ -1711,8 +1905,17 @@
         "discriminates": true
        },
        "searched": [
-        "material"
-       ]
+        "material",
+        "cited source: not followed (budget)"
+       ],
+       "tier": "index",
+       "via": {
+        "source": "https://en.wikipedia.org/wiki/Vicia_faba",
+        "url": "https://en.wikipedia.org/wiki/Vicia_faba",
+        "text": "In Rome, broad beans are popular either cooked with guanciale or with globe artichokes , as side dish together with lamb or kid, or raw with pecorino romano . Fave e pecorino is the traditional dish for 1 May picnic in Liguria , Tuscany , Marche , Umbria and Latium .",
+        "ref": "https://en.wikipedia.org/wiki/Vicia_faba:7"
+       },
+       "citesWhy": "that sentence carries no footnote"
       },
       {
        "text": "Each colony in America had its own regional variations of the dish, with navy or white pea beans used in Massachusetts, Jacob's Cattle and soldier beans used in Maine, and yellow-eyed beans in Vermont.",
@@ -1739,7 +1942,21 @@
         "discriminates": true
        },
        "searched": [
-        "material"
+        "material",
+        "cited source: not followed (budget)"
+       ],
+       "tier": "index",
+       "via": {
+        "source": "https://en.wikipedia.org/wiki/Baked_beans",
+        "url": "https://en.wikipedia.org/wiki/Baked_beans",
+        "text": "They substituted molasses or sugar for the maple syrup, bacon or ham for the bear fat, and simmered their beans for hours in pots over the fire instead of underground. Each colony in America had its own regional variations of the dish, with navy or white pea beans used in Massachusetts, Jacob's Cattle and soldier be…",
+        "ref": "https://en.wikipedia.org/wiki/Baked_beans:7"
+       },
+       "cites": [
+        {
+         "text": "Michael Sletcher, ed. (2004). The Greenwood Encyclopedia of American Regional Cultures: New England. London: Greenwood Press. pp. 233– 235.",
+         "status": "offline"
+        }
        ]
       },
       {
@@ -1776,7 +1993,21 @@
         "discriminates": true
        },
        "searched": [
-        "material"
+        "material",
+        "cited source: not followed (budget)"
+       ],
+       "tier": "index",
+       "via": {
+        "source": "https://en.wikipedia.org/wiki/Phaseolus_vulgaris",
+        "url": "https://en.wikipedia.org/wiki/Phaseolus_vulgaris",
+        "text": "In 1528, Pope Clemente VII received some white beans, which thrived. Five years later, he gave a bag of beans as a present to his niece, Catherine, on her wedding to Prince Henri of France, along with the county of the Lauragais, whose county town is Castelnaudary, now synonymous with the white bean dish of cassoule…",
+        "ref": "https://en.wikipedia.org/wiki/Phaseolus_vulgaris:7"
+       },
+       "cites": [
+        {
+         "text": "Taylor, Colin Duncan (2021). Menu from the Midi: A gastronomic journey through the south of France. Matador. ISBN 978-1-80046-496-4.",
+         "status": "offline"
+        }
        ]
       },
       {
@@ -1990,5 +2221,120 @@
     }
    }
   }
+ },
+ "followed": {
+  "at": "2026-10-22T01:54:35.229Z",
+  "by": "khora opencode-primary.mjs followIndexes",
+  "log": [
+   {
+    "where": "follow",
+    "query": "In Species Plantarum in 1753, Carl Linnaeus classified the b",
+    "index": "Phaseolus vulgaris",
+    "tier": "index",
+    "hosts": [
+     "biodiversitylibrary.org:unreadable"
+    ]
+   },
+   {
+    "where": "follow",
+    "query": "The beans cultivated in Europe prior to the Columbian Exchan",
+    "index": "Phaseolus vulgaris",
+    "tier": "index",
+    "hosts": [
+     ":read"
+    ]
+   },
+   {
+    "where": "follow",
+    "query": "The Eurasian species were transferred to other genera includ",
+    "index": "Phaseolus vulgaris",
+    "tier": "index",
+    "hosts": [
+     "persee.fr:unsupported"
+    ]
+   },
+   {
+    "where": "follow",
+    "query": "When Phaseolus vulgaris arrived in Europe in the 16th centur",
+    "index": "Phaseolus vulgaris",
+    "tier": "index",
+    "hosts": [
+     ":read"
+    ]
+   },
+   {
+    "where": "follow",
+    "query": "Genetic analyses of the common bean Phaseolus indicate that ",
+    "index": "Rice and beans",
+    "tier": "index",
+    "hosts": [
+     "ncbi.nlm.nih.gov:unsupported"
+    ]
+   },
+   {
+    "where": "follow",
+    "query": "They were discovered in Peru and may have been the first pla",
+    "index": "Lima bean",
+    "tier": "index",
+    "hosts": [
+     "en.m.wikibooks.org:mirror",
+     "books.google.com:unsupported"
+    ]
+   },
+   {
+    "where": "follow",
+    "query": "By around 1300, cultivation had spread north of the Rio Gran",
+    "index": "Lima bean",
+    "tier": "index",
+    "hosts": [
+     "doi.org:unreadable"
+    ]
+   },
+   {
+    "where": "follow",
+    "query": "The Andean domestication took place around 2000 BC and produ",
+    "index": "Lima bean",
+    "tier": "index",
+    "hosts": [
+     "doi.org:unreadable"
+    ]
+   },
+   {
+    "where": "follow",
+    "query": "The Moche culture (AD 1–800) cultivated lima beans heavily a",
+    "index": "Lima bean",
+    "tier": "index",
+    "hosts": [
+     "books.google.com:unsupported"
+    ]
+   },
+   {
+    "where": "follow",
+    "query": "During the Spanish Viceroyalty of Peru, lima beans were expo",
+    "index": "Lima bean",
+    "tier": "index",
+    "hosts": [
+     "books.google.com:read"
+    ]
+   },
+   {
+    "where": "follow",
+    "query": "The term \"butter bean\" is widely used in North and South Car",
+    "index": "Lima bean",
+    "tier": "index",
+    "hosts": [
+     ":read"
+    ]
+   },
+   {
+    "where": "follow",
+    "query": "Baby lima beans are planted in early June and harvested abou",
+    "index": "Lima bean",
+    "tier": "index",
+    "hosts": [
+     ":read"
+    ]
+   }
+  ]
  }
 }

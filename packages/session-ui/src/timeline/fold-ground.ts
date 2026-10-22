@@ -50,7 +50,16 @@ export type ProfileItem = {
   tier?: string
   /** the index sentence the evidence was found through */
   via?: ProfileEvidence
+  /** what the index cites for this claim, each with what became of it when the door tried it */
+  cites: ProfileCite[]
+  /** why the index cites nothing for it (e.g. "that sentence carries no footnote") */
+  citesWhy?: string
 }
+
+/** A citation an index (Wikipedia) gives for a sentence, and what became of it: "states" (the page states the claim), "read" (read, not in
+ *  those words), "unreadable" (refused or failed), "offline" (a book or paper with no page), "mirror"/"tertiary" (a copy or another index),
+ *  "untried" (not reached in time). */
+export type ProfileCite = { text: string; url?: string; status: string; why?: string }
 
 /** A source the evidence cites, whole, as the door read it. */
 export type ProfileSource = { name: string; url?: string; text: string }
@@ -174,6 +183,10 @@ export function readProfile(profile: Record<string, unknown> | undefined): Profi
         who: identity ? `${str(identity.label) ?? ""} (${str(identity.qid) ?? ""})` : undefined,
         tier: str(claim.tier),
         via: evidenceOf(claim.via),
+        cites: list(claim.cites).flatMap((cite) =>
+          str(cite.text) ? [{ text: str(cite.text)!, url: str(cite.url), status: str(cite.status) ?? "untried", why: str(cite.why) }] : [],
+        ),
+        citesWhy: str(claim.citesWhy),
       },
     ]
   })
@@ -195,6 +208,7 @@ export function readProfile(profile: Record<string, unknown> | undefined): Profi
         evidence: evidenceOf(symbol.evidence),
         from: [],
         residue: [],
+        cites: [],
         searched: strings(symbol.searched),
       },
     ]

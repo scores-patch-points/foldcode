@@ -56,6 +56,34 @@ function ClipBody(props: { text: string; type: ReturnType<typeof typeOf>; site: 
   )
 }
 
+// what became of a citation, in words: whether the cited page states the claim, and why not when it does not
+const CITE_MARK: Record<string, string> = { states: "\u2713", read: "\u2248", unreadable: "\u2715", offline: "\u25A1", mirror: "\u21BA", tertiary: "\u21BA", untried: "\u2026" }
+const CITE_TONE: Record<string, string> = { states: "#2f8a55", read: "#b7791f", unreadable: "#d93036" }
+const citeStatus = (cite: { status: string; why?: string }) =>
+  cite.status === "states"
+    ? "states it"
+    : cite.status === "read"
+      ? "read; it does not say this in these words"
+      : cite.status === "unreadable"
+        ? `could not be read${/\b(\d{3})\b/.exec(cite.why ?? "")?.[1] ? ` (HTTP ${/\b(\d{3})\b/.exec(cite.why ?? "")![1]})` : ""}`
+        : cite.status === "offline"
+          ? "print only: a book or paper with no page to read"
+          : cite.status === "mirror" || cite.status === "tertiary"
+            ? "a copy of the encyclopedia, not a source"
+            : "not tried yet"
+/** "1 read, 1 not tried yet": what became of a run's citations, counted by outcome */
+const citeTally = (cites: Array<{ status: string }>) =>
+  Object.entries(cites.reduce<Record<string, number>>((n, c) => ({ ...n, [c.status]: (n[c.status] ?? 0) + 1 }), {}))
+    .map(([status, n]) => `${n} ${CITE_SHORT[status] ?? status}`)
+    .join(", ")
+const CITE_SHORT: Record<string, string> = { states: "confirm it", read: "read, not in these words", unreadable: "unreadable", offline: "print only", mirror: "copies", tertiary: "copies", untried: "not tried" }
+const citesNothing = (why?: string) =>
+  why === "that sentence carries no footnote"
+    ? "which cites nothing for this sentence"
+    : why === "no article sentence carries the claim"
+      ? "no sentence of the article carries it, so it cites nothing for it"
+      : "its citation could not be found"
+
 /** Two quotes are one when they read the same, whitespace and case aside, over their first eighty letters. */
 const sameQuote = (a: string, b: string) => {
   const key = (t: string) => t.toLowerCase().replace(/\s+/g, " ").trim().slice(0, 80)
@@ -77,6 +105,11 @@ export function SourceRun(props: {
   /** the index (an encyclopedia) this page was found through; or, with `indexOnly`, the index that is all there is */
   via?: { source?: string; url?: string }
   indexOnly?: boolean
+  /** what the index cites for these sentences, each with what became of it; and why it cites nothing, when it does not */
+  cites?: Array<{ text: string; url?: string; status: string; why?: string }>
+  citesWhy?: string
+  /** this source's own colour, shared with its sentences' marks in the gutter and its row in the source list */
+  color?: string
   onOpen?: () => void
 }) {
   const [opened, setOpened] = createSignal(false)
@@ -98,7 +131,12 @@ export function SourceRun(props: {
       data-slot="fold-run"
       class="block overflow-hidden rounded-md transition-[box-shadow,transform] duration-150"
       classList={{ "shadow-lg -translate-x-1": props.active }}
-      style={{ background: type().bg, color: type().ink, border: `1px solid ${props.active ? type().ink : type().edge}` }}
+      style={{
+        background: type().bg,
+        color: type().ink,
+        border: `1px solid ${props.active ? type().ink : type().edge}`,
+        ...(props.color ? { "border-left": `4px solid ${props.color}` } : {}),
+      }}
     >
       <span class="flex items-center gap-1.5 px-2 pt-1.5 text-[11px] leading-4" style={{ "font-family": type().title }}>
         <span
@@ -129,10 +167,38 @@ export function SourceRun(props: {
       </For>
       <Show when={props.via}>
         {(via) => (
-          <span class="block px-2 pt-1 text-[11px] leading-4 opacity-70" style={{ "font-family": type().title }}>
-            {props.indexOnly ? "Only " : "via "}
-            {siteOf({ name: via().source ?? "", url: via().url }).site} · {siteOf({ name: via().source ?? "", url: via().url }).title}
-            {props.indexOnly ? " says so; the source it cites could not be read" : ""}
+          <span class="block px-2 pt-1.5 text-[11px] leading-4" style={{ "font-family": type().title }}>
+            <span class="opacity-70">
+              {props.indexOnly ? "Only in " : "Found via "}
+              {siteOf({ name: via().source ?? "", url: via().url }).site} · {siteOf({ name: via().source ?? "", url: via().url }).title}
+            </span>
+            <Show when={(props.cites ?? []).length > 0} fallback={<span class="block opacity-70">{citesNothing(props.citesWhy)}</span>}>
+              <Show
+                when={unclamped()}
+                fallback={<span class="mt-0.5 block opacity-70">which cites {props.cites!.length}: {citeTally(props.cites!)}</span>}
+              >
+              <span class="mt-0.5 block opacity-70">which cites</span>
+              <For each={props.cites}>
+                {(cite) => (
+                  <span class="mt-0.5 flex gap-1.5">
+                    <span class="shrink-0" title={cite.why} style={{ color: CITE_TONE[cite.status] ?? "inherit" }}>
+                      {CITE_MARK[cite.status] ?? "\u2022"}
+                    </span>
+                    <span class="min-w-0">
+                      <Show when={cite.url} fallback={<span>{cite.text}</span>}>
+                        {(url) => (
+                          <a href={url()} target="_blank" rel="noreferrer" class="underline decoration-dotted underline-offset-2" onClick={(event) => event.stopPropagation()}>
+                            {cite.text}
+                          </a>
+                        )}
+                      </Show>
+                      <span class="block opacity-70">{citeStatus(cite)}</span>
+                    </span>
+                  </span>
+                )}
+              </For>
+              </Show>
+            </Show>
           </span>
         )}
       </Show>
@@ -174,7 +240,16 @@ export function SourceRun(props: {
 
 /** One source in the answer's reference list: the page named in its own colours, how many of the answer's sentences rest on it, and
  *  (when its text came with the ground) a way to open it with those sentences marked. */
-export function SourceRow(props: { n: number; name: string; url?: string; count: number; onOpen?: () => void; onEnter?: () => void; onLeave?: () => void }) {
+export function SourceRow(props: {
+  n: number
+  name: string
+  url?: string
+  count: number
+  color?: string
+  onOpen?: () => void
+  onEnter?: () => void
+  onLeave?: () => void
+}) {
   const type = () => typeOf({ name: props.name, url: props.url })
   const label = () => siteOf({ name: props.name, url: props.url })
   return (
@@ -188,6 +263,7 @@ export function SourceRow(props: { n: number; name: string; url?: string; count:
       onMouseLeave={() => props.onLeave?.()}
     >
       <span class="w-4 shrink-0 text-end text-v2-text-text-faint">{props.n}</span>
+      <span class="h-4 w-1 shrink-0 rounded-full" style={{ background: props.color ?? "transparent" }} />
       <span
         class="flex size-4 shrink-0 items-center justify-center rounded-sm text-[10px] font-semibold"
         style={{ background: type().favBg, color: type().favFg, border: `1px solid ${type().edge}`, "font-family": type().title }}

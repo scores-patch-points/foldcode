@@ -90,6 +90,8 @@ const FACING_MIN = 640
 const HANG_MIN = 280
 const HANG_MAX = 400
 const HANG_GAP = 16
+// a source's own colour, shared by its card, its sentences' gutter marks and its row in the list (none of them a verdict colour)
+const SOURCE_COLORS = ["#3b82f6", "#a855f7", "#14b8a6", "#ec4899", "#6366f1", "#06b6d4", "#c2410c", "#64748b", "#d946ef", "#0ea5e9"]
 // the margin page is never shorter than this, however short the answer; nor taller than the answer, past this
 const MARGIN_FLOOR = 240
 
@@ -180,6 +182,9 @@ function FacingPage(props: {
       return out
     }, [])
   })
+  // each source its own colour, in the order the answer rests on them; the verdict colours (red, amber, green) are not among them
+  const colors = createMemo(() => new Map(props.profile.rests.map((row, i) => [row.source, SOURCE_COLORS[i % SOURCE_COLORS.length]])))
+  const colorOf = (evidence?: ProfileItem["evidence"]) => (evidence ? (colors().get(evidence.source ?? "") ?? colors().get(evidence.url ?? "")) : undefined)
   const runOf = createMemo(() => new Map(items().flatMap((item) => (item.kind === "run" ? item.units.map((unit) => [unit.key, item.key] as const) : []))))
   const lit = (unit: ProfileItem) => props.hovered === unit.key || (!!props.hovered && runOf().get(unit.key) === props.hovered)
   const measure = () => {
@@ -284,7 +289,7 @@ function FacingPage(props: {
               style={{
                 top: `${mark.top}px`,
                 height: `${Math.max(mark.height, 12)}px`,
-                background: toneEdge[mark.unit.tone],
+                background: (mark.unit.tone === "success" && colorOf(mark.unit.evidence)) || toneEdge[mark.unit.tone],
                 opacity: lit(mark.unit) ? 1 : props.isOpen(mark.unit) ? 0.7 : 0.3,
               }}
               aria-label={`${mark.unit.label}: ${mark.unit.title}`}
@@ -354,6 +359,7 @@ function FacingPage(props: {
                 const units = () => props.profile.units.filter((unit) => unit.evidence?.source === row.source || unit.from.some((f) => f.source === row.source))
                 return (
                   <SourceRow
+                    color={colors().get(row.source)}
                     n={i() + 1}
                     name={row.source}
                     url={source()?.url}
@@ -421,6 +427,11 @@ function FacingPage(props: {
                       focus={run().units.find((unit) => unit.key === props.hovered)?.evidence?.text}
                       via={run().units.find((unit) => unit.via)?.via}
                       indexOnly={run().units.every((unit) => unit.tier === "index")}
+                      cites={run()
+                        .units.flatMap((unit) => unit.cites)
+                        .filter((cite, i, all) => all.findIndex((o) => o.text === cite.text) === i)}
+                      citesWhy={run().units.find((unit) => unit.citesWhy)?.citesWhy}
+                      color={colorOf(run().evidence)}
                       onOpen={props.hasSource(run().units[0]) ? () => props.onSource(run().units[0]) : undefined}
                     />
                   </div>
