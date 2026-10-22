@@ -236,6 +236,18 @@ function FacingPage(props: {
     allSources()
     requestAnimationFrame(place)
   })
+  // pointing at a sentence of the answer brings the card or note that grounds it into the margin's view
+  createEffect(() => {
+    const key = props.hovered
+    if (!key || !sheet || !scroller) return
+    const item = runOf().get(key) ?? key
+    const el = sheet.querySelector<HTMLElement>(`[data-gloss="${item}"]`)
+    if (!el) return
+    const box = el.getBoundingClientRect()
+    const view = scroller.getBoundingClientRect()
+    if (box.top < view.top || box.bottom > view.bottom)
+      scroller.scrollTo({ top: scroller.scrollTop + box.top - view.top - (view.height - box.height) / 2, behavior: "smooth" })
+  })
   const enter = (unit: ProfileItem) => {
     props.onPick(unit.find)
     props.onHover(unit.key)
@@ -406,6 +418,9 @@ function FacingPage(props: {
                       quotes={[...new Set(run().units.flatMap((unit) => [unit.evidence?.text, ...unit.from.map((f) => f.text)]).filter((t): t is string => !!t))]}
                       n={run().units.length}
                       active={props.hovered === run().key || run().units.some((unit) => unit.key === props.hovered)}
+                      focus={run().units.find((unit) => unit.key === props.hovered)?.evidence?.text}
+                      via={run().units.find((unit) => unit.via)?.via}
+                      indexOnly={run().units.every((unit) => unit.tier === "index")}
                       onOpen={props.hasSource(run().units[0]) ? () => props.onSource(run().units[0]) : undefined}
                     />
                   </div>

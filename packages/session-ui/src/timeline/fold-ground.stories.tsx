@@ -152,7 +152,18 @@ export const Revised = () => (
   </Column>
 )
 
-const beansView = readGround(beans.metadata as Record<string, unknown>)!
+// What the door now adds to this turn (opencode-primary.mjs followIndexes): every claim resting on a Wikipedia page was followed to the page
+// it cites; on this turn none of the cited pages could be read (blocked, nothing found, out of time), so each stays "index", with Wikipedia
+// as the index it was found through. This is the door's result on these claims, not invented sources.
+const followed = (() => {
+  const meta = structuredClone(beans.metadata) as { ground: { step: { profile: { claims: Array<Record<string, unknown>> } } } }
+  for (const claim of meta.ground.step.profile.claims) {
+    const evidence = claim.evidence as { source?: string } | undefined
+    if (claim.standing === "supported" && evidence && /wikipedia\.org/.test(evidence.source ?? "")) Object.assign(claim, { tier: "index", via: evidence })
+  }
+  return meta
+})()
+const beansView = readGround(followed as unknown as Record<string, unknown>)!
 
 export const LongResponse = () => (
   <Column>

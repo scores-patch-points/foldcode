@@ -46,6 +46,10 @@ export type ProfileItem = {
   who?: string
   /** the earlier sentence this one revises, kept as said (the door's REC pair) */
   revised?: string
+  /** "primary": the evidence is the page an index (Wikipedia) cites; "index": only the index says so */
+  tier?: string
+  /** the index sentence the evidence was found through */
+  via?: ProfileEvidence
 }
 
 /** A source the evidence cites, whole, as the door read it. */
@@ -168,6 +172,8 @@ export function readProfile(profile: Record<string, unknown> | undefined): Profi
         janus: str(record(claim.janus)?.finding),
         searched: strings(claim.searched),
         who: identity ? `${str(identity.label) ?? ""} (${str(identity.qid) ?? ""})` : undefined,
+        tier: str(claim.tier),
+        via: evidenceOf(claim.via),
       },
     ]
   })

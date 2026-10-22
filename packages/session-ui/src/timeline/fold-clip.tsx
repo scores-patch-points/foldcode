@@ -72,20 +72,32 @@ export function SourceRun(props: {
   quotes: string[]
   n: number
   active?: boolean
+  /** the quote of the sentence being pointed at in the answer: led with, and the card opens while it is pointed at */
+  focus?: string
+  /** the index (an encyclopedia) this page was found through; or, with `indexOnly`, the index that is all there is */
+  via?: { source?: string; url?: string }
+  indexOnly?: boolean
   onOpen?: () => void
 }) {
-  const [all, setAll] = createSignal(false)
+  const [opened, setOpened] = createSignal(false)
+  // "more" opens every quote; pointing at a sentence only lifts the card and unclamps that sentence's own quote
+  const all = () => opened()
+  const unclamped = () => opened() || !!props.active
   const named = () => ({ name: props.source ?? "material", url: props.url, ref: props.refText })
   const type = () => typeOf(named())
   const label = () => siteOf(named())
   // one quote by default, clamped to three lines, so a card stays beside the sentences it grounds; the rest on request
-  const quotes = () => props.quotes.filter((q, i, list) => list.findIndex((o) => sameQuote(o, q)) === i)
+  const quotes = () => {
+    const unique = props.quotes.filter((q, i, list) => list.findIndex((o) => sameQuote(o, q)) === i)
+    const lead = props.focus ? unique.find((q) => sameQuote(q, props.focus!)) : undefined
+    return lead ? [lead, ...unique.filter((q) => q !== lead)] : unique
+  }
   const shown = () => (all() ? quotes() : quotes().slice(0, 1))
   return (
     <span
       data-slot="fold-run"
-      class="block overflow-hidden rounded-md transition-shadow"
-      classList={{ "shadow-md": props.active }}
+      class="block overflow-hidden rounded-md transition-[box-shadow,transform] duration-150"
+      classList={{ "shadow-lg -translate-x-1": props.active }}
       style={{ background: type().bg, color: type().ink, border: `1px solid ${props.active ? type().ink : type().edge}` }}
     >
       <span class="flex items-center gap-1.5 px-2 pt-1.5 text-[11px] leading-4" style={{ "font-family": type().title }}>
@@ -100,12 +112,13 @@ export function SourceRun(props: {
         </span>
       </span>
       <For each={shown()}>
-        {(quote) => (
+        {(quote, i) => (
           <span
             class="block px-2 pt-1 text-[13px] leading-[1.45] break-words"
+            classList={{ "opacity-60": opened() && !!props.active && !!props.focus && i() > 0 }}
             style={{
               "font-family": type().body,
-              ...(all() ? {} : { display: "-webkit-box", "-webkit-line-clamp": "3", "-webkit-box-orient": "vertical", overflow: "hidden" }),
+              ...(unclamped() ? {} : { display: "-webkit-box", "-webkit-line-clamp": "3", "-webkit-box-orient": "vertical", overflow: "hidden" }),
             }}
           >
             {"\u201C"}
@@ -114,6 +127,15 @@ export function SourceRun(props: {
           </span>
         )}
       </For>
+      <Show when={props.via}>
+        {(via) => (
+          <span class="block px-2 pt-1 text-[11px] leading-4 opacity-70" style={{ "font-family": type().title }}>
+            {props.indexOnly ? "Only " : "via "}
+            {siteOf({ name: via().source ?? "", url: via().url }).site} · {siteOf({ name: via().source ?? "", url: via().url }).title}
+            {props.indexOnly ? " says so; the source it cites could not be read" : ""}
+          </span>
+        )}
+      </Show>
       <span class="flex items-center gap-2 px-2 pt-1 pb-1.5 text-[11px] leading-4 opacity-70" style={{ "font-family": type().title }}>
         <Show when={quotes().length > 1 || props.quotes.some((q) => q.length > 160)}>
           <button
@@ -121,10 +143,10 @@ export function SourceRun(props: {
             class="cursor-pointer underline decoration-dotted underline-offset-2"
             onClick={(event) => {
               event.stopPropagation()
-              setAll(!all())
+              setOpened(!opened())
             }}
           >
-            {all() ? "less" : quotes().length > 1 ? `+${quotes().length - 1} more` : "more"}
+            {opened() ? "less" : quotes().length > 1 ? `+${quotes().length - 1} more` : "more"}
           </button>
         </Show>
         <Show
