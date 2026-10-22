@@ -80,7 +80,13 @@ say() { printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$1" >>"$log" 2>/dev/nul
 
 # The contract is the handshake: the door answers GET /v1/hooks/opencode with its event list,
 # and a fold door lists "ground". A reachable port that does not answer this is not our door.
-answering() { curl -s -m 3 "$door/v1/hooks/opencode" 2>/dev/null | grep -q '"ground"'; }
+# The probe budget is generous: a door on a loaded machine answers in seconds, and a slow answer is not a dead door.
+answering() { curl -s -m "${FOLD_DOOR_PROBE_S:-10}" "$door/v1/hooks/opencode" 2>/dev/null | grep -q '"ground"'; }
+
+# Who holds the door's port. A holder that does not answer is BUSY, not absent: starting a second door only crashes it with
+# EADDRINUSE (294 times in one log) while the first keeps stalling. Only a holder that stays silent for FOLD_DOOR_HANG_MISSES
+# probes in a row is treated as hung and terminated, so a genuinely wedged door is still replaced.
+holder() { lsof -nP -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null | head -1; }
 
 # Provision the stack on a fresh machine: the app's door is khora, and khora is public. Only the
 # safe locations are provisioned — a stack under ~/Downloads is the developer's own checkout, and
@@ -196,11 +202,26 @@ status() {
 
 run() {
   fails=0
+  busy=0
   say "supervisor up (door $door, stack $stack)"
   while :; do
     if answering; then
-      fails=0
+      fails=0; busy=0
     else
+      pid="$(holder)"
+      if [ -n "$pid" ]; then
+        busy=$((busy + 1))
+        if [ "$busy" -lt "${FOLD_DOOR_HANG_MISSES:-8}" ]; then
+          say "door busy (pid $pid holds :$port, silent probe $busy); not starting a second"
+          sleep 15
+          continue
+        fi
+        say "door hung (pid $pid silent for $busy probes); terminating it"
+        kill "$pid" 2>/dev/null || true
+        sleep 2
+        kill -9 "$pid" 2>/dev/null || true
+        busy=0
+      fi
       fails=$((fails + 1))
       say "door not answering (miss $fails); starting the stack"
       start_door || true
