@@ -237,6 +237,18 @@ export const tap = async (file: string, meta: Meta) => {
   const parsed = parse(body)
   const url = new URL(meta.request.url)
   const h = meta.response.headers
+  // FOLD_USAGE_FAILED_DIR: keep the exact request and response of every failed call, for replaying a provider rejection.
+  const failed = process.env.FOLD_USAGE_FAILED_DIR
+  if (failed && meta.response.status >= 400) {
+    try {
+      fs.mkdirSync(failed, { recursive: true })
+      const base = `${started}-${meta.kind ?? "x"}-${meta.response.status}`
+      fs.writeFileSync(`${failed}/${base}.req.json`, reqBody)
+      fs.writeFileSync(`${failed}/${base}.res.txt`, JSON.stringify([...h.entries()]) + "\n" + body)
+    } catch {
+      // measurement must never touch the request
+    }
+  }
   try {
     append(file, {
       ts: started,
