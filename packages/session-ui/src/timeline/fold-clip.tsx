@@ -149,3 +149,36 @@ export function SourceRun(props: {
     </span>
   )
 }
+
+/** One source in the answer's reference list: the page named in its own colours, how many of the answer's sentences rest on it, and
+ *  (when its text came with the ground) a way to open it with those sentences marked. */
+export function SourceRow(props: { n: number; name: string; url?: string; count: number; onOpen?: () => void; onEnter?: () => void; onLeave?: () => void }) {
+  const type = () => typeOf({ name: props.name, url: props.url })
+  const label = () => siteOf({ name: props.name, url: props.url })
+  return (
+    <button
+      type="button"
+      disabled={!props.onOpen}
+      class="flex w-full items-center gap-2 rounded-md px-2 py-1 text-start enabled:cursor-pointer enabled:hover:bg-border-weak-base"
+      title={props.url ?? (/^https?:/.test(props.name) ? props.name : undefined)}
+      onClick={() => props.onOpen?.()}
+      onMouseEnter={() => props.onEnter?.()}
+      onMouseLeave={() => props.onLeave?.()}
+    >
+      <span class="w-4 shrink-0 text-end text-v2-text-text-faint">{props.n}</span>
+      <span
+        class="flex size-4 shrink-0 items-center justify-center rounded-sm text-[10px] font-semibold"
+        style={{ background: type().favBg, color: type().favFg, border: `1px solid ${type().edge}`, "font-family": type().title }}
+      >
+        {type().fav}
+      </span>
+      <span class="min-w-0 flex-1 truncate">
+        <span class="text-v2-text-text-base">{label().title}</span>
+        <span class="text-v2-text-text-faint"> · {label().site}</span>
+      </span>
+      <span class="shrink-0 text-v2-text-text-faint">
+        {props.count} {props.onOpen ? "\u21E2" : ""}
+      </span>
+    </button>
+  )
+}

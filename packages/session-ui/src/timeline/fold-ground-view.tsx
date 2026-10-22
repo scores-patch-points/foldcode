@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, type JSX } from "solid-js"
-import { SourceClip, SourceRun } from "./fold-clip"
+import { SourceClip, SourceRow, SourceRun } from "./fold-clip"
 import { SourceModal } from "./fold-source"
 import { locate, propositionsOf, rowAt, unitAt, type Proposition, type GroundRow, type GroundView, type Located, type ProfileItem, type ProfileSource, type ProfileTone, type ProfileView } from "./fold-ground"
 
@@ -152,6 +152,7 @@ function FacingPage(props: {
 }) {
   let gutter: HTMLDivElement | undefined
   let sheet: HTMLDivElement | undefined
+  let references: HTMLDivElement | undefined
   const [marks, setMarks] = createSignal<Mark[]>([])
   const unitsOf = (tone: ProfileTone) => props.profile.units.filter((unit) => unit.tone === tone)
   // What sits beside the answer, in reading order, each beside its first occurrence: a RUN of consecutive supported sentences that rest
@@ -213,7 +214,8 @@ function FacingPage(props: {
         el.style.visibility = "visible"
         return top + el.offsetHeight + 6
       }, 0)
-      sheet.style.height = `${bottom}px`
+      // the reference list starts where the answer ends (never in the middle of it), or below the last note
+      sheet.style.height = `${Math.max(bottom, props.answer.offsetHeight - offset)}px`
     })
   })
   const enter = (unit: ProfileItem) => {
@@ -294,10 +296,15 @@ function FacingPage(props: {
               </button>
             )}
           </For>
-          <Show when={props.profile.sources.length > 0}>
-            <span>
-              {"\u00B7"} {props.profile.sources.length} {props.profile.sources.length === 1 ? "source" : "sources"}
-            </span>
+          <Show when={props.profile.rests.length > 0}>
+            <button
+              type="button"
+              class="cursor-pointer whitespace-nowrap hover:text-v2-text-text-base"
+              title="Go to the list of sources"
+              onClick={() => references?.scrollIntoView({ block: "nearest", behavior: "smooth" })}
+            >
+              {"\u00B7"} {props.profile.rests.length} {props.profile.rests.length === 1 ? "source" : "sources"} {"\u2193"}
+            </button>
           </Show>
         </div>
         <Show when={props.profile.noMaterial}>
@@ -366,6 +373,28 @@ function FacingPage(props: {
             </div>
           )}
         </For>
+        <Show when={props.profile.rests.length > 0}>
+          <div ref={references} data-slot="fold-references" class="flex flex-col pt-3">
+            <div class="px-2 pb-1 text-11-medium uppercase tracking-wide text-v2-text-text-faint">Sources</div>
+            <For each={props.profile.rests}>
+              {(row, i) => {
+                const source = () => props.profile.sources.find((s) => s.name === row.source)
+                const units = () => props.profile.units.filter((unit) => unit.evidence?.source === row.source || unit.from.some((f) => f.source === row.source))
+                return (
+                  <SourceRow
+                    n={i() + 1}
+                    name={row.source}
+                    url={source()?.url}
+                    count={row.n}
+                    onOpen={source() ? () => props.onSource(source()!) : undefined}
+                    onEnter={() => props.onPick(units().map((unit) => unit.find))}
+                    onLeave={() => props.onPick("")}
+                  />
+                )
+              }}
+            </For>
+          </div>
+        </Show>
         <div class="flex flex-col gap-1.5 px-2 pt-2 text-v2-text-text-faint">
           <div class="flex gap-3">
             <button type="button" class="cursor-pointer hover:text-v2-text-text-base" onClick={() => props.onCollapse(true)}>
