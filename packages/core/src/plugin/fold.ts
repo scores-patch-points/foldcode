@@ -1998,7 +1998,7 @@ export const Plugin = define({
                 const voids = (result.voids ?? []).filter((v) => v.sentences.length >= 3)
                 const gaps = voids.map((v) => `About ${v.label}:\n${v.sentences.map((s) => `- ${s.text}`).join("\n")}`).join("\n\n")
                 say(voids.length >= 2 && Physics.essayAsk(ask)
-                  ? `${ask}\n\nThe facts the pages state, grouped by what they are about:\n\n${gaps}\n\nWrite it as you would write any essay: your own structure, voice and transitions, in your own words. Do not copy or quote the lines above; weave their facts into your own sentences. Every fact and figure in it comes from the facts above.`
+                  ? `${ask}\n\nThe facts the pages state, grouped by what they are about:\n\n${gaps}\n\nWrite it as you would write any essay: your own structure, voice and transitions, in your own words. Do not copy or quote the lines above, and do not just list the facts; synthesize them into a few connected ideas with a through-line, so each paragraph makes a point rather than enumerating details. Every fact and figure in it comes from the facts above.`
                   : `${ask}\n\nWhat the pages read for this say (each block is one page's own sentences):\n\n${notes || result.text}\n\nWrite ${form}, in your own words. Its facts and figures are the pages' own, and its sentences name no page.`)
               }
               gatheredTurn.add(event.sessionID)
