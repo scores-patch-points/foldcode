@@ -203,3 +203,17 @@ describe("a support found by lookup", () => {
     expect(view.units.map((u) => u.label)).toEqual(["Likely supported", "Supported"])
   })
 })
+
+describe("how a source names itself", () => {
+  test("a page named by its own URL reads as its site and page, not as a file", async () => {
+    const { siteOf, typeOf } = await import("./fold-site-type")
+    expect(siteOf({ name: "https://harvesttotable.com/legumeslegumes_are_plants_that/", ref: "https://harvesttotable.com/legumeslegumes_are_plants_that/:2" })).toEqual({
+      site: "harvesttotable.com",
+      title: "legumeslegumes are plants that",
+    })
+    expect(siteOf({ name: "https://en.wikipedia.org/wiki/Lima_bean" })).toEqual({ site: "Wikipedia", title: "Lima bean" })
+    expect(typeOf({ name: "https://en.wikipedia.org/wiki/Lima_bean" }).fav).toBe("W")
+    expect(typeOf({ name: "https://harvesttotable.com/x/" }).fav).toBe("H")
+    expect(siteOf({ name: "curie.md", ref: "curie.md:7" })).toEqual({ site: "Workspace file", title: "curie.md:7" })
+  })
+})

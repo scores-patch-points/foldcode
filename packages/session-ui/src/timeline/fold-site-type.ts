@@ -67,20 +67,42 @@ export const domainOf = (url?: string) => {
 }
 
 /** The typesetting for a source: a listed site (or any of its subdomains), a workspace file, else the neutral reading style. */
+// A page the turn read is often named by its own URL (the door's passage name), with no separate url: the name is then the address.
+const urlOf = (source: { name: string; url?: string }) => source.url || (/^https?:\/\//.test(source.name) ? source.name : undefined)
+
 export function typeOf(source: { name: string; url?: string }): SiteType {
-  const domain = domainOf(source.url) || (source.name.startsWith("wikipedia:") ? "wikipedia.org" : "")
+  const domain = domainOf(urlOf(source)) || (source.name.startsWith("wikipedia:") ? "wikipedia.org" : "")
   const listed = Object.keys(SITE_TYPE).find((key) => domain === key || domain.endsWith(`.${key}`))
   if (listed) return SITE_TYPE[listed]
   if (!domain && /\.\w{1,6}$/.test(source.name)) return { ...FILE_TYPE, fav: source.name.charAt(0).toUpperCase() }
   return T({ fav: (domain.charAt(0) || source.name.charAt(0) || "?").toUpperCase() })
 }
 
-/** How a source names itself: the site (or "Workspace file") and the page or file, as a reader would say it. */
+/** How a source names itself: the site (or "Workspace file") and the page or file, as a reader would say it. A web page is named by
+ *  its domain and the last part of its path ("harvesttotable.com · legumes are plants that"); a Wikipedia page by its article. */
 export function siteOf(source: { name: string; url?: string; ref?: string }) {
-  const domain = domainOf(source.url)
   if (source.name.startsWith("wikipedia:")) return { site: "Wikipedia", title: source.name.replace(/^wikipedia:\s*/, "") }
-  if (domain) return { site: domain, title: source.name }
+  const url = urlOf(source)
+  const domain = domainOf(url)
+  if (domain) {
+    const page = pageOf(url!)
+    if (domain.endsWith("wikipedia.org")) return { site: "Wikipedia", title: page || domain }
+    return { site: domain, title: page || (url === source.name ? domain : source.name) }
+  }
   // a workspace file names itself by its base name (and the line the evidence sits on, when the ref carries one)
   const ref = source.ref && source.ref.startsWith(source.name) ? source.ref : source.name
   return { site: "Workspace file", title: ref.split("/").pop() ?? ref }
+}
+
+/** The last part of a URL's path, read as words: "/wiki/Lima_bean" → "Lima bean", "/legumes-are-plants/" → "legumes are plants". */
+function pageOf(url: string) {
+  const path = (() => {
+    try {
+      return new URL(url).pathname
+    } catch {
+      return ""
+    }
+  })()
+  const last = path.split("/").filter(Boolean).pop() ?? ""
+  return decodeURIComponent(last).replace(/\.[a-z]{2,5}$/i, "").replace(/[_-]+/g, " ").trim()
 }

@@ -1,5 +1,5 @@
-import { For, Show, createEffect, createSignal, onCleanup, onMount, type JSX } from "solid-js"
-import { SourceChip, SourceClip } from "./fold-clip"
+import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, type JSX } from "solid-js"
+import { SourceClip, SourceRun } from "./fold-clip"
 import { SourceModal } from "./fold-source"
 import { locate, propositionsOf, rowAt, unitAt, type Proposition, type GroundRow, type GroundView, type Located, type ProfileItem, type ProfileSource, type ProfileTone, type ProfileView } from "./fold-ground"
 
@@ -81,7 +81,8 @@ const STACKS: Array<{ tone: ProfileTone; title: string }> = [
   { tone: "success", title: "supported" },
   { tone: "muted", title: "argument" },
 ]
-// Picked by how the turn went: a contested stack opens by itself, and a plain, uncontested answer stays plain until it is asked.
+// The stacks that open as notes by themselves: what was contested. Supported sentences open too, as the pages they rest on, quoted
+// beside them; each stack's summary button folds or opens it.
 const CONTESTED: ProfileTone[] = ["danger", "warning"]
 // Below this width the two pages do not fit side by side and the ground drops under the answer.
 const FACING_MIN = 640
@@ -89,6 +90,26 @@ const FACING_MIN = 640
 const HANG_MIN = 280
 const HANG_MAX = 400
 const HANG_GAP = 16
+
+/** Where the door looked, in the reader's words: each place once, in order, with how many lookups it took ("Wikidata ×3"); the door's
+ *  own log of each lookup stays on hover. "material" is what this turn read. */
+const placeOf = (searched: string) => {
+  if (searched === "material") return "what this turn read"
+  if (searched.startsWith("not researched")) return "not looked up further"
+  const kind = /^(wikidata|wikipedia|workspace)\b/i.exec(searched)?.[1]
+  return kind ? kind[0].toUpperCase() + kind.slice(1).toLowerCase() : searched
+}
+const trailOf = (searched: string[]) =>
+  searched
+    .map(placeOf)
+    .reduce<Array<{ place: string; n: number }>>((out, place) => {
+      const last = out[out.length - 1]
+      if (last?.place === place) last.n++
+      else out.push({ place, n: 1 })
+      return out
+    }, [])
+    .map((step) => (step.n > 1 ? `${step.place} \u00D7${step.n}` : step.place))
+    .join(" \u2192 ")
 
 /** The nearest ancestor that scrolls: its right edge is where the margin ends. */
 const scrollerOf = (el: HTMLElement): HTMLElement => {
@@ -100,6 +121,11 @@ const scrollerOf = (el: HTMLElement): HTMLElement => {
 }
 
 type Mark = { unit: ProfileItem; top: number; height: number }
+type Item =
+  | { kind: "note"; key: string; top: number; unit: ProfileItem }
+  | { kind: "run"; key: string; top: number; units: ProfileItem[]; evidence: NonNullable<ProfileItem["evidence"]> }
+/** The page a piece of evidence comes from: its url, else its source's name. */
+const pageOf = (evidence: NonNullable<ProfileItem["evidence"]>) => evidence.url ?? evidence.source ?? ""
 
 /** The facing page. The gutter between the pages carries a bar beside every unit the door read, in its standing's colour; the page
  *  carries the gloss of each opened unit, level with its sentence (pushed down only when the gloss above it is still running). The
@@ -128,12 +154,27 @@ function FacingPage(props: {
   let sheet: HTMLDivElement | undefined
   const [marks, setMarks] = createSignal<Mark[]>([])
   const unitsOf = (tone: ProfileTone) => props.profile.units.filter((unit) => unit.tone === tone)
-  // one gloss per unit, beside its first occurrence, in reading order
-  const glosses = () => {
-    const seen = new Set<string>()
+  // What sits beside the answer, in reading order, each beside its first occurrence: a RUN of consecutive supported sentences that rest
+  // on one page (quoted in that page's words), or a NOTE for a contested, revised or argued unit.
+  const items = createMemo(() => {
     if (props.collapsed) return []
-    return marks().filter((mark) => props.isOpen(mark.unit) && !seen.has(mark.unit.key) && !!seen.add(mark.unit.key))
-  }
+    const seen = new Set<string>()
+    return marks().reduce<Item[]>((out, mark) => {
+      if (seen.has(mark.unit.key) || !props.isOpen(mark.unit)) return out
+      seen.add(mark.unit.key)
+      const evidence = mark.unit.evidence
+      if (mark.unit.tone !== "success" || !evidence || mark.unit.revised) {
+        out.push({ kind: "note", key: mark.unit.key, top: mark.top, unit: mark.unit })
+        return out
+      }
+      const last = out[out.length - 1]
+      if (last?.kind === "run" && pageOf(last.evidence) === pageOf(evidence)) last.units.push(mark.unit)
+      else out.push({ kind: "run", key: `run:${mark.unit.key}`, top: mark.top, units: [mark.unit], evidence })
+      return out
+    }, [])
+  })
+  const runOf = createMemo(() => new Map(items().flatMap((item) => (item.kind === "run" ? item.units.map((unit) => [unit.key, item.key] as const) : []))))
+  const lit = (unit: ProfileItem) => props.hovered === unit.key || (!!props.hovered && runOf().get(unit.key) === props.hovered)
   const measure = () => {
     if (!gutter) return
     const base = gutter.getBoundingClientRect().top
@@ -158,19 +199,19 @@ function FacingPage(props: {
     props.profile
     measure()
   })
-  // place each gloss level with its sentence, below the one before it
+  // place each item level with its sentence, below the one before it
   createEffect(() => {
-    const list = glosses()
+    const list = items()
     requestAnimationFrame(() => {
       if (!sheet || !gutter) return
       const offset = sheet.getBoundingClientRect().top - gutter.getBoundingClientRect().top
-      const bottom = list.reduce((floor, mark) => {
-        const el = sheet!.querySelector<HTMLElement>(`[data-gloss="${mark.unit.key}"]`)
+      const bottom = list.reduce((floor, item) => {
+        const el = sheet!.querySelector<HTMLElement>(`[data-gloss="${item.key}"]`)
         if (!el) return floor
-        const top = Math.max(floor, mark.top - offset)
+        const top = Math.max(floor, item.top - offset)
         el.style.top = `${top}px`
         el.style.visibility = "visible"
-        return top + el.offsetHeight + 4
+        return top + el.offsetHeight + 6
       }, 0)
       sheet.style.height = `${bottom}px`
     })
@@ -182,6 +223,10 @@ function FacingPage(props: {
   const leave = () => {
     props.onPick("")
     props.onHover(undefined)
+  }
+  const enterRun = (item: Extract<Item, { kind: "run" }>) => {
+    props.onPick(item.units.map((unit) => unit.find))
+    props.onHover(item.key)
   }
 
   return (
@@ -208,7 +253,7 @@ function FacingPage(props: {
                 top: `${mark.top}px`,
                 height: `${Math.max(mark.height, 12)}px`,
                 background: toneEdge[mark.unit.tone],
-                opacity: props.isOpen(mark.unit) || props.hovered === mark.unit.key ? 1 : 0.3,
+                opacity: lit(mark.unit) ? 1 : props.isOpen(mark.unit) ? 0.7 : 0.3,
               }}
               aria-label={`${mark.unit.label}: ${mark.unit.title}`}
               aria-expanded={props.isOpen(mark.unit)}
@@ -249,6 +294,11 @@ function FacingPage(props: {
               </button>
             )}
           </For>
+          <Show when={props.profile.sources.length > 0}>
+            <span>
+              {"\u00B7"} {props.profile.sources.length} {props.profile.sources.length === 1 ? "source" : "sources"}
+            </span>
+          </Show>
         </div>
         <Show when={props.profile.noMaterial}>
           <div class="pb-2 text-v2-text-text-faint">Nothing was read this turn, so these claims rest on the model's own knowledge.</div>
@@ -257,22 +307,55 @@ function FacingPage(props: {
           <div class="pb-2 text-v2-text-text-faint">Checking the unsupported claims against the workspace and Wikipedia…</div>
         </Show>
         <div ref={sheet} data-slot="fold-sheet" class="relative">
-          <For each={glosses().map((mark) => mark.unit)}>
-            {(unit) => (
-              <div
-                data-gloss={unit.key}
-                class={`absolute inset-x-0 rounded-md px-2 py-1 transition-colors ${props.hovered === unit.key ? "bg-border-weak-base" : ""}`}
-                style={{ visibility: "hidden" }}
-                onMouseEnter={() => enter(unit)}
-                onMouseLeave={leave}
+          <For each={items()}>
+            {(item) => (
+              <Show
+                when={item.kind === "run" && item}
+                fallback={
+                  <Show when={item.kind === "note" && item}>
+                    {(note) => (
+                      <div
+                        data-gloss={note().key}
+                        class={`absolute inset-x-0 rounded-md px-2 py-1 transition-colors ${lit(note().unit) ? "bg-border-weak-base" : ""}`}
+                        style={{ visibility: "hidden" }}
+                        onMouseEnter={() => enter(note().unit)}
+                        onMouseLeave={leave}
+                      >
+                        <UnitTip
+                          unit={note().unit}
+                          onFold={() => props.onToggle(note().unit)}
+                          onSource={props.hasSource(note().unit) ? () => props.onSource(note().unit) : undefined}
+                          onRevise={
+                            props.onRevise && (note().unit.tone === "danger" || note().unit.tone === "warning")
+                              ? () => props.onRevise?.(note().unit)
+                              : undefined
+                          }
+                        />
+                      </div>
+                    )}
+                  </Show>
+                }
               >
-                <UnitTip
-                  unit={unit}
-                  onFold={() => props.onToggle(unit)}
-                  onSource={props.hasSource(unit) ? () => props.onSource(unit) : undefined}
-                  onRevise={props.onRevise && (unit.tone === "danger" || unit.tone === "warning") ? () => props.onRevise?.(unit) : undefined}
-                />
-              </div>
+                {(run) => (
+                  <div
+                    data-gloss={run().key}
+                    class="absolute inset-x-0 px-1"
+                    style={{ visibility: "hidden" }}
+                    onMouseEnter={() => enterRun(run())}
+                    onMouseLeave={leave}
+                  >
+                    <SourceRun
+                      source={run().evidence.source}
+                      url={run().evidence.url}
+                      refText={run().evidence.ref}
+                      quotes={[...new Set(run().units.flatMap((unit) => [unit.evidence?.text, ...unit.from.map((f) => f.text)]).filter((t): t is string => !!t))]}
+                      n={run().units.length}
+                      active={props.hovered === run().key || run().units.some((unit) => unit.key === props.hovered)}
+                      onOpen={props.hasSource(run().units[0]) ? () => props.onSource(run().units[0]) : undefined}
+                    />
+                  </div>
+                )}
+              </Show>
             )}
           </For>
         </div>
@@ -284,17 +367,6 @@ function FacingPage(props: {
           )}
         </For>
         <div class="flex flex-col gap-1.5 px-2 pt-2 text-v2-text-text-faint">
-          <Show when={props.profile.rests.length > 0}>
-            <div class="flex flex-wrap items-center gap-1.5">
-              <span>Rests on</span>
-              <For each={props.profile.rests}>
-                {(row) => {
-                  const source = () => props.profile.sources.find((s) => s.name === row.source)
-                  return <SourceChip name={row.source} url={source()?.url} n={row.n} onOpen={source() ? () => props.onSource(source()!) : undefined} />
-                }}
-              </For>
-            </div>
-          </Show>
           <div class="flex gap-3">
             <button type="button" class="cursor-pointer hover:text-v2-text-text-base" onClick={() => props.onCollapse(true)}>
               Fold the ground {"\u203A"}
@@ -456,7 +528,7 @@ function Item(props: { item: ProfileItem; onPick: (find: string | string[]) => v
           <Show when={props.item.janus}>{(finding) => <div>Janus: {finding()}</div>}</Show>
           <Show when={props.item.who}>{(who) => <div>Resolved to {who()}</div>}</Show>
           <Show when={props.item.searched.length > 0}>
-            <div>Looked in: {props.item.searched.join(" → ")}</div>
+            <div title={props.item.searched.join("\n")}>Looked in: {trailOf(props.item.searched)}</div>
           </Show>
         </div>
       </Show>
@@ -582,7 +654,7 @@ export function GroundHover(props: { view: GroundView; children: JSX.Element; on
   const [answerEl, setAnswerEl] = createSignal<HTMLDivElement>()
   const [width, setWidth] = createSignal(0)
   const [hovered, setHovered] = createSignal<string>()
-  const [stacks, setStacks] = createSignal(new Set(CONTESTED))
+  const [stacks, setStacks] = createSignal(new Set<ProfileTone>([...CONTESTED, "success"]))
   const [toggled, setToggled] = createSignal(new Set<string>())
   // open since the later of birth or the last click open; shut by the next prompt typed, or by the reader
   const [openedAt, setOpenedAt] = createSignal(Date.now())
@@ -836,6 +908,14 @@ function UnitTip(props: { unit: ProfileItem; onSource?: () => void; onRevise?: (
           </button>
         )}
       </Show>
+      <Show when={props.onFold && props.unit.kind === "claim"}>
+        <div class="truncate text-v2-text-text-base" title={props.unit.title}>
+          {"\u201C"}
+          {props.unit.title.split(/\s+/).slice(0, 9).join(" ")}
+          {props.unit.title.split(/\s+/).length > 9 ? "\u2026" : ""}
+          {"\u201D"}
+        </div>
+      </Show>
       <Show when={props.unit.why}>{(why) => <div class="text-v2-text-text-faint">{why()}</div>}</Show>
       <Show when={props.unit.evidence}>
         {(evidence) => (
@@ -851,7 +931,9 @@ function UnitTip(props: { unit: ProfileItem; onSource?: () => void; onRevise?: (
       <Show when={props.unit.janus}>{(finding) => <div class="text-v2-text-text-faint">Janus: {finding()}</div>}</Show>
       <Show when={props.unit.who}>{(who) => <div class="text-v2-text-text-faint">Resolved to {who()}</div>}</Show>
       <Show when={props.unit.tone === "warning" && props.unit.searched.length > 0}>
-        <div class="text-v2-text-text-faint">Looked in: {props.unit.searched.join(" \u2192 ")}</div>
+        <div class="text-v2-text-text-faint" title={props.unit.searched.join("\n")}>
+          Looked in: {trailOf(props.unit.searched)}
+        </div>
       </Show>
     </div>
   )

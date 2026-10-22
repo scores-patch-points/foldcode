@@ -1,5 +1,7 @@
 import { GroundHover } from "./fold-ground-view"
 import { readGround } from "./fold-ground"
+// a real turn: "write me an essay about beans", its answer and the ground the door gave it (8 gathered web pages, 31 claims)
+import beans from "./fold-ground.beans.fixture.json"
 
 const paragraphs = [
   "Marie Curie was a Polish and naturalised-French physicist and chemist. Curie discovered radium in 1898 with her husband Pierre. She won a Nobel Prize in 1911 for physics.",
@@ -146,6 +148,23 @@ export const Revised = () => (
         Marie Curie was a Polish and naturalised-French physicist and chemist. Curie discovered radium in 1898 with her husband
         Pierre. She won the 1911 Nobel Prize in Chemistry.
       </p>
+    </GroundHover>
+  </Column>
+)
+
+const beansView = readGround(beans.metadata as Record<string, unknown>)!
+
+export const LongResponse = () => (
+  <Column>
+    <GroundHover view={beansView} onRevise={(unit) => console.log("revise", unit.title)}>
+      <div class="flex flex-col gap-3 text-14-regular leading-text-base">
+        {beans.answer
+          .split(/\n{2,}/)
+          .filter((p) => p.trim())
+          .map((p) => (
+            <p>{p}</p>
+          ))}
+      </div>
     </GroundHover>
   </Column>
 )
