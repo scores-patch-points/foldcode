@@ -299,7 +299,7 @@ export function propositionsOf(units: ProfileItem[], sources: ProfileSource[]): 
     .flatMap((unit) =>
       [unit.evidence, ...unit.from].flatMap((evidence) => {
         if (!evidence) return []
-        const source = sources.find((s) => s.name === evidence.source || (!!s.url && s.url === evidence.url))
+        const source = sources.find((s) => s.name === evidence.source || (!!s.url && s.url === evidence.url) || (Predicate.isString(evidence.source) && s.name.includes(evidence.source)))
         const span = source ? spanIn(source.text, evidence.text) : undefined
         return source && span ? [{ unit, source, start: span[0], end: span[1] }] : []
       }),

@@ -355,7 +355,7 @@ function FacingPage(props: {
           <div data-slot="fold-references" class="mb-2 flex flex-col border-b border-border-weak-base pb-2">
             <For each={props.profile.rests}>
               {(row, i) => {
-                const source = () => props.profile.sources.find((s) => s.name === row.source)
+                const source = () => props.profile.sources.find((s) => s.name === row.source || s.name.includes(row.source) || row.source.includes(s.name))
                 const units = () => props.profile.units.filter((unit) => unit.evidence?.source === row.source || unit.from.some((f) => f.source === row.source))
                 return (
                   <SourceRow
