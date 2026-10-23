@@ -60,8 +60,11 @@ export const groundHead = (payload: GroundPayload) => {
   const grounded = rows.filter((s) => s.standing === "grounded").length - identity
   return payload.step
     ? `fold facing · the ground · ${grounded} grounded · ${identity} identity-only · ${rows.length - grounded - identity} self:model`
-    : `fold facing · the ground · no step this turn`
+    : `fold facing · the ground · ${payload.gap ?? "no step this turn"}`
 }
+
+/** The gap named when the door never answered the ground post (unreachable, down, or over budget): it is not the door saying "no step". */
+export const DOOR_SILENT = "the fold door did not answer"
 
 /** The payload for a door `ground` answer; undefined when there is nothing to show or the facing is off. */
 export const groundPayload = (
@@ -69,8 +72,10 @@ export const groundPayload = (
   level: string,
 ): GroundPayload | undefined => {
   if (level === "off") return undefined
-  // The door gave no answer (budget, first load, down): a typed gap on the answer, never an invented ground.
-  if (!answer) return { v: 1, step: null, gap: "no step this turn" }
+  // The door gave no answer (budget, first load, down): a typed gap on the answer, never an invented ground. It is named as the
+  // door's silence, not as "no step this turn": that wording is the door's own, for a turn it saw and produced no step for, and
+  // a nine-hour outage (2026-10-23) read as "no step" on every answer gave no one a reason to look at the door.
+  if (!answer) return { v: 1, step: null, gap: DOOR_SILENT }
   const a = answer as Answer
   if (!a.step && !(Array.isArray(a.sentences) && a.sentences.length > 0)) return undefined
   return a.step
