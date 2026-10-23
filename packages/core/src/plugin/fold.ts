@@ -1826,6 +1826,29 @@ export const Plugin = define({
             // A text/plain attachment reaches this hook inside the user's text: the ask, then "Attached file: <name>" and the file's
             // content, possibly several (measured: one 128 KB text part, no metadata). Each large attached section is handed to the
             // door and replaced by its one-line note; the ask itself is kept as typed.
+            // The run command wraps a file as <file name="..."> ... </file> inside the same text (measured on a captured request).
+            if (ingestOn && message.role === "user" && part.type === "text" && part.text.length >= ingestMin && /<file name="[^"]*"[^>]*>/.test(part.text)) {
+              let any = false
+              const found: { at: number; end: number; name: string; body: string }[] = []
+              for (const m of part.text.matchAll(/<file name="([^"]*)"[^>]*>\n?([\s\S]*?)(?:<\/file>|$)/g)) found.push({ at: m.index!, end: m.index! + m[0].length, name: m[1], body: m[2] })
+              let rewritten = part.text
+              for (const f of found.reverse()) {
+                if (f.body.length < ingestMin) continue
+                const id = createHash("sha256").update(f.body).digest("hex").slice(0, 16)
+                const note = yield* ingestOne(event.sessionID, id, f.name || "attachment", f.body)
+                if (!note) continue
+                rewritten = rewritten.slice(0, f.at) + `<file name="${f.name}">\n${note}\n</file>` + rewritten.slice(f.end)
+                any = true
+              }
+              if (process.env.FOLD_INGEST_DEBUG) fs.appendFileSync(process.env.FOLD_INGEST_DEBUG, JSON.stringify({ at: Date.now(), sessionID: event.sessionID, files: found.length, before: part.text.length, after: rewritten.length, any }) + "\n")
+              if (any) {
+                const next = content.slice()
+                next[partIndex] = { ...part, text: rewritten } as typeof content[number]
+                content = next
+                changed = true
+              }
+              continue
+            }
             if (ingestOn && message.role === "user" && part.type === "text" && part.text.length >= ingestMin && /(?:^|\n)\s*Attached file: /.test(part.text)) {
               const pieces = part.text.split(/(?=(?:^|\n)\s*Attached file: )/)
               let rewritten = ""
