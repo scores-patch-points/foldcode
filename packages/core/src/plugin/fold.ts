@@ -1792,6 +1792,29 @@ export const Plugin = define({
         native: message.native,
       })
 
+    // ATTACHMENTS KEPT OUT OF THE WINDOW (khora opencode-ingest.mjs). A large text attachment is a one-time message part: the first
+    // compaction summarises it away. It is handed to the door once (in parts under the door's 4 MB request cap), replaced in the request
+    // by a one-line note, and the door serves the pages each later ask bears on through the memory channel. FOLD_INGEST=0 turns it off;
+    // FOLD_INGEST_MIN (chars, default 20000) is the size above which an attachment is kept out. Fails open: no door answer, no change.
+    const ingestOn = process.env.FOLD_INGEST !== "0"
+    const ingestMin = Number(process.env.FOLD_INGEST_MIN ?? 20_000)
+    const ingested = new Map<string, string>()
+    const ingestOne = (sessionID: string, id: string, name: string, text: string) =>
+      Effect.gen(function* () {
+        const key = `${sessionID}|${id}`
+        const known = ingested.get(key)
+        if (known) return known
+        const size = 3_000_000
+        const parts = Math.max(1, Math.ceil(text.length / size))
+        let last: Record<string, unknown> | undefined
+        for (let part = 0; part < parts; part++) {
+          last = yield* post({ event: "ingest", sessionID, id, name, text: text.slice(part * size, (part + 1) * size), part, parts }, 60_000, true)
+          if (!last?.ok) return undefined
+        }
+        const note = typeof last?.note === "string" ? last.note : undefined
+        if (note) ingested.set(key, note)
+        return note
+      })
     const perceiveMessages = (event: SessionHooks["context"]) =>
       Effect.gen(function* () {
         if (off || perceiveOff || Date.now() < downUntil) return
@@ -1802,6 +1825,21 @@ export const Plugin = define({
             if (message.role === "user" && part.type === "media") {
               const media = part.media as { mediaType?: string; source?: { type?: string; data?: unknown } }
               const mime = media.mediaType ?? ""
+              if (ingestOn && /^text\/|json|csv|xml|markdown/i.test(mime)) {
+                const b64 = inlineB64(media.source)
+                const text = b64 ? Buffer.from(b64, "base64").toString("utf8") : ""
+                if (text.length >= ingestMin) {
+                  const name = (part as { filename?: string }).filename ?? "attachment"
+                  const note = yield* ingestOne(event.sessionID, perceiveKey(mime, b64!), name, text)
+                  if (note) {
+                    const next = content.slice()
+                    next[partIndex] = { type: "text", text: note } as typeof content[number]
+                    content = next
+                    changed = true
+                  }
+                }
+                continue
+              }
               if (!perceivableMime(mime)) continue
               const dataBase64 = inlineB64(media.source)
               if (!dataBase64) continue
