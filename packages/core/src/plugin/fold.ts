@@ -1823,19 +1823,25 @@ export const Plugin = define({
           let content = message.content
           let changed = false
           for (const [partIndex, part] of content.entries()) {
-            // a text/plain attachment arrives as a text part carrying metadata.attachment ("Attached file: <name>" + its content)
-            const attached = (part as { metadata?: { attachment?: { name?: string } } }).metadata?.attachment ??
-              (part.type === "text" && /^\s*Attached file: /.test(part.text) ? { name: /^\s*Attached file: ([^\n]*)/.exec(part.text)?.[1] } : undefined)
-            if (process.env.FOLD_INGEST_DEBUG && message.role === "user" && part.type === "text")
-              fs.appendFileSync(process.env.FOLD_INGEST_DEBUG, JSON.stringify({ at: Date.now(), sessionID: event.sessionID, chars: part.text.length, meta: Object.keys((part as { metadata?: object }).metadata ?? {}), head: part.text.slice(0, 40), attached: !!attached }) + "\n")
-            if (ingestOn && message.role === "user" && part.type === "text" && attached && part.text.length >= ingestMin) {
-              const body = part.text.replace(/^\s*Attached file:[^\n]*\n(?:Description:[^\n]*\n)?\n?/, "")
-              const name = attached.name ?? "attachment"
-              const id = createHash("sha256").update(body).digest("hex").slice(0, 16)
-              const note = yield* ingestOne(event.sessionID, id, name, body)
-              if (note) {
+            // A text/plain attachment reaches this hook inside the user's text: the ask, then "Attached file: <name>" and the file's
+            // content, possibly several (measured: one 128 KB text part, no metadata). Each large attached section is handed to the
+            // door and replaced by its one-line note; the ask itself is kept as typed.
+            if (ingestOn && message.role === "user" && part.type === "text" && part.text.length >= ingestMin && /(?:^|\n)\s*Attached file: /.test(part.text)) {
+              const pieces = part.text.split(/(?=(?:^|\n)\s*Attached file: )/)
+              let rewritten = ""
+              let any = false
+              for (const piece of pieces) {
+                const head = /^\s*Attached file: ([^\n]*)\n(?:Description:[^\n]*\n)?\n?/.exec(piece)
+                if (!head || piece.length - head[0].length < ingestMin) { rewritten += piece; continue }
+                const body = piece.slice(head[0].length)
+                const id = createHash("sha256").update(body).digest("hex").slice(0, 16)
+                const note = yield* ingestOne(event.sessionID, id, head[1] || "attachment", body)
+                if (note) { rewritten += `\n\nAttached file: ${head[1]}\n${note}`; any = true } else rewritten += piece
+              }
+              if (process.env.FOLD_INGEST_DEBUG) fs.appendFileSync(process.env.FOLD_INGEST_DEBUG, JSON.stringify({ at: Date.now(), sessionID: event.sessionID, pieces: pieces.length, before: part.text.length, after: rewritten.length, any }) + "\n")
+              if (any) {
                 const next = content.slice()
-                next[partIndex] = { ...part, text: `\n\nAttached file: ${name}\n${note}` } as typeof content[number]
+                next[partIndex] = { ...part, text: rewritten } as typeof content[number]
                 content = next
                 changed = true
               }
