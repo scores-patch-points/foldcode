@@ -1199,6 +1199,7 @@ const clipToFit = (text: string, keep: number, handle?: string) =>
     : `${text.slice(0, keep)}\n[fold: ${(text.length - keep).toLocaleString()} of ${text.length.toLocaleString()} chars cut to fit the window. This is a cut of the same output, not a new one; ${handle ? `snip ${handle} returns all of it` : "read with an offset for the rest"}.]`
 
 const isNewAsk = (messages: SessionHooks["context"]["messages"]) => messages.at(-1)?.role === "user"
+const turnNotes = new Map<string, { ask: string; texts: string[] }>()
 
 // Event payloads are trimmed before they leave the process: the record needs the
 // shape of a turn (which tools, in what order, how it ended), not its bytes.
@@ -2177,6 +2178,10 @@ export const Plugin = define({
         yield* perceiveMessages(event)
         // The recall and the fold both knock on the door; the recall first, so
         // the turn exists before any fold can be attributed to it.
+        // The door's notes for this ask (memory, pages, lane ...) are fetched on the turn's first step only; a turn that goes on to call
+        // tools used to lose them on every later step (measured: the right page was served, the model searched, and on the step
+        // that answered the page was gone). They are kept for the whole turn and re-sent on each step of the same ask.
+        const systemBefore = event.system.length
         if (isNewAsk(event.messages)) {
           const workspace = yield* workspaceOf(event.sessionID)
           const answer = yield* post(
@@ -2242,6 +2247,11 @@ export const Plugin = define({
           // with a claim about the world.
           const lane = answer?.lane
           if (typeof lane === "string" && lane.length > 0) event.system.push({ type: "text", text: lane })
+        }
+        if (isNewAsk(event.messages)) turnNotes.set(event.sessionID, { ask: lastUserText(event.messages), texts: event.system.slice(systemBefore).flatMap((b) => (b.type === "text" ? [b.text] : [])) })
+        else {
+          const kept = turnNotes.get(event.sessionID)
+          if (kept && kept.ask === lastUserText(event.messages)) for (const text of kept.texts) event.system.push({ type: "text", text })
         }
         // Surf: the window must not grow per prompt. The door's ladder (figure /
         // kind / pattern, each line addressed) answers; with it down, local
