@@ -2824,6 +2824,34 @@ export const Plugin = define({
       }),
     )
 
+    // ATTACHMENTS AT THE DOOR OF THE SESSION. A file larger than the window is compacted away before the context hook ever sees it
+    // (measured: at 150 and 600 pages the first request was already a checkpoint). The prompt hook runs when the person sends, before
+    // any request: a large text file (in prompt.files as a data: URI, or inline as <file name="...">...</file>) is handed to the door here
+    // and replaced by its one-line note. The context-hook path stays as the fallback.
+    yield* ctx.session.hook("prompt", (event) =>
+      Effect.gen(function* () {
+        if (off || !ingestOn) return
+        const prompt = event.prompt as { text: string; files?: { uri: string; name?: string }[] }
+        const keep: { uri: string; name?: string }[] = []
+        for (const file of prompt.files ?? []) {
+          const m = /^data:([^;,]*)(;base64)?,/.exec(file.uri)
+          const text = m && /^text\/|json|csv|xml|markdown/i.test(m[1] || "text/plain") ? (m[2] ? Buffer.from(file.uri.slice(m[0].length), "base64").toString("utf8") : decodeURIComponent(file.uri.slice(m[0].length))) : ""
+          if (text.length < ingestMin) { keep.push(file); continue }
+          const id = createHash("sha256").update(text).digest("hex").slice(0, 16)
+          const note = yield* ingestOne(event.sessionID, id, file.name ?? "attachment", text)
+          if (!note) { keep.push(file); continue }
+          prompt.text += `\n\n<file name="${file.name ?? "attachment"}">\n${note}\n</file>`
+        }
+        if (prompt.files) prompt.files = keep
+        for (const f of [...prompt.text.matchAll(/<file name="([^"]*)"[^>]*>\n?([\s\S]*?)<\/file>/g)].reverse()) {
+          if (f[2].length < ingestMin) continue
+          const id = createHash("sha256").update(f[2]).digest("hex").slice(0, 16)
+          const note = yield* ingestOne(event.sessionID, id, f[1] || "attachment", f[2])
+          if (note) prompt.text = prompt.text.slice(0, f.index!) + `<file name="${f[1]}">\n${note}\n</file>` + prompt.text.slice(f.index! + f[0].length)
+        }
+        if (process.env.FOLD_INGEST_DEBUG) fs.appendFileSync(process.env.FOLD_INGEST_DEBUG, JSON.stringify({ at: Date.now(), hook: "prompt", sessionID: event.sessionID, files: (event.prompt as { files?: unknown[] }).files?.length ?? 0, text: prompt.text.length }) + "\n")
+      }).pipe(Effect.catchCause(() => Effect.void)),
+    )
     yield* ctx.session.hook("context", context)
     yield* ctx.session.hook("title", title)
     yield* ctx.session.hook("generate", (event) => {
