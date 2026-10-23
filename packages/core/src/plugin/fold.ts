@@ -1824,7 +1824,10 @@ export const Plugin = define({
           let changed = false
           for (const [partIndex, part] of content.entries()) {
             // a text/plain attachment arrives as a text part carrying metadata.attachment ("Attached file: <name>" + its content)
-            const attached = (part as { metadata?: { attachment?: { name?: string } } }).metadata?.attachment
+            const attached = (part as { metadata?: { attachment?: { name?: string } } }).metadata?.attachment ??
+              (part.type === "text" && /^\s*Attached file: /.test(part.text) ? { name: /^\s*Attached file: ([^\n]*)/.exec(part.text)?.[1] } : undefined)
+            if (process.env.FOLD_INGEST_DEBUG && message.role === "user" && part.type === "text")
+              fs.appendFileSync(process.env.FOLD_INGEST_DEBUG, JSON.stringify({ at: Date.now(), sessionID: event.sessionID, chars: part.text.length, meta: Object.keys((part as { metadata?: object }).metadata ?? {}), head: part.text.slice(0, 40), attached: !!attached }) + "\n")
             if (ingestOn && message.role === "user" && part.type === "text" && attached && part.text.length >= ingestMin) {
               const body = part.text.replace(/^\s*Attached file:[^\n]*\n(?:Description:[^\n]*\n)?\n?/, "")
               const name = attached.name ?? "attachment"
