@@ -20,7 +20,7 @@ import { Message, ToolFailure } from "@opencode/ai"
 import { define, type Context } from "@opencode/plugin/effect/plugin"
 import type { SessionHooks } from "@opencode/plugin/effect/session"
 import { money } from "@opencode/util/savings"
-import { Effect, Schema, Stream } from "effect"
+import { Effect, Fiber, Schema, Stream } from "effect"
 import os from "node:os"
 import path from "node:path"
 import { createHash } from "node:crypto"
@@ -29,6 +29,7 @@ import { tap as usageTap } from "./usage-tap.js"
 import { Bus } from "../bus.js"
 import { SessionEvent } from "../session/event.js"
 import { GROUND_LEGEND, GROUND_STEER_HEAD, contradictedIn, gatherPassages, groundHead, groundPayload, groundSteer, pairedIn, revisedIn, shouldHandBack, withoutCitations, type Revise } from "./fold-ground.js"
+import { REGISTER_LEGEND, dropTrailingNotices, gateTools, markRegistered, registerBlock, registerHit } from "./fold-register.js"
 import * as Physics from "./physics.js"
 import * as Learn from "./physics-learn.js"
 import fs from "node:fs"
@@ -100,6 +101,13 @@ const physicsServes = (providerID: string) => physicsMode === "1" || (physicsMod
 // cost cut, not a reliability workaround, so it serves every provider; FOLD_GATHER=0 turns it off. Same heimdall search as the
 // "this machine" engine below.
 const gatherOn = process.env.FOLD_GATHER !== "0"
+// THE REGISTER (fold-register.ts; the door's opencode-register.mjs): before route and gather, the door is asked whether the conversation
+// itself answers a new ask (a stated name, a moved date, "did I say X"); a hit is never gathered (foldcode-poc/FAILURES.md F5). The
+// door's `<fold-register>` block is pinned in event.system, past native compaction (F1). FOLD_REGISTER=0 turns it off.
+const registerOn = process.env.FOLD_REGISTER !== "0"
+// THE TOOL GATE (fold-register.ts gateTools): the fold's own tools a plain turn cannot use are not sent — measured as +5 tools on every
+// request, about a tenth of a chat request before any history (FAILURES.md, diagnosis 2026-10-23). FOLD_TOOL_GATE=0 turns it off.
+const toolGateOn = process.env.FOLD_TOOL_GATE !== "0"
 // The research itself runs in the door (khora opencode-gather.mjs: the Holodeck's research and its summary selected by the asker's
 // stance, in a worker thread, no model). By default the door also ANSWERS: one model call is pointed at the door's local endpoint, which
 // replies with the text it assembled, so no model runs and no token is spent. FOLD_GATHER_MODEL=1 has a real model write the answer from
@@ -110,6 +118,9 @@ const gatherZero = process.env.FOLD_GATHER_MODEL !== "1"
 // stays zero-model; basic chat, invented work, arithmetic, follow-ups and anything about the workspace take the paths they always took (no research).
 // FOLD_ROUTE=0 turns it off. When the door gives no route (a gap, an error, a door that is down) the classifier below decides, as it always did.
 const routeOn = process.env.FOLD_ROUTE !== "0"
+// the route post is quick on a quiet door (ms) but has to cross the door's event loop: FOLD_ROUTE_MS (default 4 s) is its budget, and a
+// timed-out route falls back to the English classifier, which does not know a longform ask (the model then writes freely)
+const routeTimeout = Number(process.env.FOLD_ROUTE_MS ?? 4000)
 // LONGFORM (khora opencode-longform.mjs): a piece is a file written one section at a time across model responses, each section graded against its own
 // material, repair capped, with short prompts (a section's lines and the sentence before it, never the piece). The door keeps the job; the model
 // calls are this session's own (a synthetic message resumes the turn for each section). On by default for a longform ask; FOLD_LONGFORM=0 turns it off.
@@ -122,6 +133,8 @@ const gatherViaDoor = (process.env.FOLD_GATHER_VIA_DOOR ?? "opencode-go,opencode
 const gatherBudgetMs = Number(process.env.FOLD_GATHER_BUDGET_MS ?? 90_000)
 // A broad topic never saturates the Holodeck's stopping rule, and a handful of good pages is enough to write an account from: an account ask is cut sooner.
 const gatherAccountSoftMs = Number(process.env.FOLD_GATHER_ACCOUNT_SOFT_MS ?? 20_000)
+// a longform piece is read for longer than a question: 20 s read one page (and the material rule kept it out), and the piece was written from nothing
+const gatherLongformSoftMs = Number(process.env.FOLD_GATHER_LONGFORM_SOFT_MS ?? 45_000)
 type GatherResult = { voids?: Array<{ id: string; label: string; sentences: Array<{ text: string; host: string }> }>; text: string; sources: Array<{ url: string }>; passages: Array<{ name: string; text: string }>; notes?: string[]; gaps: unknown[]; calls?: unknown; stop?: unknown }
 // When the door cannot gather, the turn is NOT handed to the tool loop (it searches through the same engine and measured 81 requests,
 // 693k tokens, on one ask); it takes one small request that says so. FOLD_GATHER_FALLBACK=tools restores the tool path.
@@ -144,6 +157,27 @@ const researchNotice = (sessionID: string, sources: number, passages: Array<{ na
 const materialNotice = (sessionID: string, label: string, facts: string[]) => {
   const lines = facts.slice(0, 8).map((f) => `- ${String(f).slice(0, 160)}`).join("\n")
   return { sessionID, text: `fold measured · ${label} — writing from ${facts.length} fact(s)${lines ? `:\n${lines}` : ""}`, description: "fold research — the step's facts", resume: false }
+}
+// PIECE PROGRESS (data, not prose): the outline with each section's state, published on the bus as a fold-longform notice so the window draws ONE live
+// panel for the piece (replaced on every start / step / finish). The door computes the states (opencode-longform.mjs outlineStates); this only relays them.
+type LongformSectionState = "planned" | "writing" | "written" | "cut"
+type LongformOutline = Array<{ id: string; title: string; state: LongformSectionState; facts: number }>
+type LongformProgress = { v: 1; topic: string; outline: LongformOutline; current: string | null; round: number; done: boolean; sources: number }
+const longformOutlineOf = (raw: unknown): LongformOutline =>
+  (Array.isArray(raw) ? raw : []).flatMap((s) => {
+    const o = s as { id?: unknown; title?: unknown; state?: unknown; facts?: unknown }
+    if (typeof o?.id !== "string") return []
+    const state: LongformSectionState = o.state === "writing" || o.state === "written" || o.state === "cut" ? o.state : "planned"
+    return [{ id: o.id, title: typeof o.title === "string" ? o.title : o.id, state, facts: Number(o.facts) || 0 }]
+  })
+const longformNotice = (sessionID: string, p: { topic: string; outline: LongformOutline; round?: number; done?: boolean; sources: number }) => {
+  const current = p.outline.find((s) => s.state === "writing") ?? null
+  const written = p.outline.filter((s) => s.state === "written" || s.state === "cut").length
+  const longform: LongformProgress = { v: 1, topic: p.topic, outline: p.outline, current: current?.id ?? null, round: Number(p.round) || 0, done: p.done === true, sources: p.sources }
+  const text = p.done
+    ? `fold measured · ${p.topic} — the piece is assembled (${written} of ${p.outline.length} section(s))`
+    : `fold measured · ${p.topic} — writing ${current ? `"${current.title}"` : "…"} (${written} of ${p.outline.length} written${p.round ? `, repair round ${p.round}` : ""})`
+  return { sessionID: sessionID as never, text, description: "fold longform — the piece's progress", metadata: { notice: "fold-longform", longform } as Record<string, unknown> }
 }
 const usageFile = process.env.FOLD_USAGE_FILE ?? path.join(os.homedir(), ".local/share/foldcode/usage.jsonl")
 // FOLD_TRAIL=1: stale tool results become opaque handles except the ones the decayed trail keeps (decided by the door, see
@@ -1473,6 +1507,10 @@ export const Plugin = define({
     // The ground is committed as a message directly, never admitted through the inbox: an admitted synthetic is a
     // pending input, and the runner answers it with another model step (the answer would appear twice).
     const bus = yield* Bus.Service
+    // A person-notice that must not wake a model step goes straight onto the bus (the window draws it, the inbox never sees it). An inbox notice
+    // delivered mid-turn resumes the turn with the whole history: 2026-10-23, every section of a piece cost two such steps (49-65k characters each).
+    const noticeOnBus = (n: { sessionID: string; text: string; description: string }) =>
+      bus.publish(SessionEvent.Synthetic, { sessionID: n.sessionID as never, text: n.text, description: n.description })
 
     // The price of the model actually in use, from the operator's own catalog;
     // sent with each fold so the door's dollars are the running model's dollars.
@@ -1624,10 +1662,14 @@ export const Plugin = define({
     // the lines of a door-served answer that measure the run rather than quote a page: shown to the person, never sent to be graded as claims
     const gatherNotes = new Map<string, Set<string>>()
     // a piece in progress: the door's job id, and the prompt the next model call is asked (a resume replaces the whole window with it)
-    const longformJobs = new Map<string, { job: string; finished: boolean }>()
+    const longformJobs = new Map<string, { job: string; finished: boolean; topic: string; sources: number }>()
     const longformPending = new Map<string, string>()
     // how many times the current section has been re-asked after the model gave nothing (capped, so a dead model ends the run cleanly)
     const longformRetries = new Map<string, number>()
+    // sessions whose served section prompt awaits the model's reply: a reply advances the piece once, and a text that answers no served prompt
+    // (a notice-woken step, a second text part of the same reply) advances nothing. 2026-10-23: eleven interim notices delivered as one batch
+    // each woke a step, and five "Done." replies consumed five sections.
+    const longformAwaiting = new Set<string>()
     // sessions whose longform research has already been shown to the person (so the notice posts once, not per context pass)
     const longformResearched = new Set<string>()
     // What the model itself said earlier in the session, so the door never reads its own words back as evidence for them.
@@ -2003,6 +2045,9 @@ export const Plugin = define({
         // notices are stripped. Everything the fold changes from here on is measured against this number; the
         // tap (usage-tap.ts) joins it to the provider's own token count for the request that follows.
         const windowBefore = contextChars(event.messages) + systemChars(event.system)
+        // the person's own words, kept before a gather or physics turn rewrites the last message: the register ingests THESE
+        const originalAsk = lastUserText(event.messages)
+        let researchAsk = false
         // PHYSICS: serve a read/edit-class turn without tool definitions; decline (recorded) and fall through otherwise.
         let withheld = 0
         const physicsOn = physicsServes(event.model.providerID)
@@ -2014,21 +2059,71 @@ export const Plugin = define({
           const answered = physicsOn && last?.role === "assistant" && !last.content.some((part) => part.type === "tool-call") && servedTurn.has(event.sessionID)
           // the context hook can run more than once for one step (a retry, a title call): the pending prompt stays until the next one replaces it
           const longformResume = realAsk && (longformPending.has(event.sessionID) || longformJobs.has(event.sessionID)) && ask.startsWith(LONGFORM_MARK)
-          const routed = !longformResume && realAsk && gatherOn && routeOn ? yield* post({ event: "route", ask, hasHistory: event.messages.length > 1 }, 4000, true) : undefined
+          const routed = !longformResume && realAsk && gatherOn && routeOn ? yield* post({ event: "route", ask, hasHistory: event.messages.length > 1 }, routeTimeout, true) : undefined
           const routeKnown = typeof routed?.research === "boolean"
+          // THE REGISTER FIRST: a question the conversation itself answers is answered from the session's own stated facts and is never
+          // web research. The door ingests this ask's statements on the same call, so a fact stated now is registered for the next turn.
+          // Fails open: no door, no hit, the route decides as before.
+          const regTask = registerOn && realAsk && !longformResume && event.messages.length > 1 ? yield* taskOf(event.sessionID) : undefined
+          const regWorkspace = registerOn && realAsk && !longformResume && event.messages.length > 1 ? yield* workspaceOf(event.sessionID) : undefined
+          const registered = registerOn && realAsk && !longformResume && event.messages.length > 1
+            ? yield* post({ event: "register", op: "answer", sessionID: event.sessionID, task: regTask, workspace: regWorkspace, ask, turns: priorTurns(event.messages) }, 4000, true)
+            : undefined
+          const fromRegister = registerHit(registered)
+          if (fromRegister) physicsRecord({ sessionID: event.sessionID, served: false, reason: "register: the conversation itself answers this ask", ask, competency: registered.answer.competency })
           // an ask that names the workspace's own things is never gathered from the web, whatever the router said: the tool path searches the workspace
-          const searching = !longformResume && realAsk && gatherOn && !Physics.workspaceish(ask) && (routeKnown ? routed.research === true : Physics.classify(ask) === "search")
+          researchAsk = realAsk && !Physics.workspaceish(ask) && (routeKnown ? routed.research === true : Physics.classify(ask) === "search")
+          const searching = !longformResume && realAsk && gatherOn && !fromRegister && !Physics.workspaceish(ask) && (routeKnown ? routed.research === true : Physics.classify(ask) === "search")
           if (realAsk && !longformResume) { gatheredTurn.delete(event.sessionID); gatherNotes.delete(event.sessionID); longformJobs.delete(event.sessionID); longformPending.delete(event.sessionID); longformResearched.delete(event.sessionID); longformRetries.delete(event.sessionID) }
           // an LONGFORM ask is started at the door (gather, outline, the file, the first section's prompt); when it cannot start, the generic gather below takes it
           // a LONGFORM ask: the router names the FORM (any language, from its kind dictionary); the English predicate is only a fallback
           const longformAskTurn = routeKnown && routed?.kind === "account" && (routed?.form === "longform" || Physics.longformAsk(ask))
+          // WHILE THE DOOR READS: the window is told what is being read (pages read so far, the page being read now, elapsed), every few
+          // seconds while it changes, instead of "working" for a minute. The door keeps the progress; this only reads and relays it.
+          // WHILE THE DOOR READS: the window is shown the research itself (queries, the page being read, the pages read, elapsed), replaced every few
+          // seconds while it changes. It rides the event bus as a fold-research notice (metadata the window draws in place of "Working"); it is never put
+          // in the session's inbox, because an inbox notice delivered mid-turn wakes a model step (2026-10-23: eleven of them ate five sections).
+          type ResearchPage = { host: string; title?: string }
+          type ResearchProgress = { ok?: boolean; done?: boolean; elapsedMs?: number; candidates?: number; read?: ResearchPage[]; reading?: ResearchPage | null; searches?: Array<{ q?: string; n?: number }>; stop?: string | null }
+          const readingWatch = (sessionID: string) =>
+            Effect.gen(function* () {
+              let last = ""
+              while (true) {
+                yield* Effect.sleep("3 seconds")
+                const p = (yield* Effect.tryPromise(() =>
+                  fetch(`${base}/v1/hooks/opencode/gather/progress?sessionID=${encodeURIComponent(sessionID)}`, { signal: AbortSignal.timeout(3000) }).then((r) => (r.ok ? r.json() : undefined)),
+                ).pipe(Effect.catch(() => Effect.succeed(undefined)))) as ResearchProgress | undefined
+                if (!p || p.ok !== true) continue
+                const read = Array.isArray(p.read) ? p.read : []
+                const key = `${read.length}|${p.candidates ?? 0}|${p.reading?.host ?? ""}|${(p.searches ?? []).length}|${p.done ? 1 : 0}`
+                if (key === last) continue
+                last = key
+                const research = { v: 1, elapsedMs: Number(p.elapsedMs ?? 0), searches: (p.searches ?? []).flatMap((s) => (typeof s.q === "string" ? [{ q: s.q, n: Number(s.n) || 0 }] : [])), candidates: Number(p.candidates ?? 0), read, reading: p.reading ?? null, stop: p.stop ?? null, done: p.done === true }
+                yield* bus.publish(SessionEvent.Synthetic, { sessionID: sessionID as never, text: `fold measured · researching… ${read.length} page(s) read`, description: "fold research — what is being read", metadata: { notice: "fold-research", research } })
+                if (p.done) return
+              }
+            })
+          const researchDone = (sessionID: string) =>
+            Effect.gen(function* () {
+              const p = (yield* Effect.tryPromise(() =>
+                fetch(`${base}/v1/hooks/opencode/gather/progress?sessionID=${encodeURIComponent(sessionID)}`, { signal: AbortSignal.timeout(3000) }).then((r) => (r.ok ? r.json() : undefined)),
+              ).pipe(Effect.catch(() => Effect.succeed(undefined)))) as ResearchProgress | undefined
+              if (!p || p.ok !== true) return
+              const read = Array.isArray(p.read) ? p.read : []
+              const research = { v: 1, elapsedMs: Number(p.elapsedMs ?? 0), searches: (p.searches ?? []).flatMap((s) => (typeof s.q === "string" ? [{ q: s.q, n: Number(s.n) || 0 }] : [])), candidates: Number(p.candidates ?? 0), read, reading: null, stop: p.stop ?? null, done: true }
+              yield* bus.publish(SessionEvent.Synthetic, { sessionID: sessionID as never, text: `fold measured · research — ${read.length} page(s) read`, description: "fold research — what was read", metadata: { notice: "fold-research", research } })
+            }).pipe(Effect.ignore)
+          const longformWatch = searching && longformOn && longformAskTurn ? yield* Effect.forkChild(readingWatch(event.sessionID), { startImmediately: true }) : undefined
           const longformStartRes = searching && longformOn && longformAskTurn
-            ? yield* post({ event: "longform", op: "start", sessionID: event.sessionID, ask, ...(typeof routed?.topic === "string" && routed.topic ? { topic: routed.topic } : {}), ...(longformFreeform ? { freeform: true } : {}), softMs: gatherAccountSoftMs, budgetMs: gatherBudgetMs }, gatherBudgetMs + 15_000, true)
+            ? yield* post({ event: "longform", op: "start", sessionID: event.sessionID, ask, ...(typeof routed?.topic === "string" && routed.topic ? { topic: routed.topic } : {}), ...(longformFreeform ? { freeform: true } : {}), softMs: gatherLongformSoftMs, budgetMs: gatherBudgetMs }, gatherBudgetMs + 15_000, true)
             : undefined
+          if (longformWatch) yield* Fiber.interrupt(longformWatch)
+          if (longformWatch) yield* researchDone(event.sessionID)
           const longformStarted = longformStartRes?.ok === true && typeof longformStartRes.prompt === "string" && typeof longformStartRes.job === "string"
           if (searching && longformAskTurn && !longformStarted) physicsRecord({ sessionID: event.sessionID, served: false, reason: `longform start not ok: ${JSON.stringify(longformStartRes ?? null).slice(0, 300)}` })
           // the window for a piece call is one short message: the section's prompt, never the history and never the piece
           const longformWindow = (prompt: string) => {
+            longformAwaiting.add(event.sessionID)
             withheld = toolChars(event.tools)
             for (const name of Object.keys(event.tools)) delete event.tools[name]
             event.system.splice(0, event.system.length, { type: "text", text: longformFreeform ? "You write one section of a piece, from the facts you are given, in your own words." : "You write one section of a piece, from the lines you are given." })
@@ -2039,7 +2134,10 @@ export const Plugin = define({
             longformWindow(pending)
             physicsRecord({ sessionID: event.sessionID, served: true, kind: "longform-section", job: longformJobs.get(event.sessionID)?.job, chars: pending.length, withheldToolChars: withheld })
           } else if (longformStarted) {
-            longformJobs.set(event.sessionID, { job: String(longformStartRes!.job), finished: false })
+            gatheredTurn.add(event.sessionID) // a piece is written from what was read: the ground's hand-back never steers a section
+            const longformTopic = typeof longformStartRes!.topic === "string" && longformStartRes!.topic ? longformStartRes!.topic : typeof routed?.topic === "string" && routed.topic ? routed.topic : ask
+            const longformSources = Number(longformStartRes!.sources) || 0
+            longformJobs.set(event.sessionID, { job: String(longformStartRes!.job), finished: false, topic: longformTopic, sources: longformSources })
             longformPending.set(event.sessionID, String(longformStartRes!.prompt))
             longformRetries.set(event.sessionID, 0)
             const ps = Array.isArray(longformStartRes!.passages) ? (longformStartRes!.passages as Array<{ name: string; text: string }>) : []
@@ -2048,7 +2146,10 @@ export const Plugin = define({
             longformWindow(String(longformStartRes!.prompt))
             physicsRecord({ sessionID: event.sessionID, served: true, kind: "longform-start", route: { kind: routed?.kind, topic: routed?.topic }, job: longformStartRes!.job, sections: longformStartRes!.sections, sources: longformStartRes!.sources, withheldToolChars: withheld })
             // what it researched (the general research notice; the piece's own gather is the same reading a plain account gets)
-            if (!longformResearched.has(event.sessionID)) { longformResearched.add(event.sessionID); yield* ctx.session.synthetic(researchNotice(event.sessionID, Number(longformStartRes!.sources ?? ps.length), ps) as never).pipe(Effect.ignore) }
+            if (!longformResearched.has(event.sessionID)) { longformResearched.add(event.sessionID); yield* noticeOnBus(researchNotice(event.sessionID, Number(longformStartRes!.sources ?? ps.length), ps)) }
+            // the piece's progress as data (s1 writing, the rest planned): the window's one live panel for the piece
+            const startOutline = longformOutlineOf(longformStartRes!.outline)
+            if (startOutline.length) yield* bus.publish(SessionEvent.Synthetic, longformNotice(event.sessionID, { topic: longformTopic, outline: startOutline, round: 0, done: false, sources: longformSources }))
           } else if (answered) {
             // an answer that missed is restructured here, inside the request, so the session stays open while REC runs
             yield* settle(event.sessionID)
@@ -2063,7 +2164,10 @@ export const Plugin = define({
           else if (searching) {
             // GATHER, THROUGH THE DOOR: the research (search, gate, read, stop) and the reading (statements selected by the asker's
             // stance) run in the door's worker; this turn waits for that and no model is asked to search or to write.
+            const gatherWatch = yield* Effect.forkChild(readingWatch(event.sessionID), { startImmediately: true })
             const door = yield* post({ event: "gather", sessionID: event.sessionID, ask, budgetMs: gatherBudgetMs, ...(routeKnown && typeof routed?.topic === "string" && routed.topic ? { topic: routed.topic } : {}), ...(routeKnown && typeof routed?.kind === "string" ? { kind: routed.kind } : {}), ...(routeKnown && routed?.kind === "account" ? { softMs: gatherAccountSoftMs } : {}) }, gatherBudgetMs + 10_000, true)
+            yield* Fiber.interrupt(gatherWatch)
+            yield* researchDone(event.sessionID)
             const result = door?.ok === true ? (door.result as GatherResult | undefined) : undefined
             const id = typeof door?.id === "string" ? door.id : undefined
             const strip = () => {
@@ -2115,7 +2219,7 @@ export const Plugin = define({
                   ? `${ask}\n\nThe facts the pages state, grouped by what they are about:\n\n${gaps}\n\nWrite it as you would write any piece: your own structure, voice and transitions, in your own words. Do not copy or quote the lines above; weave their facts into your own sentences, one fact per sentence, so each sentence can be checked against the facts above. Every fact and figure in it comes from the facts above.`
                   : `${ask}\n\nWhat the pages read for this say (each block is one page's own sentences):\n\n${notes || result.text}\n\nWrite ${form}, in your own words. Its facts and figures are the pages' own, and its sentences name no page.`)
               }
-              yield* ctx.session.synthetic(researchNotice(event.sessionID, result.sources.length, result.passages) as never).pipe(Effect.ignore)
+              yield* noticeOnBus(researchNotice(event.sessionID, result.sources.length, result.passages))
               gatheredTurn.add(event.sessionID)
               physicsRecord({ sessionID: event.sessionID, served: true, kind: viaDoor ? "gather-door" : "gather-model", route: routeKnown ? { kind: routed?.kind, topic: routed?.topic } : undefined, modelCalls: viaDoor ? 0 : 1, sources: result.sources.length, calls: result.calls, stop: result.stop, gaps: result.gaps, withheldToolChars: withheld })
             }
@@ -2159,6 +2263,12 @@ export const Plugin = define({
             }
           }
         }
+        // THE TOOL GATE: on a plain ask (not served by physics, gather or longform, which send no tools at all), the fold's own tools
+        // the turn cannot use are not sent. Counted as withheld, so the ledger sees it.
+        if (toolGateOn && isNewAsk(event.messages) && !gatheredTurn.has(event.sessionID) && !longformJobs.has(event.sessionID) && !servedTurn.has(event.sessionID)) {
+          const before = toolChars(event.tools)
+          if (gateTools(event.tools, originalAsk, { research: researchAsk }).length) withheld += before - toolChars(event.tools)
+        }
         // Remember the turn's ask and model so a tool result that lands mid-turn
         // can be folded at event time without re-reading the message list.
         const ask = lastUserText(event.messages)
@@ -2191,6 +2301,7 @@ export const Plugin = define({
               model: event.model,
               agent: event.agent,
               ask: lastUserText(event.messages),
+              userAsk: originalAsk,
               messages: event.messages.length,
               tools: Object.keys(event.tools),
               workspace,
@@ -2201,6 +2312,14 @@ export const Plugin = define({
           )
           const note = answer?.system
           if (typeof note === "string" && note.length > 0) event.system.push({ type: "text", text: note })
+          // THE REGISTER, PINNED: the session's stated facts as prose, in event.system so native compaction never summarises them
+          // (compaction.ts skips `system`), with its one legend sentence. A session with a register compacts to the record by default.
+          const register = registerBlock(answer)
+          markRegistered(event.sessionID, register !== undefined)
+          if (register !== undefined) {
+            event.system.push({ type: "text", text: register })
+            event.system.push({ type: "text", text: REGISTER_LEGEND })
+          }
           // The project's commons: what the other agents here have settled, already ingested and
           // projected through Houdini by the door against this ask.
           const commons = answer?.commons
@@ -2356,6 +2475,8 @@ export const Plugin = define({
         yield* foldMessages(event)
         if (trailOn) yield* trailMessages(event)
         // THE HARD CAP: after every fold, the frontier's window is bounded absolutely (FOLD_MAX_CHARS).
+        // A request never ends on the fold's own notice: a provider without prefill rejects a trailing assistant message (F5).
+        dropTrailingNotices(event.messages, isPersonNotice)
         capContext(event.messages, event.system, { fixed: toolChars(event.tools), store: trailStore })
         // THE LEDGER'S "AFTER": what is actually sent. before - after is what the fold kept out (negative when
         // the notes it added cost more than they removed). `tools` is what the definitions weigh, measured the
@@ -3015,6 +3136,8 @@ export const Plugin = define({
         const entry = longformJobs.get(sessionID)
         if (!entry) return
         if (entry.finished) { longformJobs.delete(sessionID); return }
+        if (!longformAwaiting.has(sessionID)) return
+        longformAwaiting.delete(sessionID)
         const text = typeof event.data.text === "string" ? event.data.text : ""
         if (!text.trim()) {
           // the model gave nothing for this section: re-ask it, capped, then end the run cleanly (never hang on a dead model)
@@ -3050,8 +3173,11 @@ export const Plugin = define({
           longformRetries.set(sessionID, 0)
           physicsRecord({ sessionID, served: true, kind: "longform-next", job: entry.job, section: next.section, round: next.round })
         } else { longformJobs.delete(sessionID); return }
+        // the piece's progress as data: the written section "written" or "cut", the next one "writing"; when done, every state is final
+        const stepOutline = longformOutlineOf(r.outline)
+        if (stepOutline.length) yield* bus.publish(SessionEvent.Synthetic, longformNotice(sessionID, { topic: entry.topic, outline: stepOutline, round: done ? 0 : Number(next?.round) || 0, done: Boolean(done), sources: entry.sources }))
         // what this step writes from (the general step-material notice)
-        if (next && typeof next.prompt === "string") yield* ctx.session.synthetic(materialNotice(sessionID, String(next.title ?? next.section), Array.isArray(next.facts) ? next.facts : []) as never)
+        if (next && typeof next.prompt === "string") yield* noticeOnBus(materialNotice(sessionID, String(next.title ?? next.section), Array.isArray(next.facts) ? next.facts : []))
         yield* ctx.session.synthetic({ sessionID: sessionID as never, text: `${LONGFORM_MARK} ${done ? "the piece is assembled" : `section ${String(next?.section ?? "")}${next?.round ? `, repair round ${next.round}` : ""}`}`, description: "fold longform — the next call", delivery: "queue", resume: true })
       }).pipe(Effect.ignore)
 

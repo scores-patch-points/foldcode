@@ -44,7 +44,11 @@
     "./styles": "./src/styles/index.css",
     "./storybook": "./src/storybook/index.ts",
     "./v2/*.css": "./src/v2/components/*.css",
-    "./v2/*": "./src/v2/components/*.tsx"
+    "./v2/*": "./src/v2/components/*.tsx",
+    "./timeline/fold-research": "./src/timeline/fold-research.ts",
+    "./timeline/fold-research-view": "./src/timeline/fold-research-view.tsx",
+    "./timeline/fold-longform": "./src/timeline/fold-longform.ts",
+    "./timeline/fold-longform-view": "./src/timeline/fold-longform-view.tsx"
   },
   "scripts": {
     "generate:progress-indicator": "bun script/generate-session-progress-indicator.ts",
