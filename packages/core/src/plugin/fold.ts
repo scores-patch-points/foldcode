@@ -1929,6 +1929,7 @@ export const Plugin = define({
         // the person's own words, kept before a gather or physics turn rewrites the last message: the register ingests THESE
         const originalAsk = lastUserText(event.messages)
         let researchAsk = false
+        let answeredFromRegister = false
         // PHYSICS: serve a read/edit-class turn without tool definitions; decline (recorded) and fall through otherwise.
         let withheld = 0
         const physicsOn = physicsServes(event.model.providerID)
@@ -1951,6 +1952,7 @@ export const Plugin = define({
             ? yield* post({ event: "register", op: "answer", sessionID: event.sessionID, task: regTask, workspace: regWorkspace, ask, turns: priorTurns(event.messages) }, 4000, true)
             : undefined
           const fromRegister = registerHit(registered)
+          answeredFromRegister = fromRegister
           if (fromRegister) physicsRecord({ sessionID: event.sessionID, served: false, reason: "register: the conversation itself answers this ask", ask, competency: registered.answer.competency })
           // an ask that names the workspace's own things is never gathered from the web, whatever the router said: the tool path searches the workspace
           researchAsk = realAsk && !Physics.workspaceish(ask) && (routeKnown ? routed.research === true : Physics.classify(ask) === "search")
@@ -2100,7 +2102,8 @@ export const Plugin = define({
         // the turn cannot use are not sent. Counted as withheld, so the ledger sees it.
         if (toolGateOn && isNewAsk(event.messages) && !gatheredTurn.has(event.sessionID) && !longformJobs.has(event.sessionID) && !servedTurn.has(event.sessionID)) {
           const before = toolChars(event.tools)
-          if (gateTools(event.tools, originalAsk, { research: researchAsk }).length) withheld += before - toolChars(event.tools)
+          // a turn the register answered is the conversation's, whatever the router called it: its research tools are not sent
+          if (gateTools(event.tools, originalAsk, { research: researchAsk && !answeredFromRegister }).length) withheld += before - toolChars(event.tools)
         }
         // Remember the turn's ask and model so a tool result that lands mid-turn
         // can be folded at event time without re-reading the message list.
