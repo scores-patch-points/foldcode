@@ -23,6 +23,7 @@ import { money } from "@opencode/util/savings"
 import { Effect, Schema, Stream } from "effect"
 import os from "node:os"
 import path from "node:path"
+import { createHash } from "node:crypto"
 import { record as rulerRecord, recordTokens as rulerTokens } from "./fold-ruler.js"
 import { tap as usageTap } from "./usage-tap.js"
 import { Bus } from "../bus.js"
@@ -1822,6 +1823,21 @@ export const Plugin = define({
           let content = message.content
           let changed = false
           for (const [partIndex, part] of content.entries()) {
+            // a text/plain attachment arrives as a text part carrying metadata.attachment ("Attached file: <name>" + its content)
+            const attached = (part as { metadata?: { attachment?: { name?: string } } }).metadata?.attachment
+            if (ingestOn && message.role === "user" && part.type === "text" && attached && part.text.length >= ingestMin) {
+              const body = part.text.replace(/^\s*Attached file:[^\n]*\n(?:Description:[^\n]*\n)?\n?/, "")
+              const name = attached.name ?? "attachment"
+              const id = createHash("sha256").update(body).digest("hex").slice(0, 16)
+              const note = yield* ingestOne(event.sessionID, id, name, body)
+              if (note) {
+                const next = content.slice()
+                next[partIndex] = { ...part, text: `\n\nAttached file: ${name}\n${note}` } as typeof content[number]
+                content = next
+                changed = true
+              }
+              continue
+            }
             if (message.role === "user" && part.type === "media") {
               const media = part.media as { mediaType?: string; source?: { type?: string; data?: unknown } }
               const mime = media.mediaType ?? ""
