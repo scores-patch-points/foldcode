@@ -28,6 +28,7 @@ import { tap as usageTap } from "./usage-tap.js"
 import { Bus } from "../bus.js"
 import { SessionEvent } from "../session/event.js"
 import { GROUND_LEGEND, GROUND_STEER_HEAD, contradictedIn, gatherPassages, groundHead, groundPayload, groundSteer, pairedIn, revisedIn, shouldHandBack, withoutCitations, type Revise } from "./fold-ground.js"
+import { REGISTER_LEGEND, dropTrailingNotices, gateTools, markRegistered, registerBlock, registerHit } from "./fold-register.js"
 import * as Physics from "./physics.js"
 import * as Learn from "./physics-learn.js"
 import fs from "node:fs"
@@ -99,6 +100,13 @@ const physicsServes = (providerID: string) => physicsMode === "1" || (physicsMod
 // cost cut, not a reliability workaround, so it serves every provider; FOLD_GATHER=0 turns it off. Same heimdall search as the
 // "this machine" engine below.
 const gatherOn = process.env.FOLD_GATHER !== "0"
+// THE REGISTER (fold-register.ts; the door's opencode-register.mjs): before route and gather, the door is asked whether the conversation
+// itself answers a new ask (a stated name, a moved date, "did I say X"); a hit is never gathered (foldcode-poc/FAILURES.md F5). The
+// door's `<fold-register>` block is pinned in event.system, past native compaction (F1). FOLD_REGISTER=0 turns it off.
+const registerOn = process.env.FOLD_REGISTER !== "0"
+// THE TOOL GATE (fold-register.ts gateTools): the fold's own tools a plain turn cannot use are not sent — measured as +5 tools on every
+// request, about a tenth of a chat request before any history (FAILURES.md, diagnosis 2026-10-23). FOLD_TOOL_GATE=0 turns it off.
+const toolGateOn = process.env.FOLD_TOOL_GATE !== "0"
 // The research itself runs in the door (khora opencode-gather.mjs: the Holodeck's research and its summary selected by the asker's
 // stance, in a worker thread, no model). By default the door also ANSWERS: one model call is pointed at the door's local endpoint, which
 // replies with the text it assembled, so no model runs and no token is spent. FOLD_GATHER_MODEL=1 has a real model write the answer from
@@ -121,6 +129,8 @@ const gatherViaDoor = (process.env.FOLD_GATHER_VIA_DOOR ?? "opencode-go,opencode
 const gatherBudgetMs = Number(process.env.FOLD_GATHER_BUDGET_MS ?? 90_000)
 // A broad topic never saturates the Holodeck's stopping rule, and a handful of good pages is enough to write an account from: an account ask is cut sooner.
 const gatherAccountSoftMs = Number(process.env.FOLD_GATHER_ACCOUNT_SOFT_MS ?? 20_000)
+// a longform piece is read for longer than a question: 20 s read one page (and the material rule kept it out), and the piece was written from nothing
+const gatherLongformSoftMs = Number(process.env.FOLD_GATHER_LONGFORM_SOFT_MS ?? 45_000)
 type GatherResult = { voids?: Array<{ id: string; label: string; sentences: Array<{ text: string; host: string }> }>; text: string; sources: Array<{ url: string }>; passages: Array<{ name: string; text: string }>; notes?: string[]; gaps: unknown[]; calls?: unknown; stop?: unknown }
 // When the door cannot gather, the turn is NOT handed to the tool loop (it searches through the same engine and measured 81 requests,
 // 693k tokens, on one ask); it takes one small request that says so. FOLD_GATHER_FALLBACK=tools restores the tool path.
@@ -1916,6 +1926,9 @@ export const Plugin = define({
         // notices are stripped. Everything the fold changes from here on is measured against this number; the
         // tap (usage-tap.ts) joins it to the provider's own token count for the request that follows.
         const windowBefore = contextChars(event.messages) + systemChars(event.system)
+        // the person's own words, kept before a gather or physics turn rewrites the last message: the register ingests THESE
+        const originalAsk = lastUserText(event.messages)
+        let researchAsk = false
         // PHYSICS: serve a read/edit-class turn without tool definitions; decline (recorded) and fall through otherwise.
         let withheld = 0
         const physicsOn = physicsServes(event.model.providerID)
@@ -1929,14 +1942,25 @@ export const Plugin = define({
           const longformResume = realAsk && (longformPending.has(event.sessionID) || longformJobs.has(event.sessionID)) && ask.startsWith(LONGFORM_MARK)
           const routed = !longformResume && realAsk && gatherOn && routeOn ? yield* post({ event: "route", ask, hasHistory: event.messages.length > 1 }, 4000, true) : undefined
           const routeKnown = typeof routed?.research === "boolean"
+          // THE REGISTER FIRST: a question the conversation itself answers is answered from the session's own stated facts and is never
+          // web research. The door ingests this ask's statements on the same call, so a fact stated now is registered for the next turn.
+          // Fails open: no door, no hit, the route decides as before.
+          const regTask = registerOn && realAsk && !longformResume && event.messages.length > 1 ? yield* taskOf(event.sessionID) : undefined
+          const regWorkspace = registerOn && realAsk && !longformResume && event.messages.length > 1 ? yield* workspaceOf(event.sessionID) : undefined
+          const registered = registerOn && realAsk && !longformResume && event.messages.length > 1
+            ? yield* post({ event: "register", op: "answer", sessionID: event.sessionID, task: regTask, workspace: regWorkspace, ask, turns: priorTurns(event.messages) }, 4000, true)
+            : undefined
+          const fromRegister = registerHit(registered)
+          if (fromRegister) physicsRecord({ sessionID: event.sessionID, served: false, reason: "register: the conversation itself answers this ask", ask, competency: registered.answer.competency })
           // an ask that names the workspace's own things is never gathered from the web, whatever the router said: the tool path searches the workspace
-          const searching = !longformResume && realAsk && gatherOn && !Physics.workspaceish(ask) && (routeKnown ? routed.research === true : Physics.classify(ask) === "search")
+          researchAsk = realAsk && !Physics.workspaceish(ask) && (routeKnown ? routed.research === true : Physics.classify(ask) === "search")
+          const searching = !longformResume && realAsk && gatherOn && !fromRegister && !Physics.workspaceish(ask) && (routeKnown ? routed.research === true : Physics.classify(ask) === "search")
           if (realAsk && !longformResume) { gatheredTurn.delete(event.sessionID); gatherNotes.delete(event.sessionID); longformJobs.delete(event.sessionID); longformPending.delete(event.sessionID); longformResearched.delete(event.sessionID); longformRetries.delete(event.sessionID) }
           // an LONGFORM ask is started at the door (gather, outline, the file, the first section's prompt); when it cannot start, the generic gather below takes it
           // a LONGFORM ask: the router names the FORM (any language, from its kind dictionary); the English predicate is only a fallback
           const longformAskTurn = routeKnown && routed?.kind === "account" && (routed?.form === "longform" || Physics.longformAsk(ask))
           const longformStartRes = searching && longformOn && longformAskTurn
-            ? yield* post({ event: "longform", op: "start", sessionID: event.sessionID, ask, ...(typeof routed?.topic === "string" && routed.topic ? { topic: routed.topic } : {}), ...(longformFreeform ? { freeform: true } : {}), softMs: gatherAccountSoftMs, budgetMs: gatherBudgetMs }, gatherBudgetMs + 15_000, true)
+            ? yield* post({ event: "longform", op: "start", sessionID: event.sessionID, ask, ...(typeof routed?.topic === "string" && routed.topic ? { topic: routed.topic } : {}), ...(longformFreeform ? { freeform: true } : {}), softMs: gatherLongformSoftMs, budgetMs: gatherBudgetMs }, gatherBudgetMs + 15_000, true)
             : undefined
           const longformStarted = longformStartRes?.ok === true && typeof longformStartRes.prompt === "string" && typeof longformStartRes.job === "string"
           if (searching && longformAskTurn && !longformStarted) physicsRecord({ sessionID: event.sessionID, served: false, reason: `longform start not ok: ${JSON.stringify(longformStartRes ?? null).slice(0, 300)}` })
@@ -2072,6 +2096,12 @@ export const Plugin = define({
             }
           }
         }
+        // THE TOOL GATE: on a plain ask (not served by physics, gather or longform, which send no tools at all), the fold's own tools
+        // the turn cannot use are not sent. Counted as withheld, so the ledger sees it.
+        if (toolGateOn && isNewAsk(event.messages) && !gatheredTurn.has(event.sessionID) && !longformJobs.has(event.sessionID) && !servedTurn.has(event.sessionID)) {
+          const before = toolChars(event.tools)
+          if (gateTools(event.tools, originalAsk, { research: researchAsk }).length) withheld += before - toolChars(event.tools)
+        }
         // Remember the turn's ask and model so a tool result that lands mid-turn
         // can be folded at event time without re-reading the message list.
         const ask = lastUserText(event.messages)
@@ -2100,6 +2130,7 @@ export const Plugin = define({
               model: event.model,
               agent: event.agent,
               ask: lastUserText(event.messages),
+              userAsk: originalAsk,
               messages: event.messages.length,
               tools: Object.keys(event.tools),
               workspace,
@@ -2110,6 +2141,14 @@ export const Plugin = define({
           )
           const note = answer?.system
           if (typeof note === "string" && note.length > 0) event.system.push({ type: "text", text: note })
+          // THE REGISTER, PINNED: the session's stated facts as prose, in event.system so native compaction never summarises them
+          // (compaction.ts skips `system`), with its one legend sentence. A session with a register compacts to the record by default.
+          const register = registerBlock(answer)
+          markRegistered(event.sessionID, register !== undefined)
+          if (register !== undefined) {
+            event.system.push({ type: "text", text: register })
+            event.system.push({ type: "text", text: REGISTER_LEGEND })
+          }
           // The project's commons: what the other agents here have settled, already ingested and
           // projected through Houdini by the door against this ask.
           const commons = answer?.commons
@@ -2260,6 +2299,8 @@ export const Plugin = define({
         yield* foldMessages(event)
         if (trailOn) yield* trailMessages(event)
         // THE HARD CAP: after every fold, the frontier's window is bounded absolutely (FOLD_MAX_CHARS).
+        // A request never ends on the fold's own notice: a provider without prefill rejects a trailing assistant message (F5).
+        dropTrailingNotices(event.messages, isPersonNotice)
         capContext(event.messages, event.system, { fixed: toolChars(event.tools), store: trailStore })
         // THE LEDGER'S "AFTER": what is actually sent. before - after is what the fold kept out (negative when
         // the notes it added cost more than they removed). `tools` is what the definitions weigh, measured the

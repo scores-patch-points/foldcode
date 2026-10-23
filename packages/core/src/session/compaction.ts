@@ -37,6 +37,7 @@ import { SessionRunnerRetry } from "./runner/retry.js"
 import { toLLMMessages } from "./runner/to-llm-message.js"
 import { contentFilterError, toSessionError } from "./to-session-error.js"
 import { SessionUsage } from "./usage.js"
+import { compactMode, hasRegister } from "../plugin/fold-register.js"
 
 export type Settings = {
   auto: boolean
@@ -228,7 +229,9 @@ export const layer = Layer.effect(
         trigger.reason === "overflow" ? Math.min(cap, Math.floor(estimateContext(context) * SHRINK_STEPS[0])) : cap
 
       const selected = model === context.model ? trigger : { ...trigger, context: { ...context, model } }
-      const useRecord = process.env.FOLD_COMPACT === "record"
+      // FOLD_COMPACT decides when set. Unset, a session whose stated facts the fold has pinned in a register compacts to the
+      // mechanical record by default: the model summary can no longer lose a binding (F1), and it is the summariser that crashed (F7).
+      const useRecord = compactMode(process.env.FOLD_COMPACT, hasRegister(context.session.id)) === "record"
       const compaction = native
         ? compactNatively(selected, budget, settings.keep)
         : useRecord
