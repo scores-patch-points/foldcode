@@ -28,6 +28,10 @@ import { SessionAncestorTrail, SessionProjectMenu, SessionTitleHeader } from "..
 import { SessionHeaderSpacer } from "@/session/header/session-header"
 import { SessionRunningMenu } from "@/session/header/session-running-menu"
 import { SessionMind, SessionMindLine } from "./session-mind"
+import { readLongform } from "@opencode/session-ui/timeline/fold-longform"
+import { FoldLongform } from "@opencode/session-ui/timeline/fold-longform-view"
+import { readResearch } from "@opencode/session-ui/timeline/fold-research"
+import { FoldResearch } from "@opencode/session-ui/timeline/fold-research-view"
 import { publishMind, snapshotOf, targetsOf } from "./session-mind-stage"
 import { followBottom } from "./follow-bottom"
 import { useExtensionHost } from "@/runtime/extension/host"
@@ -435,6 +439,26 @@ function MessageTimelineView(
     return list?.flatMap((item) => item?.content ?? []) ?? []
   }
 
+  // What the door is researching and the model is writing for the active turn: the latest fold-research and
+  // fold-longform notices after the active user message. Each later notice of a kind replaces the earlier one.
+  const research = createMemo(() => {
+    const active = projection.activeMessageID()
+    if (!active) return undefined
+    let seen = false
+    let found: { research?: ReturnType<typeof readResearch>; longform?: ReturnType<typeof readLongform> } = {}
+    for (const item of messageByID().values()) {
+      if (item.id === active) seen = true
+      else if (seen && item.type === "user") break
+      else if (seen && item.type === "synthetic") {
+        const research = readResearch(item.metadata)
+        const longform = research ? undefined : readLongform(item.metadata)
+        if (research) found = { ...found, research }
+        else if (longform) found = { ...found, longform }
+      }
+    }
+    return found.research || found.longform ? found : undefined
+  })
+
   // Undelivered input waits below the work the model has seen, so live status moves into the row above it.
   const activityRow = createMemo(() => projection.rows().some((row) => Predicate.isTagged(row, "Activity")))
 
@@ -470,6 +494,18 @@ function MessageTimelineView(
             </div>
           </Show>
         </div>
+        <Show when={showWorking() && research()}>
+          {(live) => (
+            <div class={`pb-2 ${turnPadding()}`}>
+              <Show
+                when={live().longform}
+                fallback={<Show when={live().research}>{(view) => <FoldResearch view={view()} />}</Show>}
+              >
+                {(view) => <FoldLongform view={view()} research={live().research} />}
+              </Show>
+            </div>
+          )}
+        </Show>
       </div>
     </Show>
   )

@@ -49,6 +49,27 @@ const clearAuthToken = () => {
   history.replaceState(null, "", location.pathname + (params.size ? `?${params}` : "") + location.hash)
 }
 
+// DEV only: the server credential handed over once in the URL (?auth_token=) is kept for this tab, so a hot reload or a
+// restart of the dev server does not log the window out and leave every request at 401 (2026-10-23, seen four times in a morning).
+// The packaged app never reads this: Electron supplies the password itself.
+const DEV_AUTH_KEY = "opencode.dev.auth_token"
+const rememberedAuthToken = () => {
+  if (!import.meta.env.DEV) return null
+  try {
+    return sessionStorage.getItem(DEV_AUTH_KEY)
+  } catch {
+    return null
+  }
+}
+const rememberAuthToken = (token: string | null) => {
+  if (!import.meta.env.DEV || !token) return
+  try {
+    sessionStorage.setItem(DEV_AUTH_KEY, token)
+  } catch {
+    /* no storage: the token lives for this load only */
+  }
+}
+
 const web = createWebPlatform(pkg.version)
 
 if (import.meta.env.PROD && "serviceWorker" in navigator) {
@@ -78,7 +99,9 @@ if (root instanceof HTMLElement && root.dataset.opencodeMounted === undefined) {
   // Lazy chunks can import the entry chunk back under a distinct URL, so claim the root before async startup.
   root.dataset.opencodeMounted = ""
   void loadInitialLocale().then((locale) => {
-    const auth = authFromToken(new URLSearchParams(location.search).get("auth_token"))
+    const token = new URLSearchParams(location.search).get("auth_token") ?? rememberedAuthToken()
+    rememberAuthToken(token)
+    const auth = authFromToken(token)
     clearAuthToken()
     const standalone = isStandalone()
     root.dataset.standalone = String(standalone)

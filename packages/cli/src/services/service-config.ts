@@ -117,7 +117,16 @@ const paths = Effect.gen(function* () {
   const global = yield* Global.Service
   const name = filename()
   const legacy = legacyFilename()
-  const file = path.join(global.state, name)
+  const own = path.join(global.state, name)
+  // The desktop app registers its service under its own state directory (XDG_STATE_HOME = ~/Library/Application Support/ai.opencode.desktop
+  // on macOS). A terminal CLI with no record of its own adopts that record instead of starting a second service on the same port
+  // (2026-10-23: `opencode pair` died on "port 49374 already in use" every time while the app was running).
+  const desktop =
+    process.platform === "darwin" && process.env.HOME
+      ? path.join(process.env.HOME, "Library", "Application Support", "ai.opencode.desktop", "opencode", name)
+      : undefined
+  const exists = (target: string) => fs.exists(target).pipe(Effect.catch(() => Effect.succeed(false)))
+  const file = desktop !== undefined && !(yield* exists(own)) && (yield* exists(desktop)) ? desktop : own
   return {
     fs,
     file,
