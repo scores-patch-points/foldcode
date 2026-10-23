@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { classify, essayAsk, named, resolve, workspaceish } from "../src/plugin/physics.js"
+import { classify, longformAsk, named, resolve, workspaceish } from "../src/plugin/physics.js"
 import * as Gather from "../src/plugin/physics-gather.js"
 
 const ASK = "find me a corpus of sample documents for OCR training"
@@ -54,6 +54,6 @@ test("an ask that names the workspace's own things is never a web search (found 
 })
 
 test("a long piece is asked for by its kind and a writing verb; an explanation or a question is not one", () => {
-  for (const ask of ["write me an essay about dolphins", "draft a report on renewable energy", "compose a blog post about sourdough", "write a white paper on zero trust", "create an analysis of the French Revolution"]) expect([ask, essayAsk(ask)]).toEqual([ask, true])
-  for (const ask of ["explain how photosynthesis works", "what is an essay", "find me an essay about dolphins", "hello", "who painted the Sistine Chapel ceiling?", "tell me about dolphins"]) expect([ask, essayAsk(ask)]).toEqual([ask, false])
+  for (const ask of ["write me an essay about dolphins", "draft a report on renewable energy", "compose a blog post about sourdough", "write a white paper on zero trust", "create an analysis of the French Revolution"]) expect([ask, longformAsk(ask)]).toEqual([ask, true])
+  for (const ask of ["explain how photosynthesis works", "what is an essay", "find me an essay about dolphins", "hello", "who painted the Sistine Chapel ceiling?", "tell me about dolphins"]) expect([ask, longformAsk(ask)]).toEqual([ask, false])
 })

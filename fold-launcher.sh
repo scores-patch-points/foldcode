@@ -44,6 +44,9 @@ LOG="\$HOME/Library/Logs/foldcode-launch.log"
 export PATH="$(dirname "$bun_bin"):/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 # sealwall: the fold remote lane must egress through the firewall (fail-closed if it is down)
 export ER7_ANTHROPIC_URL="http://127.0.0.1:8791/u/anthropic"
+# freeform essay: the model is given the gathered facts and writes in its own words (no grading, no cut)
+export FOLD_LONGFORM=1
+export FOLD_LONGFORM_FREEFORM=1
 
 notify() { osascript -e "display notification \\"\$1\\" with title \\"foldcode\\"" >/dev/null 2>&1 || true; }
 log() { print -r -- "\$(date '+%Y-%m-%d %H:%M:%S') \$1" >> "\$LOG" 2>/dev/null || true; }

@@ -119,8 +119,9 @@ const WORKSPACE = /\b(?:code|codebase|repo|repos|repository|project|projects|fil
 const CODEY = /`|\(\)|\b[a-z]+[A-Z][A-Za-z]*\b|\b[A-Za-z]+_[A-Za-z_]+\b|::|=>/
 export const workspaceish = (ask: string) => WORKSPACE.test(ask) || CODEY.test(ask)
 
-/** A long piece asked for by its kind and a writing verb ("write me an essay about ..."): written section by section from the pages (opencode-essay.mjs). */
-export const essayAsk = (ask: string) => /\b(?:essay|article|report|paper|white ?paper|write-?up|blog post|analysis|long[- ]?form)\b/i.test(ask) && /\b(?:write|draft|compose|produce|prepare|create|make)\b/i.test(ask)
+/** A long piece asked for by its kind and a writing verb ("write me a piece about ..."): written section by section from the pages (opencode-longform.mjs). */
+/** A long piece asked for by its kind and a writing verb ("write me an essay about ..."): written section by section from the pages (khora opencode-longform.mjs). "essay" is one form among many. */
+export const longformAsk = (ask: string) => /\b(?:essay|article|report|paper|white ?paper|write-?up|blog post|analysis|long[- ]?form|story|guide|tutorial|review)\b/i.test(ask) && /\b(?:write|draft|compose|produce|prepare|create|make)\b/i.test(ask)
 
 export const classify = (ask: string): Class => {
   if (EDIT.test(ask)) return "edit"

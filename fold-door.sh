@@ -35,6 +35,11 @@ set -eu
 # Homebrew and the user's bins. Put them on PATH before anything spawns.
 export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.bun/bin:$HOME/.local/bin:$PATH"
 
+# The door is the shared ground-producer: make the essay it starts FREEFORM by default (the model is
+# given the gathered facts and writes in its own words; khora opencode-essay.mjs). A client that sends
+# its own `freeform` overrides this; a client that does not still gets freeform.
+export FOLD_LONGFORM_FREEFORM=1
+
 here="$(cd "$(dirname "$0")" && pwd)"
 # Prefer a stack the door agent can actually read: launchd is its own responsible process and
 # cannot read ~/Downloads (macOS Files-and-Folders privacy), so ~/.khora (or a GH clone at
@@ -252,6 +257,7 @@ agent_plist() {
     <key>FOLD_STACK_DIR</key><string>$stack</string>
     <key>FOLD_URL</key><string>$door</string>
     <key>FOLD_CUBE</key><string>$cube</string>
+    <key>FOLD_LONGFORM_FREEFORM</key><string>1</string>
 $siblings_env
   </dict>
   <key>RunAtLoad</key><true/>

@@ -105,15 +105,18 @@ const gatherOn = process.env.FOLD_GATHER !== "0"
 // the lines read instead. Only providers listed in FOLD_GATHER_VIA_DOOR are pointed at the door (it speaks the OpenAI chat wire format).
 const gatherZero = process.env.FOLD_GATHER_MODEL !== "1"
 // THE CONVERSATION ROUTER (khora opencode-route.mjs, by the door): each ask is routed by intent before any model is called, and grounding is ON by
-// default: an ACCOUNT ask (essay, explain, a question about a world topic) is gathered first and the MODEL WRITES from the sources; a SEARCH ask
+// default: an ACCOUNT ask (longform, explain, a question about a world topic) is gathered first and the MODEL WRITES from the sources; a SEARCH ask
 // stays zero-model; basic chat, invented work, arithmetic, follow-ups and anything about the workspace take the paths they always took (no research).
 // FOLD_ROUTE=0 turns it off. When the door gives no route (a gap, an error, a door that is down) the classifier below decides, as it always did.
 const routeOn = process.env.FOLD_ROUTE !== "0"
-// ESSAY (khora opencode-essay.mjs): an essay is a file written one section at a time across model responses, each section graded against its own
-// material, repair capped, with short prompts (a section's lines and the sentence before it, never the essay). The door keeps the job; the model
-// calls are this session's own (a synthetic message resumes the turn for each section). Off by default (measured: 10 min and 28k tokens an essay); FOLD_ESSAY=1 turns it on.
-const essayOn = process.env.FOLD_ESSAY === "1"
-const ESSAY_MARK = "fold essay ·"
+// LONGFORM (khora opencode-longform.mjs): a piece is a file written one section at a time across model responses, each section graded against its own
+// material, repair capped, with short prompts (a section's lines and the sentence before it, never the piece). The door keeps the job; the model
+// calls are this session's own (a synthetic message resumes the turn for each section). On by default for a longform ask; FOLD_LONGFORM=0 turns it off.
+const longformOn = process.env.FOLD_LONGFORM !== "0"
+// FREEFORM (default; FOLD_LONGFORM_FREEFORM=0 turns it off): the model is GIVEN the facts but writes in its own words; the door grades nothing and cuts nothing
+// (khora opencode-longform.mjs freeform). With it off, the grounded section-by-section path stands.
+const longformFreeform = process.env.FOLD_LONGFORM_FREEFORM !== "0"
+const LONGFORM_MARK = "fold longform ·"
 const gatherViaDoor = (process.env.FOLD_GATHER_VIA_DOOR ?? "opencode-go,opencode,ollama").split(",").map((p) => p.trim())
 const gatherBudgetMs = Number(process.env.FOLD_GATHER_BUDGET_MS ?? 90_000)
 // A broad topic never saturates the Holodeck's stopping rule, and a handful of good pages is enough to write an account from: an account ask is cut sooner.
@@ -127,6 +130,19 @@ const physicsRecord = (row: Record<string, unknown>) => {
     fs.mkdirSync(path.dirname(physicsLog), { recursive: true })
     fs.appendFileSync(physicsLog, JSON.stringify({ at: new Date().toISOString(), ...row }) + "\n")
   } catch {}
+}
+// RESEARCH FEEDBACK (general, not tied to any one generation path): the pages a turn READ, shown to the person as its own
+// notice — never sent to the model. Every path that gathers (a plain account, a piece's own gather) shows the same line, so
+// the person sees what was researched no matter what is written from it.
+const hostOf = (name: string) => { try { return new URL(name).hostname.replace(/^www\./, "") } catch { return String(name).slice(0, 40) } }
+const researchNotice = (sessionID: string, sources: number, passages: Array<{ name: string }>) => {
+  const hosts = [...new Set(passages.map((p) => hostOf(p.name)))].slice(0, 12)
+  return { sessionID, text: `fold measured · research — ${sources} source(s) read${hosts.length ? `: ${hosts.join(", ")}` : ""}`, description: "fold research — what was read", resume: false }
+}
+// STEP MATERIAL (general): the facts a step writes from, shown to the person as its own notice. Any stepped generation shows its step's material.
+const materialNotice = (sessionID: string, label: string, facts: string[]) => {
+  const lines = facts.slice(0, 8).map((f) => `- ${String(f).slice(0, 160)}`).join("\n")
+  return { sessionID, text: `fold measured · ${label} — writing from ${facts.length} fact(s)${lines ? `:\n${lines}` : ""}`, description: "fold research — the step's facts", resume: false }
 }
 const usageFile = process.env.FOLD_USAGE_FILE ?? path.join(os.homedir(), ".local/share/foldcode/usage.jsonl")
 // FOLD_TRAIL=1: stale tool results become opaque handles except the ones the decayed trail keeps (decided by the door, see
@@ -1605,9 +1621,13 @@ export const Plugin = define({
     const gatherRedirect = new Map<string, string>()
     // the lines of a door-served answer that measure the run rather than quote a page: shown to the person, never sent to be graded as claims
     const gatherNotes = new Map<string, Set<string>>()
-    // an essay in progress: the door's job id, and the prompt the next model call is asked (a resume replaces the whole window with it)
-    const essayJobs = new Map<string, { job: string; finished: boolean }>()
-    const essayPending = new Map<string, string>()
+    // a piece in progress: the door's job id, and the prompt the next model call is asked (a resume replaces the whole window with it)
+    const longformJobs = new Map<string, { job: string; finished: boolean }>()
+    const longformPending = new Map<string, string>()
+    // how many times the current section has been re-asked after the model gave nothing (capped, so a dead model ends the run cleanly)
+    const longformRetries = new Map<string, number>()
+    // sessions whose longform research has already been shown to the person (so the notice posts once, not per context pass)
+    const longformResearched = new Set<string>()
     // What the model itself said earlier in the session, so the door never reads its own words back as evidence for them.
     const ownTexts = new Map<string, string[]>()
     // A session whose last answer was handed a grounding note: the NEXT answer replies to that note and is not handed another.
@@ -1906,35 +1926,42 @@ export const Plugin = define({
           armed.delete(event.sessionID)
           const answered = physicsOn && last?.role === "assistant" && !last.content.some((part) => part.type === "tool-call") && servedTurn.has(event.sessionID)
           // the context hook can run more than once for one step (a retry, a title call): the pending prompt stays until the next one replaces it
-          const essayResume = realAsk && (essayPending.has(event.sessionID) || essayJobs.has(event.sessionID)) && ask.startsWith(ESSAY_MARK)
-          const routed = !essayResume && realAsk && gatherOn && routeOn ? yield* post({ event: "route", ask, hasHistory: event.messages.length > 1 }, 4000, true) : undefined
+          const longformResume = realAsk && (longformPending.has(event.sessionID) || longformJobs.has(event.sessionID)) && ask.startsWith(LONGFORM_MARK)
+          const routed = !longformResume && realAsk && gatherOn && routeOn ? yield* post({ event: "route", ask, hasHistory: event.messages.length > 1 }, 4000, true) : undefined
           const routeKnown = typeof routed?.research === "boolean"
           // an ask that names the workspace's own things is never gathered from the web, whatever the router said: the tool path searches the workspace
-          const searching = !essayResume && realAsk && gatherOn && !Physics.workspaceish(ask) && (routeKnown ? routed.research === true : Physics.classify(ask) === "search")
-          if (realAsk && !essayResume) { gatheredTurn.delete(event.sessionID); gatherNotes.delete(event.sessionID); essayJobs.delete(event.sessionID); essayPending.delete(event.sessionID) }
-          // an ESSAY ask is started at the door (gather, outline, the file, the first section's prompt); when it cannot start, the generic gather below takes it
-          const essayStartRes = searching && essayOn && routeKnown && routed?.kind === "account" && Physics.essayAsk(ask)
-            ? yield* post({ event: "essay", op: "start", sessionID: event.sessionID, ask, ...(typeof routed?.topic === "string" && routed.topic ? { topic: routed.topic } : {}), softMs: gatherAccountSoftMs, budgetMs: gatherBudgetMs }, gatherBudgetMs + 15_000, true)
+          const searching = !longformResume && realAsk && gatherOn && !Physics.workspaceish(ask) && (routeKnown ? routed.research === true : Physics.classify(ask) === "search")
+          if (realAsk && !longformResume) { gatheredTurn.delete(event.sessionID); gatherNotes.delete(event.sessionID); longformJobs.delete(event.sessionID); longformPending.delete(event.sessionID); longformResearched.delete(event.sessionID); longformRetries.delete(event.sessionID) }
+          // an LONGFORM ask is started at the door (gather, outline, the file, the first section's prompt); when it cannot start, the generic gather below takes it
+          // a LONGFORM ask: the router names the FORM (any language, from its kind dictionary); the English predicate is only a fallback
+          const longformAskTurn = routeKnown && routed?.kind === "account" && (routed?.form === "longform" || Physics.longformAsk(ask))
+          const longformStartRes = searching && longformOn && longformAskTurn
+            ? yield* post({ event: "longform", op: "start", sessionID: event.sessionID, ask, ...(typeof routed?.topic === "string" && routed.topic ? { topic: routed.topic } : {}), ...(longformFreeform ? { freeform: true } : {}), softMs: gatherAccountSoftMs, budgetMs: gatherBudgetMs }, gatherBudgetMs + 15_000, true)
             : undefined
-          const essayStarted = essayStartRes?.ok === true && typeof essayStartRes.prompt === "string" && typeof essayStartRes.job === "string"
-          // the window for an essay call is one short message: the section's prompt, never the history and never the essay
-          const essayWindow = (prompt: string) => {
+          const longformStarted = longformStartRes?.ok === true && typeof longformStartRes.prompt === "string" && typeof longformStartRes.job === "string"
+          if (searching && longformAskTurn && !longformStarted) physicsRecord({ sessionID: event.sessionID, served: false, reason: `longform start not ok: ${JSON.stringify(longformStartRes ?? null).slice(0, 300)}` })
+          // the window for a piece call is one short message: the section's prompt, never the history and never the piece
+          const longformWindow = (prompt: string) => {
             withheld = toolChars(event.tools)
             for (const name of Object.keys(event.tools)) delete event.tools[name]
-            event.system.splice(0, event.system.length, { type: "text", text: "You write one section of an essay, from the lines you are given." })
+            event.system.splice(0, event.system.length, { type: "text", text: longformFreeform ? "You write one section of a piece, from the facts you are given, in your own words." : "You write one section of a piece, from the lines you are given." })
             event.messages.splice(0, event.messages.length, Message.make({ id: last!.id, role: last!.role, content: [{ type: "text", text: prompt }], metadata: last!.metadata, providerMetadata: last!.providerMetadata, native: last!.native }))
           }
-          if (essayResume) {
-            const pending = essayPending.get(event.sessionID) ?? ""
-            essayWindow(pending)
-            physicsRecord({ sessionID: event.sessionID, served: true, kind: "essay-section", job: essayJobs.get(event.sessionID)?.job, chars: pending.length, withheldToolChars: withheld })
-          } else if (essayStarted) {
-            essayJobs.set(event.sessionID, { job: String(essayStartRes!.job), finished: false })
-            const ps = Array.isArray(essayStartRes!.passages) ? (essayStartRes!.passages as Array<{ name: string; text: string }>) : []
+          if (longformResume) {
+            const pending = longformPending.get(event.sessionID) ?? ""
+            longformWindow(pending)
+            physicsRecord({ sessionID: event.sessionID, served: true, kind: "longform-section", job: longformJobs.get(event.sessionID)?.job, chars: pending.length, withheldToolChars: withheld })
+          } else if (longformStarted) {
+            longformJobs.set(event.sessionID, { job: String(longformStartRes!.job), finished: false })
+            longformPending.set(event.sessionID, String(longformStartRes!.prompt))
+            longformRetries.set(event.sessionID, 0)
+            const ps = Array.isArray(longformStartRes!.passages) ? (longformStartRes!.passages as Array<{ name: string; text: string }>) : []
             if (ps.length) gatheredMaterial.set(event.sessionID, ps)
             gatheredTurn.add(event.sessionID)
-            essayWindow(String(essayStartRes!.prompt))
-            physicsRecord({ sessionID: event.sessionID, served: true, kind: "essay-start", route: { kind: routed?.kind, topic: routed?.topic }, job: essayStartRes!.job, sections: essayStartRes!.sections, sources: essayStartRes!.sources, withheldToolChars: withheld })
+            longformWindow(String(longformStartRes!.prompt))
+            physicsRecord({ sessionID: event.sessionID, served: true, kind: "longform-start", route: { kind: routed?.kind, topic: routed?.topic }, job: longformStartRes!.job, sections: longformStartRes!.sections, sources: longformStartRes!.sources, withheldToolChars: withheld })
+            // what it researched (the general research notice; the piece's own gather is the same reading a plain account gets)
+            if (!longformResearched.has(event.sessionID)) { longformResearched.add(event.sessionID); yield* ctx.session.synthetic(researchNotice(event.sessionID, Number(longformStartRes!.sources ?? ps.length), ps) as never).pipe(Effect.ignore) }
           } else if (answered) {
             // an answer that missed is restructured here, inside the request, so the session stays open while REC runs
             yield* settle(event.sessionID)
@@ -1989,18 +2016,19 @@ export const Plugin = define({
                 // the pages, parsed: each read page's own holograph (its selected sentences and their neighbours), by site, bounded; the
                 // research record (the run's measurements) stays out. The model writes the piece in its own prose from them, and the
                 // ground check weighs that prose against the same passages afterwards. Asked to write "from these lines only", it strung
-                // quotations together with "according to" after each, which is neither an essay nor graded as support.
+                // quotations together with "according to" after each, which is neither a piece nor graded as support.
                 const pages = result.passages.filter((p) => /^https?:/.test(p.name) && !/wikipedia\.org|wikimedia\.org/i.test(p.name)).slice(0, 10)
                 const notes = pages.map((p) => `From ${new URL(p.name).hostname.replace(/^www\./, "")}:\n${p.text.replace(/\s*\n\s*/g, " ").slice(0, 1200)}`).join("\n\n")
-                const form = Physics.essayAsk(ask) ? "the essay: a title, an opening paragraph, body paragraphs that each develop one idea, and a closing paragraph" : "the answer as connected prose"
+                const form = longformAskTurn ? "the piece: a title, an opening paragraph, body paragraphs that each develop one idea, and a closing paragraph" : "the answer as connected prose"
                 // THE VOID: the gaps an account has to fill, defined from the corpus (what several independent pages say several things
-                // about), each with the pages' sentences that bear on it; the essay is those gaps filled, in order
+                // about), each with the pages' sentences that bear on it; the piece is those gaps filled, in order
                 const voids = (result.voids ?? []).map((v) => ({ ...v, sentences: v.sentences.filter((s) => !/wikipedia/i.test(s.host)) })).filter((v) => v.sentences.length >= 3)
                 const gaps = voids.map((v) => `About ${v.label}:\n${v.sentences.map((s) => `- ${s.text}`).join("\n")}`).join("\n\n")
-                say(voids.length >= 2 && Physics.essayAsk(ask)
-                  ? `${ask}\n\nThe facts the pages state, grouped by what they are about:\n\n${gaps}\n\nWrite it as you would write any essay: your own structure, voice and transitions, in your own words. Do not copy or quote the lines above; weave their facts into your own sentences, one fact per sentence, so each sentence can be checked against the facts above. Every fact and figure in it comes from the facts above.`
+                say(voids.length >= 2 && longformAskTurn
+                  ? `${ask}\n\nThe facts the pages state, grouped by what they are about:\n\n${gaps}\n\nWrite it as you would write any piece: your own structure, voice and transitions, in your own words. Do not copy or quote the lines above; weave their facts into your own sentences, one fact per sentence, so each sentence can be checked against the facts above. Every fact and figure in it comes from the facts above.`
                   : `${ask}\n\nWhat the pages read for this say (each block is one page's own sentences):\n\n${notes || result.text}\n\nWrite ${form}, in your own words. Its facts and figures are the pages' own, and its sentences name no page.`)
               }
+              yield* ctx.session.synthetic(researchNotice(event.sessionID, result.sources.length, result.passages) as never).pipe(Effect.ignore)
               gatheredTurn.add(event.sessionID)
               physicsRecord({ sessionID: event.sessionID, served: true, kind: viaDoor ? "gather-door" : "gather-model", route: routeKnown ? { kind: routed?.kind, topic: routed?.topic } : undefined, modelCalls: viaDoor ? 0 : 1, sources: result.sources.length, calls: result.calls, stop: result.stop, gaps: result.gaps, withheldToolChars: withheld })
             }
@@ -2854,35 +2882,53 @@ export const Plugin = define({
         yield* ctx.session.synthetic({ sessionID: sessionID as never, text: Physics.notice(plan.file, outcome) + (outcome.ok && by !== "local" ? ` · by ${by}` : "") + (taught ? " · taught" : ""), description: "fold physics — the derived operation", resume: false })
       }).pipe(Effect.ignore)
 
-    // THE ESSAY ADVANCES when a section's reply ends: the door applies it to the file and grades it, and says what the next call is asked; a synthetic
-    // message resumes the turn for that call. After the last section the door has the assembled essay, and the following call is answered by it at no cost.
-    const essayAdvance = (event: Observed) =>
+    // THE LONGFORM ADVANCES when a section's reply ends: the door applies it to the file and grades it, and says what the next call is asked; a synthetic
+    // message resumes the turn for that call. After the last section the door has the assembled piece, and the following call is answered by it at no cost.
+    const longformAdvance = (event: Observed) =>
       Effect.gen(function* () {
         if (event.type !== "session.text.ended") return
         const sessionID = event.data.sessionID
-        const entry = essayJobs.get(sessionID)
+        const entry = longformJobs.get(sessionID)
         if (!entry) return
-        if (entry.finished) { essayJobs.delete(sessionID); return }
+        if (entry.finished) { longformJobs.delete(sessionID); return }
         const text = typeof event.data.text === "string" ? event.data.text : ""
-        if (!text.trim()) return
-        const r = yield* post({ event: "essay", op: "step", job: entry.job, text }, 180_000, true)
+        if (!text.trim()) {
+          // the model gave nothing for this section: re-ask it, capped, then end the run cleanly (never hang on a dead model)
+          const tries = (longformRetries.get(sessionID) ?? 0) + 1
+          const prompt = longformPending.get(sessionID)
+          if (tries <= 2 && prompt) {
+            longformRetries.set(sessionID, tries)
+            physicsRecord({ sessionID, served: false, reason: `longform: the model gave no text; re-asking the section (try ${tries})`, job: entry.job })
+            yield* ctx.session.synthetic({ sessionID: sessionID as never, text: `${LONGFORM_MARK} the model gave nothing — re-asking the section`, description: "fold longform — retry", delivery: "queue", resume: true })
+            return
+          }
+          physicsRecord({ sessionID, served: false, reason: "longform: the model gave no text after retries; ending the run", job: entry.job })
+          longformJobs.delete(sessionID)
+          longformPending.delete(sessionID)
+          longformRetries.delete(sessionID)
+          return
+        }
+        const r = yield* post({ event: "longform", op: "step", job: entry.job, text }, 180_000, true)
         if (!r || r.ok !== true) {
-          physicsRecord({ sessionID, served: false, reason: `essay: the door could not advance (${String(r?.error ?? "no answer")})`, job: entry.job })
-          essayJobs.delete(sessionID)
+          physicsRecord({ sessionID, served: false, reason: `longform: the door could not advance (${String(r?.error ?? "no answer")})`, job: entry.job })
+          longformJobs.delete(sessionID)
           return
         }
         const done = r.done as { path?: string } | undefined
-        const next = r.next as { prompt?: string; section?: string; round?: number } | undefined
+        const next = r.next as { prompt?: string; section?: string; round?: number; title?: string; facts?: string[] } | undefined
         if (done && typeof r.id === "string") {
           entry.finished = true
           gatherRedirect.set(sessionID, r.id)
-          essayPending.set(sessionID, "Return the assembled essay.")
-          physicsRecord({ sessionID, served: true, kind: "essay-done", job: entry.job, done })
+          longformPending.set(sessionID, "Return the assembled piece.")
+          physicsRecord({ sessionID, served: true, kind: "longform-done", job: entry.job, done })
         } else if (next && typeof next.prompt === "string") {
-          essayPending.set(sessionID, next.prompt)
-          physicsRecord({ sessionID, served: true, kind: "essay-next", job: entry.job, section: next.section, round: next.round })
-        } else { essayJobs.delete(sessionID); return }
-        yield* ctx.session.synthetic({ sessionID: sessionID as never, text: `${ESSAY_MARK} ${done ? "the essay is assembled" : `section ${String(next?.section ?? "")}${next?.round ? `, repair round ${next.round}` : ""}`}`, description: "fold essay — the next call", delivery: "queue", resume: true })
+          longformPending.set(sessionID, next.prompt)
+          longformRetries.set(sessionID, 0)
+          physicsRecord({ sessionID, served: true, kind: "longform-next", job: entry.job, section: next.section, round: next.round })
+        } else { longformJobs.delete(sessionID); return }
+        // what this step writes from (the general step-material notice)
+        if (next && typeof next.prompt === "string") yield* ctx.session.synthetic(materialNotice(sessionID, String(next.title ?? next.section), Array.isArray(next.facts) ? next.facts : []) as never)
+        yield* ctx.session.synthetic({ sessionID: sessionID as never, text: `${LONGFORM_MARK} ${done ? "the piece is assembled" : `section ${String(next?.section ?? "")}${next?.round ? `, repair round ${next.round}` : ""}`}`, description: "fold longform — the next call", delivery: "queue", resume: true })
       }).pipe(Effect.ignore)
 
     const physicsApply = (event: Observed) =>
@@ -2937,7 +2983,7 @@ export const Plugin = define({
         const side: Array<Effect.Effect<void, never, never>> = [record]
         if (facingOn && event.type === "session.text.ended") side.push(facing(event))
         if (derivedApply) side.push(derivedApply)
-        if (essayOn && event.type === "session.text.ended") side.push(essayAdvance(event))
+        if (longformOn && event.type === "session.text.ended") side.push(longformAdvance(event))
         if (shadowOn) {
           const shadow = shadowOf(event)
           if (shadow && sessionID) side.push(post({ event: "shadow", sessionID, ...shadow }, askTimeout).pipe(Effect.asVoid))
