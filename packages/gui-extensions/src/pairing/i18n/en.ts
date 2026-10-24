@@ -12,6 +12,11 @@ export default {
   "remote.description":
     "Paired devices reach this computer's OpenCode server over the internet. Turning it off disconnects them until you pair them again.",
   "remote.error": "Could not update remote access. Try again.",
+  "link.title": "Open link",
+  "link.description":
+    "One link that opens a coding session on this computer in any browser, with no sign-in. Anyone who has it has full control of this computer, so share it only with people you trust. Turning it off stops the link at once.",
+  "link.error": "Could not update the open link. Try again.",
+  "link.copyError": "Could not copy the open link. Try again.",
   "setup.title": "Setting up remote access…",
   "setup.description": "This can take a minute.",
   "setup.error": "Could not set up remote access.",

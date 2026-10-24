@@ -13,7 +13,7 @@ import "@/settings/settings.css"
  * it on fail, as when the tunnel cannot be created.
  */
 export function pairingRemote(input: { enabled: boolean; fails?: boolean }) {
-  const state = { enabled: input.enabled }
+  const state = { enabled: input.enabled, link: false }
   const server: PairingServer = {
     client: {
       server: {
@@ -35,6 +35,15 @@ export function pairingRemote(input: { enabled: boolean; fails?: boolean }) {
       if (input.fails) throw new Error("Timed out creating the remote access tunnel")
       state.enabled = enabled
     },
+    link: async () => state.link,
+    setLink: async (enabled) => {
+      await new Promise((resolve) => setTimeout(resolve, 1000))
+
+      if (input.fails) throw new Error("Timed out creating the remote access tunnel")
+      state.link = enabled
+      if (enabled) state.enabled = true
+    },
+    linkURL: async () => "https://cbf8424f2044b16d.vcybm3xt4hhu.opentunnel.xyz/auth/connect/mock-open-link-code",
     screenActive: async () => false,
     setScreenActive: async () => undefined,
     state: () => undefined,

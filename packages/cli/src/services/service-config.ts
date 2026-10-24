@@ -7,6 +7,7 @@ import { randomBytes } from "crypto"
 import path from "path"
 import { selfCommand } from "../util/process"
 import { RemoteTunnel } from "./remote-tunnel"
+import { RelayTunnel } from "./relay-tunnel"
 
 // The CLI's service configuration file, plus the Service.EnsureOptions binding that
 // points the client package's service operations at this CLI: which
@@ -20,6 +21,12 @@ export const Info = Schema.Struct({
   // Set once the user has accepted exposing the service to the internet, or had remote access on before, so turning
   // remote access off and on again does not ask a second time.
   remoteAccepted: Schema.optional(Schema.Literal(true)),
+  // A machine of yours that publishes the open link at its own domain: the service keeps an ssh connection to it while the
+  // link is on, and its web server forwards its address to this server. Set with `opencode service set relay`.
+  relay: Schema.optional(Schema.Struct({ ssh: Schema.String, origin: Schema.String, port: Schema.Int })),
+  // Present while the open link is on: the run of the link, made when it was turned on. One reusable link, made from the
+  // password and this, signs in any browser that opens it; turning the link off and on again makes a new one.
+  link: Schema.optional(Schema.String),
   hostname: Schema.optional(Schema.String),
   port: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(1), Schema.isLessThanOrEqualTo(65_535))),
   password: Schema.optional(Schema.String),
@@ -28,7 +35,7 @@ export const Info = Schema.Struct({
 })
 export type Info = typeof Info.Type
 
-const keys = ["disabled", "remote", "hostname", "port", "password", "cors", "env"] as const
+const keys = ["disabled", "remote", "link", "relay", "hostname", "port", "password", "cors", "env"] as const
 type Key = (typeof keys)[number]
 
 const decodeInfo = Schema.decodeUnknownEffect(Schema.fromJsonString(Info))
@@ -102,6 +109,8 @@ function configKey(key: string): Key {
   if (
     key === "disabled" ||
     key === "remote" ||
+    key === "link" ||
+    key === "relay" ||
     key === "hostname" ||
     key === "port" ||
     key === "password" ||
@@ -198,6 +207,14 @@ export const acceptRemote = Effect.fn("cli.service-config.accept-remote")(functi
   yield* write({ ...(yield* read()), remoteAccepted: true })
 })
 
+// A link that is already on keeps its run, so asking again changes nothing. The callers stop the service first, so the
+// next start serves the link, or no longer does. Off, the run is forgotten, so turning it on again makes a new link
+// and signs out every browser that came in through the old one.
+const setLink = Effect.fnUntraced(function* (enabled: boolean) {
+  const { link, ...rest } = yield* read()
+  yield* write(enabled ? { ...rest, link: link ?? randomBytes(8).toString("hex") } : rest)
+})
+
 // Disabling forgets the address, so enabling again issues a new unguessable one. Having had it on counts as
 // accepting remote access.
 const disableRemote = Effect.fnUntraced(function* () {
@@ -216,9 +233,10 @@ export const remote = Effect.fn("cli.service-config.remote")(function* () {
 
 export const get = Effect.fn("cli.service-config.get")(function* (key?: string, name?: string) {
   if (key === undefined) {
-    const { password: _password, ...safe } = yield* read()
+    const { password: _password, link, ...safe } = yield* read()
+    const shown = link === undefined ? safe : { ...safe, link: true }
     // The route is as sensitive as the password: it is the unguessable half of the remote address.
-    return JSON.stringify(safe.remote === undefined ? safe : { ...safe, remote: {} }, null, 2)
+    return JSON.stringify(shown.remote === undefined ? shown : { ...shown, remote: {} }, null, 2)
   }
   const selected = configKey(key)
   if (selected !== "env" && name !== undefined) throw new Error(`Usage: opencode service get ${selected}`)
@@ -228,6 +246,13 @@ export const get = Effect.fn("cli.service-config.get")(function* (key?: string, 
     }
     case "remote": {
       return String((yield* read()).remote !== undefined)
+    }
+    case "link": {
+      return String((yield* read()).link !== undefined)
+    }
+    case "relay": {
+      const relay = (yield* read()).relay
+      return relay === undefined ? "" : RelayTunnel.format(relay)
     }
     case "hostname": {
       return (yield* read()).hostname ?? ""
@@ -271,6 +296,18 @@ export const set = Effect.fn("cli.service-config.set")(function* (key: string, v
         return
       }
       yield* disableRemote()
+      return
+    }
+    case "link": {
+      if (value !== "true" && value !== "false") throw new Error("Link must be true or false")
+      yield* Service.stop(yield* options())
+      yield* setLink(value === "true")
+      return
+    }
+    case "relay": {
+      const relay = RelayTunnel.parse(value)
+      yield* Service.stop(yield* options())
+      yield* write({ ...(yield* read()), relay })
       return
     }
     case "hostname": {
@@ -325,6 +362,17 @@ export const unset = Effect.fn("cli.service-config.unset")(function* (key: strin
     case "remote": {
       yield* Service.stop(yield* options())
       yield* disableRemote()
+      return
+    }
+    case "link": {
+      yield* Service.stop(yield* options())
+      yield* setLink(false)
+      return
+    }
+    case "relay": {
+      yield* Service.stop(yield* options())
+      const { relay: _relay, ...next } = yield* read()
+      yield* write(next)
       return
     }
     case "hostname": {

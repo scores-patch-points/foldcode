@@ -551,6 +551,26 @@ const Root = Spec.make(typeof OPENCODE_CLI_NAME === "string" ? OPENCODE_CLI_NAME
         ),
       },
     }),
+    Spec.make("link", {
+      description: "Print one reusable link that opens this machine's coding session in any browser",
+      params: {
+        off: Flag.Boolean("off").pipe(
+          Flag.withDescription("Turn the link off; it stops working at once"),
+          Flag.withDefault(false),
+        ),
+        plain: Flag.Boolean("plain").pipe(
+          Flag.withDescription("Print only the link, without instructions or a QR code"),
+          Flag.withDefault(false),
+        ),
+        yes: Flag.Boolean("yes").pipe(
+          Flag.withAlias("y"),
+          Flag.withDescription(
+            "Accept exposing the server to the internet when the link enables remote access for the first time (required without an interactive terminal)",
+          ),
+          Flag.withDefault(false),
+        ),
+      },
+    }),
     Spec.make("serve", {
       description: "Start the v2 API and web server",
       params: {
