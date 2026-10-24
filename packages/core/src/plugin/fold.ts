@@ -20,7 +20,7 @@ import { Message, ToolFailure } from "@opencode/ai"
 import { define, type Context } from "@opencode/plugin/effect/plugin"
 import type { SessionHooks } from "@opencode/plugin/effect/session"
 import { money } from "@opencode/util/savings"
-import { Effect, Fiber, Schema, Stream } from "effect"
+import { Deferred, Effect, Fiber, Schema, Stream } from "effect"
 import os from "node:os"
 import path from "node:path"
 import { record as rulerRecord, recordTokens as rulerTokens } from "./fold-ruler.js"
@@ -1662,6 +1662,22 @@ export const Plugin = define({
     // a piece in progress: the door's job id, and the prompt the next model call is asked (a resume replaces the whole window with it)
     const longformJobs = new Map<string, { job: string; finished: boolean; topic: string; sources: number }>()
     const longformPending = new Map<string, string>()
+    // the section prompt the window last served per session: a step whose pending prompt was not served yet is a section call even when
+    // the queued "fold longform ·" mark was not promoted (headless `opencode run` continues the turn instead of admitting the queue)
+    const longformServed = new Map<string, string>()
+    // a section's grading at the door, in flight: the next call is queued BEFORE the door grades (so the turn never goes idle in between —
+    // a headless run exits on idle), and that call waits here for the step's result before its window is set
+    const longformInFlight = new Map<string, Deferred.Deferred<void>>()
+    // ARM the next call while this one runs: a queued "fold longform ·" mark waits in the inbox for this call to end, so the turn never goes idle
+    // between sections (a headless run exits on idle); that call's window then waits on the gate until the door has graded this section
+    const longformArm = (sessionID: string) =>
+      Effect.gen(function* () {
+        const entry = longformJobs.get(sessionID)
+        if (!entry || entry.finished || longformInFlight.has(sessionID)) return
+        const gate = yield* Deferred.make<void>()
+        longformInFlight.set(sessionID, gate)
+        yield* ctx.session.synthetic({ sessionID: sessionID as never, text: `${LONGFORM_MARK} the next call`, description: "fold longform — the next call", delivery: "queue", resume: true })
+      }).pipe(Effect.ignore)
     // how many times the current section has been re-asked after the model gave nothing (capped, so a dead model ends the run cleanly)
     const longformRetries = new Map<string, number>()
     // sessions whose served section prompt awaits the model's reply: a reply advances the piece once, and a text that answers no served prompt
@@ -1971,7 +1987,8 @@ export const Plugin = define({
           armed.delete(event.sessionID)
           const answered = physicsOn && last?.role === "assistant" && !last.content.some((part) => part.type === "tool-call") && servedTurn.has(event.sessionID)
           // the context hook can run more than once for one step (a retry, a title call): the pending prompt stays until the next one replaces it
-          const longformResume = realAsk && (longformPending.has(event.sessionID) || longformJobs.has(event.sessionID)) && ask.startsWith(LONGFORM_MARK)
+          const longformUnserved = longformPending.has(event.sessionID) && longformServed.get(event.sessionID) !== longformPending.get(event.sessionID)
+          const longformResume = (realAsk && (longformPending.has(event.sessionID) || longformJobs.has(event.sessionID)) && ask.startsWith(LONGFORM_MARK)) || (last?.role === "assistant" && longformUnserved)
           const routed = !longformResume && realAsk && gatherOn && routeOn ? yield* post({ event: "route", ask, hasHistory: event.messages.length > 1 }, routeTimeout, true) : undefined
           const routeKnown = typeof routed?.research === "boolean"
           // THE REGISTER FIRST: a question the conversation itself answers is answered from the session's own stated facts and is never
@@ -1987,7 +2004,7 @@ export const Plugin = define({
           // an ask that names the workspace's own things is never gathered from the web, whatever the router said: the tool path searches the workspace
           researchAsk = realAsk && !Physics.workspaceish(ask) && (routeKnown ? routed.research === true : Physics.classify(ask) === "search")
           const searching = !longformResume && realAsk && gatherOn && !fromRegister && !Physics.workspaceish(ask) && (routeKnown ? routed.research === true : Physics.classify(ask) === "search")
-          if (realAsk && !longformResume) { gatheredTurn.delete(event.sessionID); gatherNotes.delete(event.sessionID); longformJobs.delete(event.sessionID); longformPending.delete(event.sessionID); longformResearched.delete(event.sessionID); longformRetries.delete(event.sessionID) }
+          if (realAsk && !longformResume) { gatheredTurn.delete(event.sessionID); gatherNotes.delete(event.sessionID); longformJobs.delete(event.sessionID); longformPending.delete(event.sessionID); longformServed.delete(event.sessionID); longformInFlight.delete(event.sessionID); longformResearched.delete(event.sessionID); longformRetries.delete(event.sessionID) }
           // an LONGFORM ask is started at the door (gather, outline, the file, the first section's prompt); when it cannot start, the generic gather below takes it
           // a LONGFORM ask: the router names the FORM (any language, from its kind dictionary); the English predicate is only a fallback
           const longformAskTurn = routeKnown && routed?.kind === "account" && (routed?.form === "longform" || Physics.longformAsk(ask))
@@ -2028,7 +2045,7 @@ export const Plugin = define({
             }).pipe(Effect.ignore)
           const longformWatch = searching && longformOn && longformAskTurn ? yield* Effect.forkChild(readingWatch(event.sessionID), { startImmediately: true }) : undefined
           const longformStartRes = searching && longformOn && longformAskTurn
-            ? yield* post({ event: "longform", op: "start", sessionID: event.sessionID, ask, ...(typeof routed?.topic === "string" && routed.topic ? { topic: routed.topic } : {}), ...(longformFreeform ? { freeform: true } : {}), softMs: gatherLongformSoftMs, budgetMs: gatherBudgetMs }, gatherBudgetMs + 15_000, true)
+            ? yield* post({ event: "longform", op: "start", sessionID: event.sessionID, ask, ...(typeof routed?.topic === "string" && routed.topic ? { topic: routed.topic } : {}), freeform: longformFreeform, softMs: gatherLongformSoftMs, budgetMs: gatherBudgetMs }, gatherBudgetMs + 15_000, true)
             : undefined
           if (longformWatch) yield* Fiber.interrupt(longformWatch)
           if (longformWatch) yield* researchDone(event.sessionID)
@@ -2037,14 +2054,18 @@ export const Plugin = define({
           // the window for a piece call is one short message: the section's prompt, never the history and never the piece
           const longformWindow = (prompt: string) => {
             longformAwaiting.add(event.sessionID)
+            longformServed.set(event.sessionID, prompt)
             withheld = toolChars(event.tools)
             for (const name of Object.keys(event.tools)) delete event.tools[name]
             event.system.splice(0, event.system.length, { type: "text", text: longformFreeform ? "You write one section of a piece, from the facts you are given, in your own words." : "You write one section of a piece, from the lines you are given." })
             event.messages.splice(0, event.messages.length, Message.make({ id: last!.id, role: last!.role, content: [{ type: "text", text: prompt }], metadata: last!.metadata, providerMetadata: last!.providerMetadata, native: last!.native }))
           }
           if (longformResume) {
-            const pending = longformPending.get(event.sessionID) ?? ""
+            const gate = longformInFlight.get(event.sessionID)
+            if (gate) { longformInFlight.delete(event.sessionID); yield* Deferred.await(gate).pipe(Effect.timeout("200 seconds"), Effect.ignore) }
+            const pending = longformJobs.has(event.sessionID) ? (longformPending.get(event.sessionID) ?? "") : "Reply with the one word: done."
             longformWindow(pending)
+            yield* longformArm(event.sessionID)
             physicsRecord({ sessionID: event.sessionID, served: true, kind: "longform-section", job: longformJobs.get(event.sessionID)?.job, chars: pending.length, withheldToolChars: withheld })
           } else if (longformStarted) {
             gatheredTurn.add(event.sessionID) // a piece is written from what was read: the ground's hand-back never steers a section
@@ -2057,6 +2078,7 @@ export const Plugin = define({
             if (ps.length) gatheredMaterial.set(event.sessionID, ps)
             gatheredTurn.add(event.sessionID)
             longformWindow(String(longformStartRes!.prompt))
+            yield* longformArm(event.sessionID)
             physicsRecord({ sessionID: event.sessionID, served: true, kind: "longform-start", route: { kind: routed?.kind, topic: routed?.topic }, job: longformStartRes!.job, sections: longformStartRes!.sections, sources: longformStartRes!.sources, withheldToolChars: withheld })
             // what it researched (the general research notice; the piece's own gather is the same reading a plain account gets)
             if (!longformResearched.has(event.sessionID)) { longformResearched.add(event.sessionID); yield* noticeOnBus(researchNotice(event.sessionID, Number(longformStartRes!.sources ?? ps.length), ps)) }
@@ -3014,6 +3036,7 @@ export const Plugin = define({
         if (entry.finished) { longformJobs.delete(sessionID); return }
         if (!longformAwaiting.has(sessionID)) return
         longformAwaiting.delete(sessionID)
+        const gate = longformInFlight.get(sessionID)
         const text = typeof event.data.text === "string" ? event.data.text : ""
         if (!text.trim()) {
           // the model gave nothing for this section: re-ask it, capped, then end the run cleanly (never hang on a dead model)
@@ -3022,19 +3045,23 @@ export const Plugin = define({
           if (tries <= 2 && prompt) {
             longformRetries.set(sessionID, tries)
             physicsRecord({ sessionID, served: false, reason: `longform: the model gave no text; re-asking the section (try ${tries})`, job: entry.job })
-            yield* ctx.session.synthetic({ sessionID: sessionID as never, text: `${LONGFORM_MARK} the model gave nothing — re-asking the section`, description: "fold longform — retry", delivery: "queue", resume: true })
+            // the armed call re-asks the same section; without one, queue a retry call
+            if (gate) yield* Deferred.succeed(gate, undefined)
+            else yield* ctx.session.synthetic({ sessionID: sessionID as never, text: `${LONGFORM_MARK} the model gave nothing — re-asking the section`, description: "fold longform — retry", delivery: "queue", resume: true })
             return
           }
           physicsRecord({ sessionID, served: false, reason: "longform: the model gave no text after retries; ending the run", job: entry.job })
           longformJobs.delete(sessionID)
           longformPending.delete(sessionID)
           longformRetries.delete(sessionID)
+          if (gate) yield* Deferred.succeed(gate, undefined)
           return
         }
         const r = yield* post({ event: "longform", op: "step", job: entry.job, text }, 180_000, true)
         if (!r || r.ok !== true) {
           physicsRecord({ sessionID, served: false, reason: `longform: the door could not advance (${String(r?.error ?? "no answer")})`, job: entry.job })
           longformJobs.delete(sessionID)
+          if (gate) yield* Deferred.succeed(gate, undefined)
           return
         }
         const done = r.done as { path?: string } | undefined
@@ -3042,19 +3069,20 @@ export const Plugin = define({
         if (done && typeof r.id === "string") {
           entry.finished = true
           gatherRedirect.set(sessionID, r.id)
-          longformPending.set(sessionID, "Return the assembled piece.")
+          const assembled = typeof (done as { text?: string }).text === "string" ? (done as { text: string }).text : ""
+          longformPending.set(sessionID, assembled ? `Return this piece exactly as written, nothing before or after it:\n\n${assembled}` : "Reply with the one word: done.")
           physicsRecord({ sessionID, served: true, kind: "longform-done", job: entry.job, done })
         } else if (next && typeof next.prompt === "string") {
           longformPending.set(sessionID, next.prompt)
           longformRetries.set(sessionID, 0)
           physicsRecord({ sessionID, served: true, kind: "longform-next", job: entry.job, section: next.section, round: next.round })
-        } else { longformJobs.delete(sessionID); return }
+        } else { longformJobs.delete(sessionID); if (gate) yield* Deferred.succeed(gate, undefined); return }
         // the piece's progress as data: the written section "written" or "cut", the next one "writing"; when done, every state is final
         const stepOutline = longformOutlineOf(r.outline)
         if (stepOutline.length) yield* bus.publish(SessionEvent.Synthetic, longformNotice(sessionID, { topic: entry.topic, outline: stepOutline, round: done ? 0 : Number(next?.round) || 0, done: Boolean(done), sources: entry.sources }))
         // what this step writes from (the general step-material notice)
         if (next && typeof next.prompt === "string") yield* noticeOnBus(materialNotice(sessionID, String(next.title ?? next.section), Array.isArray(next.facts) ? next.facts : []))
-        yield* ctx.session.synthetic({ sessionID: sessionID as never, text: `${LONGFORM_MARK} ${done ? "the piece is assembled" : `section ${String(next?.section ?? "")}${next?.round ? `, repair round ${next.round}` : ""}`}`, description: "fold longform — the next call", delivery: "queue", resume: true })
+        if (gate) yield* Deferred.succeed(gate, undefined)
       }).pipe(Effect.ignore)
 
     const physicsApply = (event: Observed) =>
