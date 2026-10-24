@@ -335,6 +335,20 @@ const withConfession = (job: string, text: string) =>
     return c ? `${text}\n\n${c}` : text
   })
 
+// FINISH at the door: the piece as the record has it, with its confession, kept there as a zero-model answer; the next call is redirected
+// to it (gatherRedirect), so the window receives the piece from the door and never the model's echo of it. When the door cannot, the
+// text we hold (with the confession appended) is what the model is asked to return.
+const finishPiece = (job: string, fallback: string, redirect: (id: string) => void) =>
+  Effect.gen(function* () {
+    const r = (yield* post({ event: "longform", op: "finish", job }, 15_000, true)) as { ok?: boolean; id?: string; text?: string } | undefined
+    if (r?.ok === true && typeof r.id === "string" && typeof r.text === "string" && r.text) {
+      redirect(r.id)
+      return `Return this piece exactly as written, nothing before or after it:\n\n${r.text}`
+    }
+    const text = yield* withConfession(job, fallback)
+    return text ? `Return this piece exactly as written, nothing before or after it:\n\n${text}` : "Reply with the one word: done."
+  })
+
 const lastUserText = (messages: SessionHooks["context"]["messages"]) => {
   const message = messages.findLast((item) => item.role === "user")
   if (!message) return ""
@@ -2264,8 +2278,7 @@ export const Plugin = define({
             } else {
               // nothing left for the model: the stitched piece is the piece; one call returns it as written (the door's own answer when it gave an id)
               entry.finished = true
-              if (typeof res.id === "string") gatherRedirect.set(event.sessionID, res.id)
-              const prompt = stitchedText ? `Return this piece exactly as written, nothing before or after it:\n\n${yield* withConfession(entry.job, stitchedText)}` : "Reply with the one word: done."
+              const prompt = yield* finishPiece(entry.job, stitchedText, (id) => gatherRedirect.set(event.sessionID, id))
               generatePending.set(event.sessionID, prompt)
               generateWindow(prompt)
               yield* bus.publish(SessionEvent.Synthetic, generateNotice(event.sessionID, { topic: generateTopic, kind: generateKind, outline: entry.outline, round: 0, done: true, sources: generateSources, startedAt: entry.startedAt, calls: entry.calls, layer: "stitched", marked: entry.marked }))
@@ -3310,9 +3323,8 @@ export const Plugin = define({
         if (done && typeof r.id === "string") {
           entry.finished = true
           entry.current = null
-          gatherRedirect.set(sessionID, r.id)
           const assembled = typeof (done as { text?: string }).text === "string" ? (done as { text: string }).text : ""
-          generatePending.set(sessionID, assembled ? `Return this piece exactly as written, nothing before or after it:\n\n${yield* withConfession(entry.job, assembled)}` : "Reply with the one word: done.")
+          generatePending.set(sessionID, yield* finishPiece(entry.job, assembled, (id) => gatherRedirect.set(sessionID, id)))
           physicsRecord({ sessionID, served: true, kind: "longform-done", job: entry.job, done, calls: entry.calls, graded })
         } else if (next && typeof next.prompt === "string") {
           generatePending.set(sessionID, next.prompt)
@@ -3344,7 +3356,7 @@ export const Plugin = define({
           entry.finished = true
           entry.gap = null
           entry.current = null
-          generatePending.set(sessionID, entry.text ? `Return this piece exactly as written, nothing before or after it:\n\n${yield* withConfession(entry.job, entry.text)}` : "Reply with the one word: done.")
+          generatePending.set(sessionID, yield* finishPiece(entry.job, entry.text ?? "", (id) => gatherRedirect.set(sessionID, id)))
           yield* bus.publish(SessionEvent.Synthetic, generateNotice(sessionID, { topic: entry.topic, kind: entry.kind, outline: entry.outline, round: 0, done: true, sources: entry.sources, startedAt: entry.startedAt, calls: entry.calls, layer: "drawn", marked: entry.marked, judging: null }))
           if (gate) yield* Deferred.succeed(gate, undefined)
           return
@@ -3388,8 +3400,7 @@ export const Plugin = define({
         entry.finished = true
         entry.gap = null
         entry.current = null
-        if (typeof r.id === "string") gatherRedirect.set(sessionID, r.id)
-        generatePending.set(sessionID, entry.text ? `Return this piece exactly as written, nothing before or after it:\n\n${yield* withConfession(entry.job, entry.text)}` : "Reply with the one word: done.")
+        generatePending.set(sessionID, yield* finishPiece(entry.job, entry.text ?? "", (id) => gatherRedirect.set(sessionID, id)))
         physicsRecord({ sessionID, served: true, kind: "longform-done", job: entry.job, mode: "layers", calls: entry.calls, marked: entry.marked, gapsLeft: entry.gaps.length, budgetSpent: !budgetLeft })
         yield* bus.publish(SessionEvent.Synthetic, generateNotice(sessionID, { topic: entry.topic, kind: entry.kind, outline: entry.outline, round: 0, done: true, sources: entry.sources, startedAt: entry.startedAt, calls: entry.calls, layer: "drawn", marked: entry.marked, graded, judging: null }))
         if (gate) yield* Deferred.succeed(gate, undefined)
