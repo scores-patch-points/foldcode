@@ -48,27 +48,31 @@ const cost = [
     },
   },
 ]
+/** A test sets this to script the model's replies; unset, every reply is the one-line summary below. */
+let respond: ((request: LLMRequest, call: number) => ReturnType<typeof reply>) | undefined
+const reply = () =>
+  Stream.make(
+    LLMEvent.textDelta({ id: "summary", text: "## Objective\n- manual summary" }),
+    LLMEvent.stepFinish({
+      index: 0,
+      reason: { normalized: "stop" },
+      usage: {
+        inputTokens: 15,
+        outputTokens: 6,
+        nonCachedInputTokens: 10,
+        cacheReadInputTokens: 3,
+        cacheWriteInputTokens: 2,
+        reasoningTokens: 2,
+      },
+    }),
+    LLMEvent.finish({
+      reason: { normalized: "stop" },
+    }),
+  )
 const client = Layer.mock(LLMClient.Service)({
   stream: (request: LLMRequest) => {
     requests.push(request)
-    return Stream.make(
-      LLMEvent.textDelta({ id: "summary", text: "## Objective\n- manual summary" }),
-      LLMEvent.stepFinish({
-        index: 0,
-        reason: { normalized: "stop" },
-        usage: {
-          inputTokens: 15,
-          outputTokens: 6,
-          nonCachedInputTokens: 10,
-          cacheReadInputTokens: 3,
-          cacheWriteInputTokens: 2,
-          reasoningTokens: 2,
-        },
-      }),
-      LLMEvent.finish({
-        reason: { normalized: "stop" },
-      }),
-    )
+    return respond ? respond(request, requests.length) : reply()
   },
   generate: () => Effect.die("unused"),
 })
@@ -295,6 +299,122 @@ it.effect("auto compaction estimates current content against the buffered prompt
   }),
 )
 
+// F7 (foldcode-poc/FAILURES.md): at a 16k window the summary's output room was what the 10% reserve left, 1,600 tokens, and an
+// updated checkpoint grew on every compaction until it was cut off there, which failed the turn. The summary request now leaves
+// itself 4,000 tokens at least (its input shrinks to fit), a cut-off reply is asked for once more at half the length, a second
+// cut-off stands with a note instead of failing, and the request carries no plugin block (the fold's hooks add none).
+it.effect("a summary cut off at a small window's output room is asked for once more, shorter", () =>
+  Effect.gen(function* () {
+    requests = []
+    const session = yield* insertSession(Session.ID.make("ses_small_window"))
+    const small = {
+      ...loaded(session, [
+        SessionMessage.User.make({
+          id: SessionMessage.ID.create(),
+          type: "user",
+          text: "Record these: the pilot date is 2026-12-09 and the Lisbon desk count is 36.",
+          time: { created: DateTime.makeUnsafe(0) },
+        }),
+      ]),
+      model: SessionRunnerModel.resolved(model, {
+        capabilities: { tools: true, input: ["text"], output: ["text"] },
+        cost,
+        limit: { context: 16_000, output: 4_096 },
+      }),
+    }
+    const usage = {
+      inputTokens: 15,
+      outputTokens: 6,
+      nonCachedInputTokens: 10,
+      cacheReadInputTokens: 3,
+      cacheWriteInputTokens: 2,
+      reasoningTokens: 0,
+    }
+    respond = (_request, call) =>
+      Stream.make(
+        LLMEvent.textDelta({
+          id: "summary",
+          text: call === 1 ? "## Objective\n- a summary that ran long" : "## Objective\n- short",
+        }),
+        LLMEvent.stepFinish({ index: 0, reason: { normalized: call === 1 ? "length" : "stop" }, usage }),
+        LLMEvent.finish({ reason: { normalized: call === 1 ? "length" : "stop" } }),
+      )
+    const compaction = yield* SessionCompaction.Service
+    const bus = yield* Bus.Service
+    const inputID = SessionMessage.ID.create()
+    yield* bus.publish(SessionEvent.Compaction.Started, {
+      sessionID: session.id,
+      reason: "manual",
+      recent: "",
+      inputID,
+    })
+    const outcome = yield* compaction.compact({ reason: "manual", context: small, inputID })
+    respond = undefined
+    expect(outcome).toEqual({ status: "completed" })
+
+    // 16,000 less SUMMARY_ROOM_MIN: the summary's input is budgeted at 12,000 so its reply has 4,000 tokens of room, not the
+    // reserve's 1,600; the prompt states no room (told it, the model filled it).
+    expect(requests).toHaveLength(2)
+    expect(requests[0]?.generation).toEqual(GenerationOptions.make({ maxTokens: 4_000 }))
+    expect(JSON.stringify(requests[0]?.messages.at(-1))).not.toContain("room for about")
+    // The one shorter ask, at half the room's words.
+    expect(JSON.stringify(requests[1]?.messages.at(-1))).toContain("Rewrite it in at most 1200 words")
+    // Beyond the bound sentence, nothing rides that the conversation did not carry: no plugin block in system or messages.
+    for (const request of requests) {
+      expect(JSON.stringify(request.system)).not.toContain("<fold-")
+      expect(JSON.stringify(request.messages)).not.toContain("<fold-")
+    }
+    const store = yield* SessionStore.Service
+    expect(yield* store.context(session.id)).toMatchObject([
+      { type: "compaction", reason: "manual", summary: "## Objective\n- short" },
+    ])
+  }),
+)
+
+it.effect("a summary cut off twice stands, closed by a note, rather than failing the turn", () =>
+  Effect.gen(function* () {
+    requests = []
+    const session = yield* insertSession(Session.ID.make("ses_small_window_twice"))
+    const small = {
+      ...loaded(session, [
+        SessionMessage.User.make({
+          id: SessionMessage.ID.create(),
+          type: "user",
+          text: "Record this: the backup window is 02:00.",
+          time: { created: DateTime.makeUnsafe(0) },
+        }),
+      ]),
+      model: SessionRunnerModel.resolved(model, {
+        capabilities: { tools: true, input: ["text"], output: ["text"] },
+        cost,
+        limit: { context: 16_000, output: 4_096 },
+      }),
+    }
+    respond = () =>
+      Stream.make(
+        LLMEvent.textDelta({ id: "summary", text: "## Objective\n- still long" }),
+        LLMEvent.finish({ reason: { normalized: "length" } }),
+      )
+    const compaction = yield* SessionCompaction.Service
+    const bus = yield* Bus.Service
+    const inputID = SessionMessage.ID.create()
+    yield* bus.publish(SessionEvent.Compaction.Started, {
+      sessionID: session.id,
+      reason: "manual",
+      recent: "",
+      inputID,
+    })
+    const outcome = yield* compaction.compact({ reason: "manual", context: small, inputID })
+    respond = undefined
+    expect(requests).toHaveLength(2)
+    expect(outcome).toEqual({ status: "completed" })
+    const store = yield* SessionStore.Service
+    expect(yield* store.context(session.id)).toMatchObject([
+      { type: "compaction", summary: `## Objective\n- still long\n\n${SessionCompaction.CUT_OFF_NOTE}` },
+    ])
+  }),
+)
+
 /** Seeds the global project plus one session row, returning the projected session. */
 const insertSession = (id: Session.ID, overrides?: Partial<typeof SessionTable.$inferInsert>) =>
   Effect.gen(function* () {
@@ -461,6 +581,8 @@ it.effect("manual compaction summarizes short context instead of no-op", () =>
       "x-opencode-client": "opencode",
     })
     expect(requests[0]?.generation).toEqual(GenerationOptions.make({ maxTokens: 20_000 }))
+    // A 20k room needs no stated bound: only a small window's prompt says how much room the summary has.
+    expect(JSON.stringify(requests[0]?.messages.at(-1))).not.toContain("room for about")
     expect(JSON.stringify(requests[0]?.messages)).toContain("Manual compaction should include this short conversation.")
     expect(JSON.stringify(requests[0]?.messages)).toContain("Use Effect services and generators.")
     expect(JSON.stringify(requests[0]?.messages)).toContain("User shell pwd completed: /project")

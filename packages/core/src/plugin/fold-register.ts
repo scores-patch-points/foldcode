@@ -87,3 +87,21 @@ export const gateTools = (tools: Record<string, unknown>, ask: string, { researc
   for (const name of removed) delete tools[name]
   return removed
 }
+
+/** The fold's own tools, by leaf name: the six this plugin registers. */
+export const FOLD_TOOL_LEAVES = new Set(["fold", "snip", "swarm", "cube", "perceive", "transcribe"])
+
+/** What the plugin adds to a compaction summary request: nothing but its tool definitions, and those are removed here. The summary
+ *  prompt ends "Do not continue the task or call tools", the `context` hook never runs for a compaction request (its register, legends
+ *  and notes ride only on primary requests, where the register is re-pinned after every compaction, A3), so the fold's tools are the
+ *  one thing of the fold's a compaction request carried. Measured on the hard chat at a 16k cap (F7/F12): the compaction request's
+ *  fixed prefix was 18,055 tokens against a 14,400-token ceiling, every turn compacted. Returns the names removed. */
+export const compactionTools = (tools: Record<string, unknown>) => {
+  const removed: string[] = []
+  for (const name of Object.keys(tools)) {
+    const leaf = name.split(/[_:./-]/).pop() ?? name
+    if (FOLD_TOOL_LEAVES.has(leaf)) removed.push(name)
+  }
+  for (const name of removed) delete tools[name]
+  return removed
+}

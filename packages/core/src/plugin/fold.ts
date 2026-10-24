@@ -28,7 +28,7 @@ import { tap as usageTap } from "./usage-tap.js"
 import { Bus } from "../bus.js"
 import { SessionEvent } from "../session/event.js"
 import { GROUND_LEGEND, GROUND_STEER_HEAD, contradictedIn, gatherPassages, groundHead, groundPayload, groundSteer, pairedIn, revisedIn, shouldHandBack, withoutCitations, type Revise } from "./fold-ground.js"
-import { REGISTER_LEGEND, dropTrailingNotices, gateTools, markRegistered, registerBlock, registerHit } from "./fold-register.js"
+import { REGISTER_LEGEND, dropTrailingNotices, gateTools, markRegistered, registerBlock, registerHit, compactionTools } from "./fold-register.js"
 import * as Physics from "./physics.js"
 import * as Learn from "./physics-learn.js"
 import fs from "node:fs"
@@ -3102,6 +3102,14 @@ export const Plugin = define({
     )
 
     yield* ctx.session.hook("context", context)
+    // A COMPACTION SUMMARY REQUEST CARRIES NONE OF THE FOLD (F7): no block is added here, and the fold's own tools are taken off it;
+    // the register and legends are re-pinned by `context` on the next primary request, so they survive compaction without being
+    // text the summary has to reproduce (A3).
+    yield* ctx.session.hook("compaction", (event) => {
+      if (off) return Effect.void
+      compactionTools(event.tools)
+      return Effect.void
+    })
     yield* ctx.session.hook("title", title)
     yield* ctx.session.hook("generate", (event) => {
       if (!physicsAside.has(event.sessionID)) return Effect.void
