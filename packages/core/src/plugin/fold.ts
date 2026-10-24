@@ -3114,6 +3114,9 @@ export const Plugin = define({
     yield* ctx.session.hook("model.request", (event) => {
       const id = gatherRedirect.get(event.sessionID)
       if (!id || event.kind !== "primary") return Effect.void
+      // the door answers in the OpenAI chat wire format only: a provider that speaks another (anthropic, google) keeps its own call,
+      // and the window it was given already carries the assembled text to return (FOLD_GATHER_VIA_DOOR names the providers redirected)
+      if (!gatherViaDoor.includes(event.model.providerID)) { gatherRedirect.delete(event.sessionID); return Effect.void }
       gatherRedirect.delete(event.sessionID)
       event.baseURL = `${base}/v1/gather`
       for (const key of Object.keys(event.headers)) if (/^(authorization|x-api-key|api-key|x-goog-api-key)$/i.test(key)) delete event.headers[key]
