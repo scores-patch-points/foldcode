@@ -72,6 +72,55 @@ export default function PairingPage(props: {
     onSuccess: (_, input) => queryClient.setQueryData(remoteKey(), input.enabled),
   }))
 
+  const linkKey = () => [ctx.id, "link", main()?.generation]
+
+  const link = useQuery(() => ({
+    queryKey: linkKey(),
+    queryFn: (input) => {
+      const live = main()
+
+      if (!live) throw new Error("Pairing's main side is not active")
+
+      return live.value.link({ signal: input.signal })
+    },
+    enabled: !!main(),
+    gcTime: 0,
+  }))
+
+  // Turning the link on also turns remote access on, so remote access is read again once it settles.
+  const linkChange = useMutation(() => ({
+    mutationFn: (enabled: boolean) => {
+      const live = main()
+
+      if (!live) throw new Error("Pairing's main side is not active")
+
+      return live.value.setLink(enabled)
+    },
+    onSuccess: (_, enabled) => {
+      queryClient.setQueryData(linkKey(), enabled)
+      if (enabled) queryClient.setQueryData(remoteKey(), true)
+    },
+  }))
+
+  // "Copied" shows for two seconds after each copy.
+  const linkCopied: CopiedTimer = {}
+  onCleanup(() => clearTimeout(linkCopied.timeout))
+
+  const copyLink = useMutation(() => ({
+    mutationFn: async () => {
+      const live = main()
+
+      if (!live) throw new Error("Pairing's main side is not active")
+      await ctx.system.copy(await live.value.linkURL())
+    },
+    onMutate: () => clearTimeout(linkCopied.timeout),
+    onSuccess: () => {
+      // The link needs remote access, which asking for it turns back on if it was turned off since.
+      queryClient.setQueryData(remoteKey(), true)
+      linkCopied.timeout = setTimeout(() => copyLink.reset(), 2000)
+    },
+  }))
+
   const setup = (): Setup => {
     if (change.isPending) return "pending"
 
@@ -175,6 +224,34 @@ export default function PairingPage(props: {
                   </Switch>
                 </Row>
               </div>
+              <div data-action="settings-open-link">
+                <Row title={ctx.t("link.title")} description={ctx.t("link.description")}>
+                  <div class="flex items-center gap-3">
+                    <Show when={link.data === true && !linkChange.isPending}>
+                      <Button
+                        variant="neutral"
+                        icon={copyLink.isSuccess ? "check" : "copy"}
+                        disabled={copyLink.isPending}
+                        onClick={() => copyLink.mutate()}
+                      >
+                        {ctx.t(copyLink.isSuccess ? "common.copied" : "copyLink")}
+                      </Button>
+                    </Show>
+                    {/* Turning it on waits for the tunnel, which the first time can take a minute. */}
+                    <Show when={linkChange.isPending && linkChange.variables}>
+                      <Spinner class="size-4 text-v2-icon-icon-muted" />
+                    </Show>
+                    <Switch
+                      hideLabel
+                      checked={linkChange.isPending ? linkChange.variables === true : link.data === true}
+                      disabled={!link.isSuccess || linkChange.isPending}
+                      onChange={(enabled) => linkChange.mutate(enabled)}
+                    >
+                      {ctx.t("link.title")}
+                    </Switch>
+                  </div>
+                </Row>
+              </div>
               <div data-action="settings-keep-screen-active">
                 <Row title={ctx.t("screenActive.title")} description={ctx.t("screenActive.description")}>
                   <Switch
@@ -192,6 +269,16 @@ export default function PairingPage(props: {
           <Show when={main() && (remote.error || change.error)}>
             <p class="text-text-danger-base" role="alert">
               {ctx.t("remote.error")}
+            </p>
+          </Show>
+          <Show when={main() && (link.error || linkChange.error)}>
+            <p class="text-text-danger-base" role="alert">
+              {ctx.t("link.error")}
+            </p>
+          </Show>
+          <Show when={copyLink.error}>
+            <p class="text-text-danger-base" role="alert">
+              {ctx.t("link.copyError")}
             </p>
           </Show>
           <Show when={main() && (screenActive.error || screenActivity.error)}>

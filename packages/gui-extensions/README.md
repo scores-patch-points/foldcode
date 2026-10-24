@@ -466,6 +466,15 @@ export const Pairing = Ipc.define({
      * the tunnel, which can take a minute.
      */
     setRemote: { input: Schema.Boolean },
+    /** Whether the open link is on: one reusable link that signs in any browser that opens it. */
+    link: { output: Schema.Boolean },
+    /**
+     * Turns the open link on or off, then starts the background service again. Turning it on also turns remote access
+     * on, which the first time creates the tunnel and can take a minute.
+     */
+    setLink: { input: Schema.Boolean },
+    /** The open link, once the tunnel serves it. Only meaningful while the link is on. */
+    linkURL: { output: Schema.String },
     /** Whether main holds the display sleep blocker. */
     screenActive: { output: Schema.Boolean },
     /** Holds or releases the display sleep blocker, and remembers the choice. */
@@ -534,17 +543,18 @@ const setup: MainSetup<typeof definition> = (ctx) => {
 
   // Remote access is a setting of the background service, so it changes through the CLI the app runs, as with
   // `opencode pair --remote`. A change restarts the service, so commands run one at a time.
-  const service = (args: readonly string[], signal: AbortSignal) => {
+  const command = (args: readonly string[], signal: AbortSignal) => {
     const run = queue.tail.then(
       () =>
         new Promise<string>((resolve, reject) => {
           execFile(
             cli.command[0] ?? "opencode",
-            [...cli.command.slice(1), "service", ...args],
+            [...cli.command.slice(1), ...args],
             { signal, windowsHide: true },
             (error, stdout, stderr) => {
               if (!error) return resolve(stdout.trim())
-              log.write("error", "pairing service command failed", { args, error: error.message, stderr })
+              // The arguments are logged, never the output: the open link's output is its secret.
+              log.write("error", "pairing command failed", { args, error: error.message, stderr })
               reject(error)
             },
           )
@@ -555,6 +565,8 @@ const setup: MainSetup<typeof definition> = (ctx) => {
 
     return run
   }
+
+  const service = (args: readonly string[], signal: AbortSignal) => command(["service", ...args], signal)
 
   if (stored.value) keepScreenActive(true)
   ctx.scope.addFinalizer(release)
@@ -567,6 +579,18 @@ const setup: MainSetup<typeof definition> = (ctx) => {
       await service(["set", "remote", String(enabled)], ctx.scope.signal)
       await service(["start"], ctx.scope.signal)
     },
+    link: async (_, caller) => (await service(["get", "link"], caller.signal)) === "true",
+    // `opencode link` turns on remote access and the link together and waits for the tunnel; the app's click is the
+    // consent it would otherwise ask for. Turning it off stops the service, which starts again here.
+    setLink: async (enabled) => {
+      if (enabled) await command(["link", "--plain", "--yes"], ctx.scope.signal)
+      else {
+        await command(["link", "--off"], ctx.scope.signal)
+        await service(["start"], ctx.scope.signal)
+      }
+    },
+    // Already on, the command changes nothing: it waits for the tunnel's address and prints the link.
+    linkURL: (_, caller) => command(["link", "--plain", "--yes"], caller.signal),
     screenActive: () => blocker.id !== undefined && powerSaveBlocker.isStarted(blocker.id),
     setScreenActive: (enabled) => keepScreenActive(enabled),
   })
