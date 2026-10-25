@@ -110,3 +110,12 @@ test("recurrence survives the reshuffle null: planted echoes beat a word-frequen
 
   expect(planted).toBeGreaterThan(Math.max(...shuffled))
 })
+
+test("statements are khora's cut: the measured prior keeps 'Dr.' a word, and every statement reads back", async () => {
+  const { readSource } = await import("./engine/holodeck-research-read.js")
+  const text = "Dr. Brown taught there in 1871.\nThe school closed in 1911."
+  const { sts } = readSource(text)
+
+  expect(sts.map((s: { text: string }) => s.text)).toEqual(["Dr. Brown taught there in 1871.", "The school closed in 1911."])
+  for (const s of sts) expect(text.slice(s.s, s.e)).toBe(s.text)
+})

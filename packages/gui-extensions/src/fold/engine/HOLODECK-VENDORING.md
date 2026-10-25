@@ -7,7 +7,9 @@ detect structure in-process — no server, no model. One copy: the `structure-mo
 | file | upstream | local change |
 |---|---|---|
 | `holodeck-research-null.js` | `holodeck/holodeck-research-null.js` | none (byte-identical) |
-| `holodeck-research-read.js` | `holodeck/holodeck-research-read.js` | **year-sieve patched** |
+| `holodeck-research-read.js` | `holodeck/holodeck-research-read.js` @ `a756cbe` (scores-patch-points/holodeck#22) | **year-sieve patched** |
+| `vendor/khora/native/adapters/text/{spans,priors}.js` | khora `native/adapters/text/` @ `b6d0f120` (via holodeck `a756cbe`) | none (byte-identical) — khora's one sentence cut |
+| `vendor/khora/native/priors/punctuation-eng.json` | janus `priors/punctuation-eng.json` @ `b6852ea` (via holodeck `a756cbe`) | none (byte-identical) — English's measured abbreviations |
 | `holodeck-research-terrain.js` | `holodeck/holodeck-research-terrain.js` | **referent gate on `breaks`** |
 | `holodeck-contradiction.js` | — | stand-in (disclosed; the real for-whom engine is the door's) |
 
@@ -27,3 +29,11 @@ The first build claimed `breaks` reports real contradictions. It was falsified o
 
 The full for-whom identity decision remains the door's job; the app panel reports
 `breaks` (anchored) and `nominated` (unanchored) separately, and never merges them.
+
+## 2026-10-24 — the statement cut is khora's
+
+`splitStatements` no longer carries its own regex cut and typed abbreviation list (`Mr|Mrs|Dr|St|Ltd|Inc|Co|No|…`). Inside each
+line it calls khora's `spans.js::splitSentences`, told which dotted tokens are words by English's measured punctuation prior
+(janus), the text's own, and any `abbreviations` a caller passes to `readSource(text, { abbreviations })`. Without a caller's
+aliases, "St.", "Co." and "U.S." are cut where the typed list held them: only the hyperlexicon settles those, and it is not
+in process here. The names (`namesIn`) are still this file's capitalised-run rule — the next piece to move onto khora's reader.

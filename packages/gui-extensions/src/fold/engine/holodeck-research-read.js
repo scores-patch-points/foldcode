@@ -6,28 +6,32 @@
 // frameOf) through the same shape, so the stopping rule and the terrain the person sees come from one reading; this
 // default is what runs in tests, in node, and when the page's finder is not available. Nothing here is a model.
 //
-//   readSource(text) -> { sts: [{ s, e, text, names:[surface], figs:[{raw,value,unit,s,e}], dates:[{raw,year,s,e}], frame }],
+//   readSource(text, { abbreviations }) -> { sts: [{ s, e, text, names:[surface], figs:[{raw,value,unit,s,e}], dates:[{raw,year,s,e}], frame }],
 //                         referents: [normalized name] }
 //
 // s/e are offsets into the exact string given, so a statement can always be sliced back out of its source:
 // text.slice(st.s, st.e) === st.text.
 
 import { fold } from './holodeck-research-null.js';
+import { splitSentences, deriveAbbreviations } from './vendor/khora/native/adapters/text/spans.js';
+import PUNCT_ENG from './vendor/khora/native/priors/punctuation-eng.json' with { type: 'json' };
 
-const ABBR = /(?:\b(?:a\.m|p\.m|U\.S|U\.K|Mr|Mrs|Ms|Dr|St|Ltd|Inc|Co|No|vs|Jr|Sr|Gov|Sen|Rep|Mt|Ft|approx|etc|e\.g|i\.e)|\b[A-Z])\.$/;
-
-export function splitStatements(text) {
-  const out = []; const re = /[^\n]+?(?:[.!?]+(?=\s|$)|(?=\n)|$)/g; let m, carry = null;
-  while ((m = re.exec(text))) {
-    if (m[0] === '') { re.lastIndex++; continue; }
-    const lead = m[0].length - m[0].replace(/^\s+/, '').length, tt = m[0].trim();
-    if (!tt) continue;
-    const s = m.index + lead, e = s + tt.length;
-    if (carry) { carry.e = e; carry.text = text.slice(carry.s, e); if (!ABBR.test(tt)) { out.push(carry); carry = null; } continue; }
-    if (ABBR.test(tt) && /[.]$/.test(tt) && tt.length < 60) { carry = { s, e, text: tt }; continue; }
-    out.push({ s, e, text: tt });
+// THE CUT IS KHORA'S (2026-10-24): inside each line, statements are spans.js::splitSentences' — the cut every reader shares — told
+// which dotted tokens are words by English's MEASURED punctuation prior (janus priors/punctuation-eng.json, vendored as data), the
+// text's own (spans.js::deriveAbbreviations), and whatever `abbreviations` a caller hands in (the page: the hyperlexicon's aliases,
+// read-core.mjs::abbreviationsFor). The typed list that stood here (Mr|Mrs|Dr|St|Ltd|Inc|Co|No|…) is gone. A line is still the outer
+// unit: a statement never crosses a line break. SCOPE: the default prior is English's, as the rest of this reader (frameOf) is.
+const PRIOR_ABBR = (PUNCT_ENG.abbreviations || []).flatMap((t) => [t, t.charAt(0).toUpperCase() + t.slice(1), t.toUpperCase()]);
+export function splitStatements(text, { abbreviations = null } = {}) {
+  const out = []; const lineRe = /[^\n]+/g; let m;
+  const known = new Set([...PRIOR_ABBR, ...(abbreviations || []), ...deriveAbbreviations(String(text))]);
+  while ((m = lineRe.exec(text))) {
+    const line = m[0].replace(/\r/g, ' ');
+    for (const x of splitSentences(line, { abbreviations: known })) {
+      const s = m.index + x.offset, e = s + x.text.length;
+      out.push({ s, e, text: text.slice(s, e) });
+    }
   }
-  if (carry) out.push(carry);
   return out;
 }
 
@@ -92,9 +96,9 @@ export function frameOf(t) {
 /** The referent a surface stands for: folded, spaces collapsed, a leading "the" shed. */
 export const referentKey = name => fold(name).replace(/\s+/g, ' ').replace(/^the\s+/, '').trim();
 
-export function readSource(text) {
+export function readSource(text, { abbreviations = null } = {}) {
   text = String(text || '');
-  const raw = splitStatements(text);
+  const raw = splitStatements(text, { abbreviations });
   // names written capitalised mid-statement anywhere in the source: evidence that a sentence-opening word is a name
   const midCaps = new Set();
   for (const st of raw) { const re = /(?<=[\p{L}\p{N},;:)]\s)\p{Lu}[\p{L}\p{M}'’-]*/gu; let m; while ((m = re.exec(st.text))) midCaps.add(fold(m[0])); }
