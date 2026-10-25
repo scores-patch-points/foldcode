@@ -233,7 +233,7 @@ const postRaw = async (body: unknown, timeout: number, patient = false) => {
 }
 
 const post = (body: unknown, timeout: number, patient = false) =>
-  Effect.tryPromise(() => postRaw(body, timeout, patient)).pipe(Effect.catch(() => Effect.succeed(undefined)))
+  Effect.tryPromise(() => postRaw(body, timeout, patient)).pipe(Effect.orElseSucceed(() => undefined))
 
 const lastUserText = (messages: SessionHooks["context"]["messages"]) => {
   const message = messages.findLast((item) => item.role === "user")
@@ -1724,7 +1724,7 @@ export const Plugin = define({
                   foldOnce(event.sessionID, target.name, lastUserText(event.messages), event.model, target.id, target.text),
                   askTimeout,
                 ),
-              ).pipe(Effect.catch(() => Effect.succeed(undefined))))
+              ).pipe(Effect.orElseSucceed(() => undefined)))
             if (typeof text !== "string" || text.length === 0) {
               if (debug) yield* Effect.logWarning("fold.skipped", { id: target.id })
               continue
@@ -2005,7 +2005,7 @@ export const Plugin = define({
                 yield* Effect.sleep("3 seconds")
                 const p = (yield* Effect.tryPromise(() =>
                   fetch(`${base}/v1/hooks/opencode/gather/progress?sessionID=${encodeURIComponent(sessionID)}`, { signal: AbortSignal.timeout(3000) }).then((r) => (r.ok ? r.json() : undefined)),
-                ).pipe(Effect.catch(() => Effect.succeed(undefined)))) as ResearchProgress | undefined
+                ).pipe(Effect.orElseSucceed(() => undefined))) as ResearchProgress | undefined
                 if (!p || p.ok !== true) continue
                 const read = Array.isArray(p.read) ? p.read : []
                 const key = `${read.length}|${p.candidates ?? 0}|${p.reading?.host ?? ""}|${(p.searches ?? []).length}|${p.done ? 1 : 0}`
@@ -2020,7 +2020,7 @@ export const Plugin = define({
             Effect.gen(function* () {
               const p = (yield* Effect.tryPromise(() =>
                 fetch(`${base}/v1/hooks/opencode/gather/progress?sessionID=${encodeURIComponent(sessionID)}`, { signal: AbortSignal.timeout(3000) }).then((r) => (r.ok ? r.json() : undefined)),
-              ).pipe(Effect.catch(() => Effect.succeed(undefined)))) as ResearchProgress | undefined
+              ).pipe(Effect.orElseSucceed(() => undefined))) as ResearchProgress | undefined
               if (!p || p.ok !== true) return
               const read = Array.isArray(p.read) ? p.read : []
               const research = { v: 1, elapsedMs: Number(p.elapsedMs ?? 0), searches: (p.searches ?? []).flatMap((s) => (typeof s.q === "string" ? [{ q: s.q, n: Number(s.n) || 0 }] : [])), candidates: Number(p.candidates ?? 0), read, reading: null, stop: p.stop ?? null, done: true }
@@ -2304,7 +2304,7 @@ export const Plugin = define({
           const answer = yield* post(
             { event: "surf", sessionID: event.sessionID, task, workspace, universe: process.env.FOLD_UNIVERSE ?? "world", ask: lastUserText(event.messages), turns: plan.turns, keptOutChars, priceIn: priceIn(event.model), ...priceCache(event.model) },
             askTimeout,
-          ).pipe(Effect.timeout(askTimeout + 100), Effect.catch(() => Effect.succeed(undefined)))
+          ).pipe(Effect.timeout(askTimeout + 100), Effect.orElseSucceed(() => undefined))
           // not cut when the history is shorter than its own ladder, or when the door's cost gate prices the cut above
           // the cached prefix it would burn (the door says `uncut`): the turns stay, only the note rides
           const fromDoor = typeof answer?.note === "string" && answer.note.length > 0

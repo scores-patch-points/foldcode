@@ -194,12 +194,12 @@ export const Plugin = define({
       ctx.session
         .get({ sessionID })
         .pipe(Effect.map((info) => info.projectID))
-        .pipe(Effect.catch(() => Effect.succeed(undefined)))
+        .pipe(Effect.orElseSucceed(() => undefined))
     const infoOf = (sessionID: Session.ID) =>
       ctx.session
         .get({ sessionID })
         .pipe(Effect.map((info) => ({ title: info.title ?? "", directory: info.location.directory })))
-        .pipe(Effect.catch(() => Effect.succeed(undefined)))
+        .pipe(Effect.orElseSucceed(() => undefined))
     const peersFor = (self: string, project: string | undefined) =>
       sameProjectPeers(peers.values(), self, project)
     // Resolve an address to a target id: same-project peer by id/prefix/title,
