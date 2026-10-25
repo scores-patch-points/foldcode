@@ -12,7 +12,6 @@ const setup: Setup<typeof Fold> = (ctx) => {
   const SessionMindTree = lazy(() => import("./mind-tree"))
   const SessionWorkPlans = lazy(() => import("./plans"))
   const SessionRememberPanel = lazy(() => import("./remember"))
-  const SessionStructurePanel = lazy(() => import("./structure"))
   const SessionLayersPanel = lazy(() => import("./layers"))
   // Compile the panels while the app idles, so the first open renders at once.
   onCleanup(onIdle(() => void SessionMindTree.preload()))
@@ -21,7 +20,6 @@ const setup: Setup<typeof Fold> = (ctx) => {
   onCleanup(onIdle(() => void SessionPerceivePanel.preload()))
   onCleanup(onIdle(() => void SessionCubePanel.preload()))
   onCleanup(onIdle(() => void SessionRememberPanel.preload()))
-  onCleanup(onIdle(() => void SessionStructurePanel.preload()))
   onCleanup(onIdle(() => void SessionLayersPanel.preload()))
   onCleanup(onIdle(() => void SessionWorktreePanel.preload()))
 
@@ -206,27 +204,6 @@ const setup: Setup<typeof Fold> = (ctx) => {
     render: (props) => (
       <Suspense>
         <SessionRememberPanel session={props.session} />
-      </Suspense>
-    ),
-  })
-
-  // The Structure tab: point the fold at material and read back the nine registers it MEASURES — model-free,
-  // referent-anchored contradictions, the residue of what was not reached.
-  const structure: PanelTab = {
-    id: "structure",
-    get title() {
-      return ctx.t("tab.structure")
-    },
-    closable: "compact",
-  }
-
-  ctx.add(Panel, {
-    id: "structure",
-    region: "side",
-    list: () => [structure],
-    render: (props) => (
-      <Suspense>
-        <SessionStructurePanel session={props.session} />
       </Suspense>
     ),
   })

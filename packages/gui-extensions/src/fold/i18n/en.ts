@@ -6,7 +6,6 @@ export default {
   "tab.perceive": "Perceive",
   "tab.cube": "Cube",
   "tab.remember": "Remember",
-  "tab.structure": "Structure",
   "worktree.title": "Worktree",
   "worktree.subtitle": "the workspace you are working on, as files",
   "worktree.unavailable": "The file tree is unavailable right now.",
