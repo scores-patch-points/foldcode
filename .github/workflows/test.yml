@@ -118,6 +118,15 @@ jobs:
           fresh=$(mktemp -d)
           time HOME="$fresh" XDG_CACHE_HOME="$fresh/.cache" pwsh -NoLogo -NoProfile -NonInteractive -Command 'Write-Output fresh-home'
 
+      # GitHub's Windows runners keep the workspace on D:, the VM's local disk, and TEMP on C:, the OS disk. The core
+      # tests run real git and package installs in temp directories, and on C: a different few of them pass Bun's 5 s
+      # test timeout each run. Their temp directories go to D: with the workspace.
+      - name: Put temp on the workspace disk
+        if: runner.os == 'Windows'
+        run: |
+          echo "TMP=$RUNNER_TEMP" >> "$GITHUB_ENV"
+          echo "TEMP=$RUNNER_TEMP" >> "$GITHUB_ENV"
+
       - name: Cache Turbo
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:

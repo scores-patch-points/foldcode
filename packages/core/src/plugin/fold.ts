@@ -2593,7 +2593,7 @@ export const Plugin = define({
         output: Schema.Struct({ text: Schema.String, giver: Schema.String }),
         execute: (input) =>
           Effect.gen(function* () {
-            const bytes = yield* Effect.tryPromise(() => Bun.file(input.path).arrayBuffer())
+            const bytes = yield* Effect.tryPromise(() => fs.promises.readFile(input.path).then((buffer) => new Uint8Array(buffer)))
             const q = new URLSearchParams()
             if (input.language) q.set("language", input.language)
             if (input.task) q.set("task", input.task)
