@@ -89,6 +89,8 @@ type Prepared = Effect.Success<ReturnType<SessionModelRequest.Interface["compact
 type Streamed = {
   readonly text: string
   readonly providerState?: SessionMessage.ProviderState
+  /** The reply was cut off at the output token limit; `summarize` asks once more for a shorter one. */
+  readonly truncated?: boolean
 }
 
 const NOTHING_TO_COMPACT: Failure = { error: { type: "compaction.unavailable", message: "Nothing to compact yet" } }
@@ -179,6 +181,20 @@ export const buildPrompt = (update: boolean, legacy = false) => {
 const NUDGE =
   "The previous response did not fill in the required summary template. Do not call tools. Return the summary as text using the exact section headings from the template."
 
+/** The least output room a summary request leaves itself at a small window (or a quarter of the window, or the model's own
+ *  output limit, whichever is least). The ceiling keeps only 10% of a window under 2 x RESERVE_MIN, 1,600 tokens at 16k. */
+const SUMMARY_ROOM_MIN = 4_000
+/** Words a summary of `room` output tokens holds: about three words per four tokens, a fifth kept back for Markdown and estimate error. */
+export const summaryWords = (room: number) => Math.max(80, Math.floor(room * 0.6))
+export const summaryTighter = (room: number | undefined) =>
+  `The summary above was cut off at the output token limit. Rewrite it in at most ${room === undefined ? 600 : Math.floor(summaryWords(room) / 2)} words, keeping the values in Requirements, Decisions and Important Context and shortening everything else.`
+/** Closes a summary that was cut off twice: a fact for the next agent, kept in place of a dead turn. */
+export const CUT_OFF_NOTE = "[The summary was cut off at the output token limit here.]"
+const TEMPLATE_MISSED = (text: string): SessionError.Error => ({
+  type: "compaction.failed",
+  message: text.trim() ? "Compaction summary did not match the required template" : "Compaction produced no summary",
+})
+
 /** Summaries written with the previous template carry this catch-all heading. */
 const LEGACY_HEADING = "## Additional Context"
 
@@ -232,16 +248,21 @@ export const layer = Layer.effect(
       // FOLD_COMPACT decides when set. Unset, a session whose stated facts the fold has pinned in a register compacts to the
       // mechanical record by default: the model summary can no longer lose a binding (F1), and it is the summariser that crashed (F7).
       const useRecord = compactMode(process.env.FOLD_COMPACT, hasRegister(context.session.id)) === "record"
+      // THE SUMMARY'S ROOM (F7): the summary request's output limit is what its input budget leaves of the window
+      // (model-request.ts `outputLimit`). A window under 2 x RESERVE_MIN keeps only 10% back, 1,600 tokens at 16k, and a
+      // checkpoint that preserves what came before grew past that within some fifty updates, which failed every later
+      // turn. The summary's input is sized to leave SUMMARY_ROOM_MIN at least; the trigger and larger windows are unchanged.
+      const summaryBudget = Math.min(budget, summaryInput(model.limit))
       const compaction = native
         ? compactNatively(selected, budget, settings.keep)
         : useRecord
           ? compactRecord(selected, budget, settings.keep).pipe(
               Effect.matchEffect({
                 onSuccess: (r) => Effect.succeed(r),
-                onFailure: () => summarize(selected, budget, settings.keep),
+                onFailure: () => summarize(selected, summaryBudget, settings.keep),
               }),
             )
-          : summarize(selected, budget, settings.keep)
+          : summarize(selected, summaryBudget, settings.keep)
       return yield* compaction.pipe(
         Effect.matchEffect({
           onSuccess: (result) => publish(selected, result),
@@ -294,29 +315,38 @@ export const layer = Layer.effect(
       const headings = SUMMARY_TEMPLATE.split("\n").filter((line) => line.startsWith("##"))
       const filled = (text: string) => text.split("\n").some((line) => headings.includes(line.trim()))
       const prepared = yield* prepare(context, split.older, budget)
+      const room = prepared.request.generation?.maxTokens
 
       // Hooks saw the request without the summary prompt, so it is appended here. A reply that ignores the
       // template gets one reminder before it counts as a failure.
+      // A REPLY CUT OFF AT THE OUTPUT LIMIT (F7) is asked for once more at half the length; cut off again, the cut summary
+      // stands, closed by CUT_OFF_NOTE, rather than failing the turn: measured on the hard chat at 16k, the failure killed
+      // every later turn, and a sentence stating the room beforehand only made the model fill it (1,528 tokens where it
+      // had written 405), so the bound is mechanical, in SUMMARY_ROOM_MIN and here, never a prompt.
       const send = (request: LLMRequest) =>
         Effect.gen(function* () {
           const prompted = LLMRequest.update(request, { messages: [...request.messages, Message.user(prompt)] })
           const reply = yield* stream(context, prompted, prepared.options)
+          if (reply.truncated) {
+            const tighter = LLMRequest.update(prompted, {
+              messages: [...prompted.messages, Message.user(summaryTighter(room))],
+            })
+            const shorter = yield* stream(context, tighter, prepared.options)
+            const kept = shorter.truncated
+              ? { ...shorter, text: `${shorter.text.trimEnd()}\n\n${CUT_OFF_NOTE}` }
+              : shorter
+            if (filled(kept.text)) return { ...kept, recent: split.recent }
+            return yield* Effect.fail<Failure>({ error: TEMPLATE_MISSED(kept.text) })
+          }
           if (filled(reply.text)) return { ...reply, recent: split.recent }
 
           const nudged = LLMRequest.update(prompted, { messages: [...prompted.messages, Message.user(NUDGE)] })
           const retry = yield* stream(context, nudged, prepared.options)
           if (filled(retry.text)) return { ...retry, recent: split.recent }
-          return yield* Effect.fail<Failure>({
-            error: {
-              type: "compaction.failed",
-              message: retry.text.trim()
-                ? "Compaction summary did not match the required template"
-                : "Compaction produced no summary",
-            },
-          })
+          return yield* Effect.fail<Failure>({ error: TEMPLATE_MISSED(retry.text) })
         })
 
-      const overhead = Token.estimate(prompt) + Token.estimate(NUDGE)
+      const overhead = Token.estimate(prompt) + Token.estimate(NUDGE) + Token.estimate(summaryTighter(room))
       return yield* deliver(trigger, prepared, split.recent, budget - overhead, send)
     })
 
@@ -583,10 +613,7 @@ export const layer = Layer.effect(
                   new AIError({ reason: new UnknownProviderError({ message: "Compaction generation failed" }) }),
                 )
               case "length":
-                return unusable({
-                  type: "compaction.failed",
-                  message: "Compaction summary reached the output token limit",
-                })
+                return Effect.succeed({ ...streamed, truncated: true })
               case "content-filter":
                 return unusable(contentFilterError("Compaction summary was blocked by the provider", event.reason))
               default:
@@ -942,6 +969,14 @@ const calculateCeiling = (limit: SessionContext.Loaded["model"]["limit"], buffer
   if (window <= 0) return Number.POSITIVE_INFINITY
   if (buffer !== undefined) return window - buffer
   return window - Math.max(Math.floor(window * 0.1), window >= 2 * RESERVE_MIN ? RESERVE_MIN : 0)
+}
+
+/** The most input a summary request takes: the window less the room its reply needs (see SUMMARY_ROOM_MIN). */
+const summaryInput = (limit: SessionContext.Loaded["model"]["limit"]) => {
+  const window = limit.input || limit.context
+  if (window <= 0) return Number.POSITIVE_INFINITY
+  const room = Math.min(SUMMARY_ROOM_MIN, Math.floor(window / 4), limit.output > 0 ? limit.output : SUMMARY_ROOM_MIN)
+  return window - room
 }
 
 /**

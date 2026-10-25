@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { REGISTER_LEGEND, compactMode, dropTrailingNotices, gateTools, hasRegister, markRegistered, registerBlock, registerHit } from "../src/plugin/fold-register.js"
+import { REGISTER_LEGEND, compactMode, compactionTools, dropTrailingNotices, gateTools, hasRegister, markRegistered, registerBlock, registerHit } from "../src/plugin/fold-register.js"
 import { isPersonNotice } from "../src/plugin/fold.js"
 
 // SAFETY: these helpers read only role and text parts; the minimal shapes below fabricate no field they do not read.
@@ -63,4 +63,21 @@ test("tool gate: research and media tools leave a chat turn; snip and fold alway
   expect(gateTools(media, "read ./scan.pdf and summarise it", { research: false }).sort()).toEqual(["cube", "swarm"])
   const prefixed = { fold_swarm: {}, "tool:cube": {} } as Record<string, unknown>
   expect(gateTools(prefixed, "hello", { research: false }).sort()).toEqual(["fold_swarm", "tool:cube"])
+})
+
+// F7: a compaction summary request carries none of the fold. The context hook never runs for it (so no register, legend or note
+// rides), and the fold's six tools, the one thing of the fold's it carried, come off; the session's own tools stay.
+test("compactionTools: the fold's own tools come off a compaction request, the session's tools stay", () => {
+  const tools: Record<string, unknown> = {
+    read: 1, bash: 1, write: 1, edit: 1, grep: 1, webfetch: 1,
+    fold: 1, snip: 1, swarm: 1, cube: 1, perceive: 1, transcribe: 1,
+    "mcp_fold-door_snip": 1,
+  }
+  const removed = compactionTools(tools)
+  expect(removed.sort()).toEqual(["cube", "fold", "mcp_fold-door_snip", "perceive", "snip", "swarm", "transcribe"])
+  expect(Object.keys(tools).sort()).toEqual(["bash", "edit", "grep", "read", "webfetch", "write"])
+  // nothing of the fold's is put in: the hook adds no block, so an empty set stays empty
+  const none: Record<string, unknown> = {}
+  expect(compactionTools(none)).toEqual([])
+  expect(none).toEqual({})
 })
