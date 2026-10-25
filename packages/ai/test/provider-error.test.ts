@@ -39,6 +39,14 @@ describe("provider error classification", () => {
     expect(
       classifyProviderFailure({ message: "Provider request failed with HTTP 400: bad param", status: 400, rawBody: "bad param" }),
     ).not.toMatchObject({ classification: "context-overflow" })
+    expect(
+      classifyProviderFailure({
+        message: "Request failed",
+        status: 400,
+        rawBody: "",
+        data: { error: { code: "authentication_error" } },
+      }),
+    ).toMatchObject({ _tag: "Authentication" })
   })
 
   test("classifies generic request size failures separately from context overflow", () => {

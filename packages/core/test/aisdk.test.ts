@@ -566,6 +566,8 @@ it.effect("normalizes file data across AI SDK prompt parts", () =>
             { type: "media", media: Media.base64("s3://bucket/image.png", "image/png") },
           ]),
           Message.assistant({ type: "media", media: Media.url("http://example.com/document.pdf", { mediaType: "application/pdf" }), filename: "document.pdf" }),
+          // The result answers a call: the fork drops orphaned tool results before stateless routes (tool-history.ts).
+          Message.assistant({ type: "tool-call", id: "call_1", name: "screenshot", input: {} }),
           Message.tool({
             id: "call_1",
             name: "screenshot",
@@ -602,6 +604,19 @@ it.effect("normalizes file data across AI SDK prompt parts", () =>
             mediaType: "application/pdf",
             data: new URL("http://example.com/document.pdf"),
             filename: "document.pdf",
+          },
+        ],
+      },
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "call_1",
+            toolName: "screenshot",
+            input: {},
+            providerExecuted: undefined,
+            providerOptions: undefined,
           },
         ],
       },

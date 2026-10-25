@@ -104,6 +104,20 @@ jobs:
           else sudo apt-get update -qq && sudo apt-get install -y -qq ripgrep; fi
           rg --version | head -1
 
+      # GitHub's Ubuntu image carries pwsh, so the PowerShell shell tests run there. The core tests give every run a fresh
+      # HOME and cache home (packages/core/script/test.ts), so the first pwsh of a run rebuilds its module analysis cache
+      # and the first two PowerShell tests time out at 5 s. A pinned cache path, warmed here, carries into the tests.
+      # Windows keeps that cache under LOCALAPPDATA, which the tests do not move.
+      - name: Warm PowerShell
+        if: runner.os == 'Linux'
+        run: |
+          cache="$RUNNER_TEMP/powershell/ModuleAnalysisCache"
+          echo "PSModuleAnalysisCachePath=$cache" >> "$GITHUB_ENV"
+          export PSModuleAnalysisCachePath="$cache"
+          time pwsh -NoLogo -NoProfile -NonInteractive -Command 'Write-Output warm'
+          fresh=$(mktemp -d)
+          time HOME="$fresh" XDG_CACHE_HOME="$fresh/.cache" pwsh -NoLogo -NoProfile -NonInteractive -Command 'Write-Output fresh-home'
+
       - name: Cache Turbo
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
