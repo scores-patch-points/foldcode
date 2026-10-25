@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - dev
+      - fold
   pull_request:
   workflow_dispatch:
 
@@ -20,10 +21,12 @@ permissions:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
+# Runners are GitHub-hosted: this repository has no Blacksmith runners (the upstream fork's), so every job asking for one sat
+# queued until cancelled and pull requests merged without unit tests (2026-10-25).
 jobs:
   affected:
     name: affected packages
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     outputs:
       app: ${{ steps.packages.outputs.app }}
     steps:
@@ -58,9 +61,9 @@ jobs:
       matrix:
         settings:
           - name: linux
-            host: blacksmith-4vcpu-ubuntu-2404
+            host: ubuntu-latest
           - name: windows
-            host: blacksmith-4vcpu-windows-2025
+            host: windows-latest
     runs-on: ${{ matrix.settings.host }}
     defaults:
       run:
@@ -178,9 +181,9 @@ jobs:
       matrix:
         settings:
           - name: linux
-            host: blacksmith-4vcpu-ubuntu-2404
+            host: ubuntu-latest
           - name: windows
-            host: blacksmith-4vcpu-windows-2025
+            host: windows-latest
     runs-on: ${{ matrix.settings.host }}
     env:
       E2E_ENABLED: ${{ needs.affected.outputs.app == 'true' && github.ref_name != 'dev' && github.head_ref != 'dev' }}
