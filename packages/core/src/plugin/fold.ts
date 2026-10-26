@@ -28,8 +28,9 @@ import { tap as usageTap } from "./usage-tap.js"
 import { Bus } from "../bus.js"
 import { SessionEvent } from "../session/event.js"
 import { GROUND_LEGEND, GROUND_STEER_HEAD, contradictedIn, gatherPassages, groundHead, groundPayload, groundSteer, pairedIn, revisedIn, shouldHandBack, withoutCitations, type Revise } from "./fold-ground.js"
-import { REGISTER_LEGEND, dropTrailingNotices, gateTools, markRegistered, registerBlock, registerHit } from "./fold-register.js"
+import { REGISTER_LEGEND, dropTrailingNotices, gateTools, gateTurn, markRegistered, type TurnGate, registerBlock, registerHit } from "./fold-register.js"
 import * as Physics from "./physics.js"
+import * as Mech from "./physics-mech.js"
 import * as Learn from "./physics-learn.js"
 import fs from "node:fs"
 
@@ -100,6 +101,10 @@ const physicsServes = (providerID: string) => physicsMode === "1" || (physicsMod
 // cost cut, not a reliability workaround, so it serves every provider; FOLD_GATHER=0 turns it off. Same heimdall search as the
 // "this machine" engine below.
 const gatherOn = process.env.FOLD_GATHER !== "0"
+// MECHANICAL LOOKUPS (physics-mech.ts): "what is NAME in file" and "list the exports of file" are settled by reading the file, with no model
+// reasoning and no tools. A hit replaces the window with the finding (and its address) plus the question; a gap takes the normal path.
+// FOLD_MECH=0 turns it off.
+const mechOn = process.env.FOLD_MECH !== "0"
 // THE REGISTER (fold-register.ts; the door's opencode-register.mjs): before route and gather, the door is asked whether the conversation
 // itself answers a new ask (a stated name, a moved date, "did I say X"); a hit is never gathered (foldcode-poc/FAILURES.md F5). The
 // door's `<fold-register>` block is pinned in event.system, past native compaction (F1). FOLD_REGISTER=0 turns it off.
@@ -107,6 +112,9 @@ const registerOn = process.env.FOLD_REGISTER !== "0"
 // THE TOOL GATE (fold-register.ts gateTools): the fold's own tools a plain turn cannot use are not sent — measured as +5 tools on every
 // request, about a tenth of a chat request before any history (FAILURES.md, diagnosis 2026-10-23). FOLD_TOOL_GATE=0 turns it off.
 const toolGateOn = process.env.FOLD_TOOL_GATE !== "0"
+const turnGate: TurnGate = new Map()
+// the finding a mechanical turn was served, kept until the model's answer arrives so the machine can check the answer states it (mechVerify)
+const mechTurns = new Map<string, Extract<Mech.Answer, { ok: true }>>()
 // The research itself runs in the door (khora opencode-gather.mjs: the Holodeck's research and its summary selected by the asker's
 // stance, in a worker thread, no model). By default the door also ANSWERS: one model call is pointed at the door's local endpoint, which
 // replies with the text it assembled, so no model runs and no token is spent. FOLD_GATHER_MODEL=1 has a real model write the answer from
@@ -1961,10 +1969,11 @@ export const Plugin = define({
         // the person's own words, kept before a gather or physics turn rewrites the last message: the register ingests THESE
         const originalAsk = lastUserText(event.messages)
         let researchAsk = false
+        let answeredFromRegister = false
         // PHYSICS: serve a read/edit-class turn without tool definitions; decline (recorded) and fall through otherwise.
         let withheld = 0
         const physicsOn = physicsServes(event.model.providerID)
-        if (physicsOn || gatherOn) {
+        if (physicsOn || gatherOn || mechOn) {
           const last = event.messages.at(-1)
           const realAsk = last?.role === "user" && last.content.every((part) => part.type === "text")
           const ask = lastUserText(event.messages)
@@ -1972,7 +1981,15 @@ export const Plugin = define({
           const answered = physicsOn && last?.role === "assistant" && !last.content.some((part) => part.type === "tool-call") && servedTurn.has(event.sessionID)
           // the context hook can run more than once for one step (a retry, a title call): the pending prompt stays until the next one replaces it
           const longformResume = realAsk && (longformPending.has(event.sessionID) || longformJobs.has(event.sessionID)) && ask.startsWith(LONGFORM_MARK)
-          const routed = !longformResume && realAsk && gatherOn && routeOn ? yield* post({ event: "route", ask, hasHistory: event.messages.length > 1 }, routeTimeout, true) : undefined
+          // THE MACHINE FIRST: a lookup the file itself settles never reaches the door's route, the register or a gather, and never a tool loop
+          if (realAsk && !longformResume) mechTurns.delete(event.sessionID)
+          const mechWorkspace = mechOn && realAsk && !longformResume ? yield* workspaceOf(event.sessionID) : undefined
+          const mech = mechWorkspace
+            ? Mech.resolve(ask, mechWorkspace, event.messages.slice(0, -1).filter((m) => m.role === "user").map((m) => m.content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n")))
+            : undefined
+          const mechHit = mech?.ok === true ? mech : undefined
+          if (mech && !mech.ok && mech.gap !== "no-file" && mech.gap !== "not-a-lookup") physicsRecord({ sessionID: event.sessionID, served: false, reason: `mech: ${mech.gap}`, ask, workspace: mechWorkspace })
+          const routed = !longformResume && !mechHit && realAsk && gatherOn && routeOn ? yield* post({ event: "route", ask, hasHistory: event.messages.length > 1 }, routeTimeout, true) : undefined
           const routeKnown = typeof routed?.research === "boolean"
           // THE REGISTER FIRST: a question the conversation itself answers is answered from the session's own stated facts and is never
           // web research. The door ingests this ask's statements on the same call, so a fact stated now is registered for the next turn.
@@ -1982,11 +1999,13 @@ export const Plugin = define({
           const registered = registerOn && realAsk && !longformResume && event.messages.length > 1
             ? yield* post({ event: "register", op: "answer", sessionID: event.sessionID, task: regTask, workspace: regWorkspace, ask, turns: priorTurns(event.messages) }, 4000, true)
             : undefined
-          const fromRegister = registerHit(registered)
+          // on a mechanical turn the register still HEARS the ask (a fact stated beside the lookup is registered) but never answers it: the file did
+          const fromRegister = registerHit(registered) && !mechHit
+          answeredFromRegister = fromRegister
           if (fromRegister) physicsRecord({ sessionID: event.sessionID, served: false, reason: "register: the conversation itself answers this ask", ask, competency: registered.answer.competency })
           // an ask that names the workspace's own things is never gathered from the web, whatever the router said: the tool path searches the workspace
           researchAsk = realAsk && !Physics.workspaceish(ask) && (routeKnown ? routed.research === true : Physics.classify(ask) === "search")
-          const searching = !longformResume && realAsk && gatherOn && !fromRegister && !Physics.workspaceish(ask) && (routeKnown ? routed.research === true : Physics.classify(ask) === "search")
+          const searching = !longformResume && !mechHit && realAsk && gatherOn && !fromRegister && !Physics.workspaceish(ask) && (routeKnown ? routed.research === true : Physics.classify(ask) === "search")
           if (realAsk && !longformResume) { gatheredTurn.delete(event.sessionID); gatherNotes.delete(event.sessionID); longformJobs.delete(event.sessionID); longformPending.delete(event.sessionID); longformResearched.delete(event.sessionID); longformRetries.delete(event.sessionID) }
           // an LONGFORM ask is started at the door (gather, outline, the file, the first section's prompt); when it cannot start, the generic gather below takes it
           // a LONGFORM ask: the router names the FORM (any language, from its kind dictionary); the English predicate is only a fallback
@@ -2074,6 +2093,23 @@ export const Plugin = define({
           } else if (!realAsk) {
             if (physicsOn) physicsRecord({ sessionID: event.sessionID, served: false, reason: "mid-turn: tool results are in the window" })
           } else if (refused.delete(event.sessionID) && physicsOn) physicsRecord({ sessionID: event.sessionID, served: false, reason: "fallback: the previous derived edit was refused", ask })
+          else if (mechHit) {
+            // THE MACHINE'S ANSWER: the file settled it. The window is the finding, with its address, and the question; no tools, no history, no
+            // persona. The finding is the turn's material, so the ground check weighs the answer against it. The model only states it.
+            withheld = toolChars(event.tools)
+            for (const name of Object.keys(event.tools)) delete event.tools[name]
+            event.system.splice(0, event.system.length, { type: "text", text: `The file the question names was just read from disk. What it says, at ${mechHit.at}:\n\n${mechHit.text}\n\nAnswer the question from this.` })
+            // the person's own message goes last and verbatim: it is theirs, and the finding is not something they pasted
+            event.messages.splice(0, event.messages.length, Message.make({ id: last!.id, role: last!.role, content: [{ type: "text", text: ask }], metadata: last!.metadata, providerMetadata: last!.providerMetadata, native: last!.native }))
+            gatheredMaterial.set(event.sessionID, [{ name: mechHit.at, text: mechHit.text }])
+            gatheredTurn.add(event.sessionID)
+            // THE LEDGER: the finding is a fact mark from the organ (agent `mech`, as the swarm writes as `swarm`), with the address and the file's
+            // sha256 as its witness; other sessions and later turns read it from the task's notes. Off the request path: nothing waits on it.
+            const markTask = Mech.taskKey(mechWorkspace!)
+            if (markTask) void postRaw({ event: "mark", task: markTask, agent: "mech", kind: "fact", text: Mech.markText(mechHit) }, askTimeout).catch(() => undefined)
+            mechTurns.set(event.sessionID, mechHit)
+            physicsRecord({ sessionID: event.sessionID, served: true, kind: `mech-${mechHit.kind}`, ask, at: mechHit.at, modelCalls: 1, withheldToolChars: withheld })
+          }
           else if (searching) {
             // GATHER, THROUGH THE DOOR: the research (search, gate, read, stop) and the reading (statements selected by the asker's
             // stance) run in the door's worker; this turn waits for that and no model is asked to search or to write.
@@ -2178,9 +2214,14 @@ export const Plugin = define({
         }
         // THE TOOL GATE: on a plain ask (not served by physics, gather or longform, which send no tools at all), the fold's own tools
         // the turn cannot use are not sent. Counted as withheld, so the ledger sees it.
-        if (toolGateOn && isNewAsk(event.messages) && !gatheredTurn.has(event.sessionID) && !longformJobs.has(event.sessionID) && !servedTurn.has(event.sessionID)) {
+        // The decision is made on the step that opens the turn and held for every later step of that ask (gateTurn): the tool set is
+        // constant within a turn, so the gate holds and the provider's cached prefix is not rewritten at step 2.
+        if (toolGateOn) {
           const before = toolChars(event.tools)
-          if (gateTools(event.tools, originalAsk, { research: researchAsk }).length) withheld += before - toolChars(event.tools)
+          const opens = isNewAsk(event.messages) && !gatheredTurn.has(event.sessionID) && !longformJobs.has(event.sessionID) && !servedTurn.has(event.sessionID)
+          // a turn the register answered is the conversation's, whatever the router called it: its research tools are not sent
+          const removed = gateTurn(turnGate, event.sessionID, originalAsk, event.tools, opens ? () => gateTools(event.tools, originalAsk, { research: researchAsk && !answeredFromRegister }) : undefined)
+          if (removed.length) withheld += before - toolChars(event.tools)
         }
         // Remember the turn's ask and model so a tool result that lands mid-turn
         // can be folded at event time without re-reading the message list.
@@ -2884,6 +2925,25 @@ export const Plugin = define({
     // FACING (level 1): type the finished answer at the door and render the spread. Rides BESIDE
     // the record, never instead; failure-silent (the door's ground answers a gap, never throws past
     // post()'s catch). It only renders — the model's text is untouched.
+    // THE VERIFY STAGE for a mechanical turn: the machine checks that the model's answer states the machine's finding (a constant's value, every
+    // exported name), including short answers the sentence-level ground check does not grade. The result is a mark in the same ledger: a `fact`
+    // when the answer is faithful, a `block` when it is not. The finding stands either way; it is the answer that is judged.
+    const mechVerify = (event: Observed) =>
+      Effect.gen(function* () {
+        if (event.type !== "session.text.ended") return
+        const sessionID = event.data.sessionID
+        const hit = mechTurns.get(sessionID)
+        if (!hit) return
+        mechTurns.delete(sessionID)
+        const said = typeof event.data.text === "string" ? event.data.text : ""
+        const v = Mech.verify(hit, said)
+        physicsRecord({ sessionID, served: true, kind: "mech-verify", at: hit.at, verified: v.ok, ...(v.ok ? {} : { missing: v.missing }) })
+        const task = Mech.taskKey(yield* workspaceOf(sessionID))
+        if (!task) return
+        const text = v.ok ? `verified: the answer states ${hit.fact} [${hit.at}]` : `the answer does not state ${hit.fact}; missing ${v.missing.join(", ")} [${hit.at}]`
+        yield* post({ event: "mark", task, agent: "mech", kind: v.ok ? "fact" : "block", text }, askTimeout).pipe(Effect.asVoid)
+      })
+
     const facing = (event: Observed) =>
       Effect.gen(function* () {
         if (event.type !== "session.text.ended") return
@@ -3108,6 +3168,7 @@ export const Plugin = define({
         // renders the typing on the answer. Each is opt-in and neither can delay the other.
         const side: Array<Effect.Effect<void, never, never>> = [record]
         if (facingOn && event.type === "session.text.ended") side.push(facing(event))
+        if (event.type === "session.text.ended") side.push(mechVerify(event))
         if (derivedApply) side.push(derivedApply)
         if (longformOn && event.type === "session.text.ended") side.push(longformAdvance(event))
         if (shadowOn) {

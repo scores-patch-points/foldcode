@@ -37,7 +37,7 @@ import { SessionRunnerRetry } from "./runner/retry.js"
 import { toLLMMessages } from "./runner/to-llm-message.js"
 import { contentFilterError, toSessionError } from "./to-session-error.js"
 import { SessionUsage } from "./usage.js"
-import { compactMode, hasRegister } from "../plugin/fold-register.js"
+import { compactMode, foldOwnsWindow, hasRegister } from "../plugin/fold-register.js"
 
 export type Settings = {
   auto: boolean
@@ -209,6 +209,8 @@ export const layer = Layer.effect(
 
       // Only the user compacts when automatic compaction is off, overflow included.
       if (trigger.reason !== "manual" && !settings.auto) return { status: "skipped" }
+      // The fold bounds the window itself; the automatic trigger would only fight its cap (see foldOwnsWindow).
+      if (trigger.reason === "auto" && foldOwnsWindow(process.env)) return { status: "skipped" }
       if (trigger.reason === "auto" && !due(context, calculateCeiling(context.model.limit, settings.buffer)))
         return { status: "skipped" }
       const native = context.model.compaction?.type === "native"

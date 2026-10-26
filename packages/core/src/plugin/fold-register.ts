@@ -47,14 +47,40 @@ export const markRegistered = (sessionID: string, present: boolean) => {
 }
 export const hasRegister = (sessionID: string) => registered.has(sessionID)
 
+/** The fold bounds every request itself (`capContext`, FOLD_MAX_CHARS, in the context hook whether or not the door answers), so the
+ *  window never grows with the conversation and automatic compaction has nothing to do. Measured 2026-10-25: with a 32k native window
+ *  (the POC harness) the native ceiling was 16k tokens, below the fold's own fixed floor (~18.6k), so a compaction ran after every step:
+ *  5,697 calls, 39% of prompt tokens, 63% of output tokens, with the window already bounded. `FOLD_OFF=1` hands the window back to
+ *  upstream; `FOLD_NATIVE_COMPACT=1` re-enables the automatic trigger beside the fold. Provider overflow and `/compact` still run. */
+export const foldOwnsWindow = (env: Record<string, string | undefined>) => env.FOLD_OFF !== "1" && env.FOLD_NATIVE_COMPACT !== "1"
+
 /** Which compaction runs: `FOLD_COMPACT` decides when set; unset, the mechanical record is the default for a session whose
  *  stated facts are pinned in the register (a model summary can no longer lose them, and it is the summariser that crashed in F7). */
 export const compactMode = (env: string | undefined, present: boolean): "record" | "model" =>
   env === "record" || (env === undefined && present) ? "record" : "model"
 
+/** The gate's decision is the TURN's, not the step's. The route that decides `research` runs only on the person's own message (step 1), so a
+ *  gate that ran again on step 2 would find nothing to decide on and send every tool: measured 2026-10-25, 71 of 342 multi-step sessions
+ *  changed their tool set between step 1 and step 2 (16,269 -> 20,026 chars), which both undid the gate and broke the provider's cached
+ *  prefix (step-2 cache write 9.8k tokens vs 3.2k when the tools held). `decide` is passed only on the step that opens a turn; later steps
+ *  of the same ask remove the same names. A different ask replaces the decision. Returns the names removed from `tools`. */
+export type TurnGate = Map<string, { ask: string; removed: string[] }>
+export const gateTurn = (held: TurnGate, sessionID: string, ask: string, tools: Record<string, unknown>, decide?: () => string[]) => {
+  if (decide) {
+    const removed = decide()
+    held.set(sessionID, { ask, removed })
+    return removed
+  }
+  const prior = held.get(sessionID)
+  if (!prior || prior.ask !== ask) return []
+  const removed = prior.removed.filter((name) => name in tools)
+  for (const name of removed) delete tools[name]
+  return removed
+}
+
 /** Trailing assistant-role messages that are the fold's own person-facing notices are not part of the ask: a request that ends on
  *  one ends on an assistant message, which a provider without prefill rejects (F5). Returns how many were dropped. */
-export const dropTrailingNotices = <M extends { role: string; content: ReadonlyArray<{ type: string; text?: string }> }>(
+export const dropTrailingNotices = <M extends { role: string; content: ReadonlyArray<{ type: string; text?: string | null }> }>(
   messages: M[],
   isNotice: (text: string) => boolean,
 ) => {
