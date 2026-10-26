@@ -200,3 +200,18 @@ export const taskKey = (workspace: string): string | undefined => {
     return undefined
   }
 }
+
+/** THE DOOR FIRST (the Isthmus, khora native/docs/THE-ISTHMUS.md). `route` is the door's route verdict (khora opencode-route.mjs: `research` is a
+ *  boolean when it answered; `demand` is the lane's reading of an instruction; `language` what the door heard). A lookup is served only when the
+ *  door did not read an instruction, and the English-only exports path only when the door heard English. With no door reading, the machine's own
+ *  question gate (resolve) decides, and the turn says so. Pure. */
+export type DoorRoute = { research?: unknown; demand?: unknown; language?: unknown } | undefined
+export const doorRead = (route: DoorRoute): boolean => typeof route?.research === "boolean"
+export const askedByDoor = (route: DoorRoute): { skip: false } | { skip: true; reason: string } =>
+  doorRead(route) && route?.demand === true ? { skip: true, reason: "demand (the door's lane read an instruction, not a lookup)" } : { skip: false }
+export const servedByDoor = (found: Answer | Gap | undefined, route: DoorRoute): { serve: Answer | undefined; reason?: string } => {
+  if (!found || !found.ok) return { serve: undefined }
+  if (found.kind === "exports" && doorRead(route) && route?.language !== "en")
+    return { serve: undefined, reason: `no-codec (the exports path reads English; the door heard ${String(route?.language)})` }
+  return { serve: found, reason: doorRead(route) ? undefined : "served without the door's reading (its route did not answer); the machine's own question gate decided" }
+}

@@ -1981,15 +1981,24 @@ export const Plugin = define({
           const answered = physicsOn && last?.role === "assistant" && !last.content.some((part) => part.type === "tool-call") && servedTurn.has(event.sessionID)
           // the context hook can run more than once for one step (a retry, a title call): the pending prompt stays until the next one replaces it
           const longformResume = realAsk && (longformPending.has(event.sessionID) || longformJobs.has(event.sessionID)) && ask.startsWith(LONGFORM_MARK)
-          // THE MACHINE FIRST: a lookup the file itself settles never reaches the door's route, the register or a gather, and never a tool loop
+          // THE DOOR FIRST, THEN THE MACHINE (the Isthmus, khora native/docs/THE-ISTHMUS.md): the door's route reads the ask in its own language
+          // and its lane reads the ask's mood. A lookup the file itself settles is served mechanically (no route, register, gather or tool loop
+          // after it) only when the door did not read an instruction (demand), and its English-only exports path only when the door heard
+          // English. The door down is the old order, recorded: the machine's own question gate (physics-mech.ts) still holds.
           if (realAsk && !longformResume) mechTurns.delete(event.sessionID)
+          const routedEarly = !longformResume && realAsk && (gatherOn || mechOn) && routeOn ? yield* post({ event: "route", ask, hasHistory: event.messages.length > 1 }, routeTimeout, true) : undefined
           const mechWorkspace = mechOn && realAsk && !longformResume ? yield* workspaceOf(event.sessionID) : undefined
-          const mech = mechWorkspace
+          const asked = Mech.askedByDoor(routedEarly)
+          const mech = mechWorkspace && !asked.skip
             ? Mech.resolve(ask, mechWorkspace, event.messages.slice(0, -1).filter((m) => m.role === "user").map((m) => m.content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n")))
             : undefined
-          const mechHit = mech?.ok === true ? mech : undefined
+          const served = Mech.servedByDoor(mech, routedEarly)
+          const mechHit = served.serve
+          if (mechWorkspace && asked.skip) physicsRecord({ sessionID: event.sessionID, served: false, reason: `mech: ${asked.reason}`, ask, workspace: mechWorkspace })
+          if (served.reason) physicsRecord({ sessionID: event.sessionID, served: false, reason: `mech: ${served.reason}`, ask, workspace: mechWorkspace })
           if (mech && !mech.ok && mech.gap !== "no-file" && mech.gap !== "not-a-lookup") physicsRecord({ sessionID: event.sessionID, served: false, reason: `mech: ${mech.gap}`, ask, workspace: mechWorkspace })
-          const routed = !longformResume && !mechHit && realAsk && gatherOn && routeOn ? yield* post({ event: "route", ask, hasHistory: event.messages.length > 1 }, routeTimeout, true) : undefined
+          // what the rest of the turn reads as the route is unchanged: none on a mechanical turn, none when gathering is off
+          const routed = !mechHit && gatherOn ? routedEarly : undefined
           const routeKnown = typeof routed?.research === "boolean"
           // THE REGISTER FIRST: a question the conversation itself answers is answered from the session's own stated facts and is never
           // web research. The door ingests this ask's statements on the same call, so a fact stated now is registered for the next turn.

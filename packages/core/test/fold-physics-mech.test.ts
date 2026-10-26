@@ -157,3 +157,20 @@ test("Isthmus: a question in any script that names a symbol is still a lookup", 
   for (const ask of ["src/a.ts 里的 DEFAULT_TIMEOUT_MS 是多少？", "¿Cuánto vale DEFAULT_TIMEOUT_MS en src/a.ts?", "ما قيمة DEFAULT_TIMEOUT_MS في src/a.ts؟"])
     expect(resolve(ask, root)).toMatchObject({ ok: true, text: "DEFAULT_TIMEOUT_MS = 300000" })
 })
+
+// THE DOOR FIRST: the door's route reads the ask's language and its lane the ask's mood; the machine serves behind it.
+import { askedByDoor, servedByDoor } from "../src/plugin/physics-mech.js"
+test("Isthmus: a lookup is skipped when the door's lane read an instruction", () => {
+  expect(askedByDoor({ research: false, demand: true, language: "en" })).toMatchObject({ skip: true })
+  expect(askedByDoor({ research: false, demand: false, language: "en" })).toMatchObject({ skip: false })
+  expect(askedByDoor(undefined)).toMatchObject({ skip: false })
+})
+test("Isthmus: the English-only exports path is served only when the door heard English; no door is disclosed", () => {
+  const exp = resolve("List the exports of src/a.ts", root)
+  expect(servedByDoor(exp, { research: false, language: "en" }).serve).toBeDefined()
+  expect(servedByDoor(exp, { research: false, language: "es" })).toMatchObject({ serve: undefined })
+  expect(servedByDoor(exp, { research: false, language: "es" }).reason).toContain("no-codec")
+  const c = resolve("What is DEFAULT_TIMEOUT_MS in src/a.ts?", root)
+  expect(servedByDoor(c, { research: false, language: "es" }).serve).toBeDefined()
+  expect(servedByDoor(c, undefined).reason).toContain("without the door's reading")
+})
