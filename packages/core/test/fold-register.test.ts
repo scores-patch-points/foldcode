@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { REGISTER_LEGEND, compactMode, dropTrailingNotices, gateTools, hasRegister, markRegistered, registerBlock, registerHit } from "../src/plugin/fold-register.js"
+import { REGISTER_LEGEND, compactMode, dropTrailingNotices, foldOwnsWindow, gateTurn, gateTools, hasRegister, markRegistered, registerBlock, registerHit } from "../src/plugin/fold-register.js"
 import { isPersonNotice } from "../src/plugin/fold.js"
 
 // SAFETY: these helpers read only role and text parts; the minimal shapes below fabricate no field they do not read.
@@ -63,4 +63,32 @@ test("tool gate: research and media tools leave a chat turn; snip and fold alway
   expect(gateTools(media, "read ./scan.pdf and summarise it", { research: false }).sort()).toEqual(["cube", "swarm"])
   const prefixed = { fold_swarm: {}, "tool:cube": {} } as Record<string, unknown>
   expect(gateTools(prefixed, "hello", { research: false }).sort()).toEqual(["fold_swarm", "tool:cube"])
+})
+
+test("the fold owns the window: no automatic compaction unless FOLD_OFF=1 or FOLD_NATIVE_COMPACT=1", () => {
+  expect(foldOwnsWindow({})).toBe(true)
+  expect(foldOwnsWindow({ FOLD_OFF: "1" })).toBe(false)
+  expect(foldOwnsWindow({ FOLD_NATIVE_COMPACT: "1" })).toBe(false)
+  expect(foldOwnsWindow({ FOLD_OFF: "0", FOLD_NATIVE_COMPACT: "0" })).toBe(true)
+})
+
+test("the tool gate holds for the whole turn: later steps of the same ask drop the same tools, a new ask decides again", () => {
+  const held = new Map<string, { ask: string; removed: string[] }>()
+  const all = () => ({ read: 1, snip: 1, swarm: 1, cube: 1, perceive: 1, transcribe: 1 })
+  const step1 = all()
+  expect(gateTurn(held, "s", "what is X?", step1, () => gateTools(step1, "what is X?", { research: false })).sort()).toEqual(["cube", "perceive", "swarm", "transcribe"])
+  expect(Object.keys(step1).sort()).toEqual(["read", "snip"])
+  // step 2 of the same ask: the harness rebuilt the full tool set; the held decision removes the same names
+  const step2 = all()
+  expect(gateTurn(held, "s", "what is X?", step2).sort()).toEqual(["cube", "perceive", "swarm", "transcribe"])
+  expect(Object.keys(step2).sort()).toEqual(Object.keys(step1).sort())
+  // another session is untouched, and a different ask without a decision removes nothing
+  expect(gateTurn(held, "other", "what is X?", all())).toEqual([])
+  expect(gateTurn(held, "s", "something else", all())).toEqual([])
+  // a research ask keeps swarm and cube, and that choice is held too
+  const r1 = all()
+  gateTurn(held, "s", "research Y", r1, () => gateTools(r1, "research Y", { research: true }))
+  const r2 = all()
+  gateTurn(held, "s", "research Y", r2)
+  expect("swarm" in r2 && "cube" in r2 && !("perceive" in r2)).toBe(true)
 })

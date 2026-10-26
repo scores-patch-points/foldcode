@@ -1,4 +1,7 @@
 import { expect, test } from "bun:test"
+
+// The fold bounds the window itself and skips the automatic trigger (foldOwnsWindow); these tests exercise the upstream trigger.
+process.env.FOLD_NATIVE_COMPACT = "1"
 import { GenerationOptions, LLMClient, LLMEvent, LanguageModel, ToolDefinition, type LLMRequest } from "@opencode/ai"
 import { OpenAIChat } from "@opencode/ai/protocols"
 import { Database } from "@opencode/core/database/database"
@@ -209,6 +212,14 @@ it.effect("auto compaction estimates current content against the buffered prompt
     const inputLimited = { context: 400_000, input: 272_000, output: 128_000 }
     expect(yield* due(input(244_799, inputLimited))).toBe(false)
     expect(yield* due(input(244_800, inputLimited))).toBe(true)
+
+    // With the fold owning the window, the same over-ceiling context is skipped: automatic compaction would only fight the fold's cap.
+    delete process.env.FOLD_NATIVE_COMPACT
+    expect(yield* due(input(244_800, inputLimited))).toBe(false)
+    process.env.FOLD_OFF = "1"
+    expect(yield* due(input(244_800, inputLimited))).toBe(true)
+    delete process.env.FOLD_OFF
+    process.env.FOLD_NATIVE_COMPACT = "1"
     const native = (tokens: number, limit: { context: number; input?: number; output: number } = inputLimited) => {
       const selected = input(tokens, limit)
       return { ...selected, model: { ...selected.model, compaction: { type: "native" as const } } }

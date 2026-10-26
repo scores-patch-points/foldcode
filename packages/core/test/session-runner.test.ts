@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test"
+
+// The fold bounds the window itself and skips the automatic trigger (foldOwnsWindow); these tests exercise the upstream trigger.
+process.env.FOLD_NATIVE_COMPACT = "1"
 import {
   AIError,
   CompactionPart,
