@@ -74,6 +74,28 @@ Without an interactive terminal, the command fails unless you pass `--yes` to
 accept. Once accepted, later runs skip the prompt, even after remote access has
 been turned off with `opencode service set remote false`.
 
+### Open link
+
+To open a coding session from any browser or device with one click, with no
+sign-in, make an open link:
+
+```bash
+$ opencode link
+```
+
+It turns on remote access if needed and prints a link and QR code. The link works
+as many times as it is opened, so it is safe to paste into a chat. Anyone who
+has it has full control of this machine, so share it only with people you
+trust. It is also a switch in Settings → Pairing on desktop.
+
+```bash
+# Stop it at once, and sign out every browser that used it
+$ opencode link --off
+```
+
+Turning it on again makes a new link. Changing the server password also
+stops it.
+
 ## Configure
 
 Set any option with `opencode service set`:

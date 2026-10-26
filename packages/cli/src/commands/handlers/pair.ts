@@ -91,14 +91,16 @@ export const remoteConsent = Effect.fn("cli.pair.remote-consent")(function* (
   config: ServiceConfig.Info,
   input: { readonly yes: boolean },
   terminal: RemoteConsentPrompt = terminalPrompt,
+  warning: string = remoteWarning,
 ) {
   if (config.remote !== undefined || config.remoteAccepted === true) return true
   if (!input.yes && !terminal.interactive()) {
-    process.stderr.write([remoteWarning, "Run interactively or pass --yes to continue."].join(EOL) + EOL)
+    process.stderr.write([warning, "Run interactively or pass --yes to continue."].join(EOL) + EOL)
     process.exitCode = 1
     return false
   }
-  log.warn(remoteWarning)
+  // Stderr, so `opencode link --plain` leaves stdout to the link alone.
+  log.warn(warning, { output: process.stderr })
   if (!input.yes) {
     const accepted = yield* Effect.promise(terminal.confirm)
     if (isCancel(accepted)) {
@@ -125,7 +127,7 @@ const pairingURLs = Effect.fnUntraced(function* (
 })
 
 // The service attaches the tunnel in the background, so wait for its URL to appear in server info.
-const remoteURL = Effect.fnUntraced(function* (client: ReturnType<typeof OpenCode.make>) {
+export const remoteURL = Effect.fnUntraced(function* (client: ReturnType<typeof OpenCode.make>) {
   const tunnelURL = Effect.gen(function* () {
     const route = (yield* ServiceConfig.read()).remote?.route
     const hostname = route === undefined ? undefined : yield* RemoteTunnel.hostname(route)
