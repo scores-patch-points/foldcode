@@ -80,7 +80,7 @@ export const gateTurn = (held: TurnGate, sessionID: string, ask: string, tools: 
 
 /** Trailing assistant-role messages that are the fold's own person-facing notices are not part of the ask: a request that ends on
  *  one ends on an assistant message, which a provider without prefill rejects (F5). Returns how many were dropped. */
-export const dropTrailingNotices = <M extends { role: string; content: ReadonlyArray<{ type: string; text?: string }> }>(
+export const dropTrailingNotices = <M extends { role: string; content: ReadonlyArray<{ type: string; text?: string | null }> }>(
   messages: M[],
   isNotice: (text: string) => boolean,
 ) => {
