@@ -20,6 +20,8 @@ const SYMBOL = /\b([A-Z][A-Z0-9]*_[A-Z0-9_]+)\b/g
 const SAME = /\b(same|that|this|those|the) file\b|\bin it\b/i
 const EXPORTS = /\bexport(?:ed|s)?\b/i
 const LISTISH = /\b(list|name|names|which|what are)\b/i
+// a question mark of any script: Latin/fullwidth ?, Arabic ؟, Armenian ՞, Ethiopic ፧, Greek ; (U+037E), inverted ¿ opening one
+const QUESTION_MARK = /[?？؟՞፧;¿]/u
 
 /** A numeric literal or a product of them (`300_000`, `60 * 1000`, `1024 * 1024`), else undefined. Never evaluates anything else. */
 export const literal = (rhs: string): string | undefined => {
@@ -146,7 +148,13 @@ export const resolve = (ask: string, root: string, prior: readonly string[] = []
   const lines = text.split("\n")
   const sha = crypto.createHash("sha256").update(text).digest("hex")
   if (EXPORTS.test(ask) && LISTISH.test(ask)) return exportsAsk(ask, lines, rel, sha)
-  if (/\bwhat('s| is| was)\b|\bvalue\b/i.test(ask) || ask.match(SYMBOL)) return constantAsk(ask, lines, rel, sha)
+  // A lookup is a QUESTION. The English question words are English's own reading; any language's question mark is the
+  // notation every script shares (? ？ ؟ ՞ ፧ ;). A named symbol alone is not a question: "Change X to 3" / "cambia X a 3" /
+  // "X を 3 に変更して" name a symbol and ask for a change, and serving them as a read-only lookup (tools withheld) made the
+  // edit impossible (the Isthmus, khora native/docs/THE-ISTHMUS.md: the English codec is never applied to another language,
+  // and a symbol is not a reading of the ask). Such an ask is a typed gap and takes the normal path, with its tools.
+  if (/\bwhat('s| is| was)\b|\bvalue\b/i.test(ask) || QUESTION_MARK.test(ask)) return constantAsk(ask, lines, rel, sha)
+  if (ask.match(SYMBOL)) return { ok: false, gap: "not-a-question", detail: "names a symbol but asks no question (no question mark, no English question word): a change or an instruction is not a lookup" }
   return { ok: false, gap: "not-a-lookup" }
 }
 

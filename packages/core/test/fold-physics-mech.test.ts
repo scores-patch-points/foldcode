@@ -140,3 +140,20 @@ test("taskKey mirrors the door's projectKey", async () => {
   const { projectKey } = (await import(door)) as { projectKey: (w: string) => string | null }
   for (const w of [root, path.join(root, "src"), path.join(root, "pkg/deep"), process.cwd(), os.tmpdir(), os.homedir()]) expect(taskKey(w) ?? null).toBe(projectKey(w))
 })
+
+// THE ISTHMUS (khora native/docs/THE-ISTHMUS.md): a named symbol is not a question. Before, `|| ask.match(SYMBOL)` served any
+// ask with a path and a SCREAMING_SNAKE name as a read-only lookup, with tools withheld — an edit in any language ("Change X to 3",
+// "cambia X a 3", "…を 3 に変更してください") was answered with the constant's value and could not happen.
+test("Isthmus: an instruction that names a symbol is not a lookup, in any language", () => {
+  for (const ask of [
+    "Change DEFAULT_TIMEOUT_MS in src/a.ts to 3",
+    "En src/a.ts, cambia DEFAULT_TIMEOUT_MS a 3",
+    "Dans src/a.ts, remplace DEFAULT_TIMEOUT_MS par 3",
+    "src/a.ts の DEFAULT_TIMEOUT_MS を 3 に変更してください",
+  ]) expect(resolve(ask, root)).toMatchObject({ ok: false, gap: "not-a-question" })
+})
+
+test("Isthmus: a question in any script that names a symbol is still a lookup", () => {
+  for (const ask of ["src/a.ts 里的 DEFAULT_TIMEOUT_MS 是多少？", "¿Cuánto vale DEFAULT_TIMEOUT_MS en src/a.ts?", "ما قيمة DEFAULT_TIMEOUT_MS في src/a.ts؟"])
+    expect(resolve(ask, root)).toMatchObject({ ok: true, text: "DEFAULT_TIMEOUT_MS = 300000" })
+})
