@@ -23,6 +23,7 @@ import { money } from "@opencode/util/savings"
 import { Effect, Fiber, Schema, Stream } from "effect"
 import os from "node:os"
 import path from "node:path"
+import { createHash } from "node:crypto"
 import { record as rulerRecord, recordTokens as rulerTokens } from "./fold-ruler.js"
 import { tap as usageTap } from "./usage-tap.js"
 import { Bus } from "../bus.js"
@@ -1240,6 +1241,7 @@ const clipToFit = (text: string, keep: number, handle?: string) =>
     : `${text.slice(0, keep)}\n[fold: ${(text.length - keep).toLocaleString()} of ${text.length.toLocaleString()} chars cut to fit the window. This is a cut of the same output, not a new one; ${handle ? `snip ${handle} returns all of it` : "read with an offset for the rest"}.]`
 
 const isNewAsk = (messages: SessionHooks["context"]["messages"]) => messages.at(-1)?.role === "user"
+const turnNotes = new Map<string, { ask: string; texts: string[] }>()
 
 // Event payloads are trimmed before they leave the process: the record needs the
 // shape of a turn (which tools, in what order, how it ended), not its bytes.
@@ -1842,6 +1844,29 @@ export const Plugin = define({
         native: message.native,
       })
 
+    // ATTACHMENTS KEPT OUT OF THE WINDOW (khora opencode-ingest.mjs). A large text attachment is a one-time message part: the first
+    // compaction summarises it away. It is handed to the door once (in parts under the door's 4 MB request cap), replaced in the request
+    // by a one-line note, and the door serves the pages each later ask bears on through the memory channel. FOLD_INGEST=0 turns it off;
+    // FOLD_INGEST_MIN (chars, default 20000) is the size above which an attachment is kept out. Fails open: no door answer, no change.
+    const ingestOn = process.env.FOLD_INGEST !== "0"
+    const ingestMin = Number(process.env.FOLD_INGEST_MIN ?? 20_000)
+    const ingested = new Map<string, string>()
+    const ingestOne = (sessionID: string, id: string, name: string, text: string) =>
+      Effect.gen(function* () {
+        const key = `${sessionID}|${id}`
+        const known = ingested.get(key)
+        if (known) return known
+        const size = 3_000_000
+        const parts = Math.max(1, Math.ceil(text.length / size))
+        let last: Record<string, unknown> | undefined
+        for (let part = 0; part < parts; part++) {
+          last = yield* post({ event: "ingest", sessionID, id, name, text: text.slice(part * size, (part + 1) * size), part, parts }, 60_000, true)
+          if (!last?.ok) return undefined
+        }
+        const note = typeof last?.note === "string" ? last.note : undefined
+        if (note) ingested.set(key, note)
+        return note
+      })
     const perceiveMessages = (event: SessionHooks["context"]) =>
       Effect.gen(function* () {
         if (off || perceiveOff || Date.now() < downUntil) return
@@ -1849,9 +1874,71 @@ export const Plugin = define({
           let content = message.content
           let changed = false
           for (const [partIndex, part] of content.entries()) {
+            // A text/plain attachment reaches this hook inside the user's text: the ask, then "Attached file: <name>" and the file's
+            // content, possibly several (measured: one 128 KB text part, no metadata). Each large attached section is handed to the
+            // door and replaced by its one-line note; the ask itself is kept as typed.
+            // The run command wraps a file as <file name="..."> ... </file> inside the same text (measured on a captured request).
+            if (ingestOn && message.role === "user" && part.type === "text" && part.text.length >= ingestMin && /<file name="[^"]*"[^>]*>/.test(part.text)) {
+              let any = false
+              const found: { at: number; end: number; name: string; body: string }[] = []
+              for (const m of part.text.matchAll(/<file name="([^"]*)"[^>]*>\n?([\s\S]*?)(?:<\/file>|$)/g)) found.push({ at: m.index!, end: m.index! + m[0].length, name: m[1], body: m[2] })
+              let rewritten = part.text
+              for (const f of found.reverse()) {
+                if (f.body.length < ingestMin) continue
+                const id = createHash("sha256").update(f.body).digest("hex").slice(0, 16)
+                const note = yield* ingestOne(event.sessionID, id, f.name || "attachment", f.body)
+                if (!note) continue
+                rewritten = rewritten.slice(0, f.at) + `<file name="${f.name}">\n${note}\n</file>` + rewritten.slice(f.end)
+                any = true
+              }
+              if (process.env.FOLD_INGEST_DEBUG) fs.appendFileSync(process.env.FOLD_INGEST_DEBUG, JSON.stringify({ at: Date.now(), sessionID: event.sessionID, files: found.length, before: part.text.length, after: rewritten.length, any }) + "\n")
+              if (any) {
+                const next = content.slice()
+                next[partIndex] = { ...part, text: rewritten } as typeof content[number]
+                content = next
+                changed = true
+              }
+              continue
+            }
+            if (ingestOn && message.role === "user" && part.type === "text" && part.text.length >= ingestMin && /(?:^|\n)\s*Attached file: /.test(part.text)) {
+              const pieces = part.text.split(/(?=(?:^|\n)\s*Attached file: )/)
+              let rewritten = ""
+              let any = false
+              for (const piece of pieces) {
+                const head = /^\s*Attached file: ([^\n]*)\n(?:Description:[^\n]*\n)?\n?/.exec(piece)
+                if (!head || piece.length - head[0].length < ingestMin) { rewritten += piece; continue }
+                const body = piece.slice(head[0].length)
+                const id = createHash("sha256").update(body).digest("hex").slice(0, 16)
+                const note = yield* ingestOne(event.sessionID, id, head[1] || "attachment", body)
+                if (note) { rewritten += `\n\nAttached file: ${head[1]}\n${note}`; any = true } else rewritten += piece
+              }
+              if (process.env.FOLD_INGEST_DEBUG) fs.appendFileSync(process.env.FOLD_INGEST_DEBUG, JSON.stringify({ at: Date.now(), sessionID: event.sessionID, pieces: pieces.length, before: part.text.length, after: rewritten.length, any }) + "\n")
+              if (any) {
+                const next = content.slice()
+                next[partIndex] = { ...part, text: rewritten } as typeof content[number]
+                content = next
+                changed = true
+              }
+              continue
+            }
             if (message.role === "user" && part.type === "media") {
               const media = part.media as { mediaType?: string; source?: { type?: string; data?: unknown } }
               const mime = media.mediaType ?? ""
+              if (ingestOn && /^text\/|json|csv|xml|markdown/i.test(mime)) {
+                const b64 = inlineB64(media.source)
+                const text = b64 ? Buffer.from(b64, "base64").toString("utf8") : ""
+                if (text.length >= ingestMin) {
+                  const name = (part as { filename?: string }).filename ?? "attachment"
+                  const note = yield* ingestOne(event.sessionID, perceiveKey(mime, b64!), name, text)
+                  if (note) {
+                    const next = content.slice()
+                    next[partIndex] = { type: "text", text: note } as typeof content[number]
+                    content = next
+                    changed = true
+                  }
+                }
+                continue
+              }
               if (!perceivableMime(mime)) continue
               const dataBase64 = inlineB64(media.source)
               if (!dataBase64) continue
@@ -2242,6 +2329,10 @@ export const Plugin = define({
         yield* perceiveMessages(event)
         // The recall and the fold both knock on the door; the recall first, so
         // the turn exists before any fold can be attributed to it.
+        // The door's notes for this ask (memory, pages, lane ...) are fetched on the turn's first step only; a turn that goes on to call
+        // tools used to lose them on every later step (measured: the right page was served, the model searched, and on the step
+        // that answered the page was gone). They are kept for the whole turn and re-sent on each step of the same ask.
+        const systemBefore = event.system.length
         if (isNewAsk(event.messages)) {
           const workspace = yield* workspaceOf(event.sessionID)
           const answer = yield* post(
@@ -2316,6 +2407,11 @@ export const Plugin = define({
           // with a claim about the world.
           const lane = answer?.lane
           if (typeof lane === "string" && lane.length > 0) event.system.push({ type: "text", text: lane })
+        }
+        if (isNewAsk(event.messages)) turnNotes.set(event.sessionID, { ask: lastUserText(event.messages), texts: event.system.slice(systemBefore).flatMap((b) => (b.type === "text" ? [b.text] : [])) })
+        else {
+          const kept = turnNotes.get(event.sessionID)
+          if (kept && kept.ask === lastUserText(event.messages)) for (const text of kept.texts) event.system.push({ type: "text", text })
         }
         // Surf: the window must not grow per prompt. The door's ladder (figure /
         // kind / pattern, each line addressed) answers; with it down, local
@@ -2890,6 +2986,34 @@ export const Plugin = define({
       }),
     )
 
+    // ATTACHMENTS AT THE DOOR OF THE SESSION. A file larger than the window is compacted away before the context hook ever sees it
+    // (measured: at 150 and 600 pages the first request was already a checkpoint). The prompt hook runs when the person sends, before
+    // any request: a large text file (in prompt.files as a data: URI, or inline as <file name="...">...</file>) is handed to the door here
+    // and replaced by its one-line note. The context-hook path stays as the fallback.
+    yield* ctx.session.hook("prompt", (event) =>
+      Effect.gen(function* () {
+        if (off || !ingestOn) return
+        const prompt = event.prompt as { text: string; files?: { uri: string; name?: string }[] }
+        const keep: { uri: string; name?: string }[] = []
+        for (const file of prompt.files ?? []) {
+          const m = /^data:([^;,]*)(;base64)?,/.exec(file.uri)
+          const text = m && /^text\/|json|csv|xml|markdown/i.test(m[1] || "text/plain") ? (m[2] ? Buffer.from(file.uri.slice(m[0].length), "base64").toString("utf8") : decodeURIComponent(file.uri.slice(m[0].length))) : ""
+          if (text.length < ingestMin) { keep.push(file); continue }
+          const id = createHash("sha256").update(text).digest("hex").slice(0, 16)
+          const note = yield* ingestOne(event.sessionID, id, file.name ?? "attachment", text)
+          if (!note) { keep.push(file); continue }
+          prompt.text += `\n\n<file name="${file.name ?? "attachment"}">\n${note}\n</file>`
+        }
+        if (prompt.files) prompt.files = keep
+        for (const f of [...prompt.text.matchAll(/<file name="([^"]*)"[^>]*>\n?([\s\S]*?)<\/file>/g)].reverse()) {
+          if (f[2].length < ingestMin) continue
+          const id = createHash("sha256").update(f[2]).digest("hex").slice(0, 16)
+          const note = yield* ingestOne(event.sessionID, id, f[1] || "attachment", f[2])
+          if (note) prompt.text = prompt.text.slice(0, f.index!) + `<file name="${f[1]}">\n${note}\n</file>` + prompt.text.slice(f.index! + f[0].length)
+        }
+        if (process.env.FOLD_INGEST_DEBUG) fs.appendFileSync(process.env.FOLD_INGEST_DEBUG, JSON.stringify({ at: Date.now(), hook: "prompt", sessionID: event.sessionID, files: (event.prompt as { files?: unknown[] }).files?.length ?? 0, text: prompt.text.length }) + "\n")
+      }).pipe(Effect.catchCause(() => Effect.void)),
+    )
     yield* ctx.session.hook("context", context)
     yield* ctx.session.hook("title", title)
     yield* ctx.session.hook("generate", (event) => {
