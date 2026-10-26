@@ -45,6 +45,28 @@ already bounds the window. This is an inference from the code and the numbers; t
    that ask, so the tool set (and the provider's cached prefix) stays constant within a turn.
 3. **`physics-mech.ts`** and its hook in `fold.ts`. The mechanical resolver and the branch that serves its answer (this document).
 
+## Where it sits in the universal pipeline (`~/.khora/ONE-PIPELINE.md`)
+
+The pipeline's skeleton is: read the request, source each part (snip or reason from a source, else ask the mouth), hear every claim into
+the notes ledger with its witness, reason with no model, assemble, verify. A mechanical turn runs that skeleton with the machine doing
+everything except the last sentence:
+
+| stage | on a mechanical turn |
+|---|---|
+| read the request | `Mech.resolve(ask, workspace, earlier asks)` |
+| source each part | the file itself, read from disk; the witness is `file#Lnn` plus the file's **sha256** |
+| hear | a `fact` mark from agent `mech` (the organ is the author, as the swarm writes as `swarm`) in the task's notes and EOT log, through the door's `mark` event. Other sessions and later turns read it from the task. The door types it itself (observed: `cell=DEF·Figure`). |
+| reason | none: the machine's finding is the reasoning |
+| assemble | the model states it: finding in the system block, the user's message verbatim and last |
+| verify | `Mech.verify`: the answer must state the constant's value (any digit grouping) or every exported name as a whole word. The result is a mark in the same ledger (`fact verified: …` or `block`), and a `mech-verify` row in `physics.jsonl`. The door's sentence-level ground check also grades the answer against the finding (it skips answers under 8 characters, which `verify` covers). |
+
+The **register still hears the ask** on a mechanical turn, so a fact stated beside a lookup is registered ("Our mascot is Orbit. What is X in
+file.ts?" registers Orbit); it just never answers the turn, because the file did. Checked live: the next turn recalled "Orbit".
+
+The task name is computed in the plugin by `taskKey` (a mirror of khora's `projectKey`: git root basename plus a hash of its path). A test
+cross-checks it against the door's own function, so the two cannot drift silently; it is skipped on a machine without `~/.khora`. A workspace
+with no project key (a home directory) writes no marks. The door process is not modified and needs no restart.
+
 ## What the resolver answers today
 
 A pure module. It reads only the one file the ask names, which must resolve inside the workspace or its repository root (found by walking
@@ -106,6 +128,9 @@ tool size. Judge it on a single-ask session. Set `FOLD_RULER_FILE=/tmp/ruler.jso
 * Coverage is narrow (constants, exports). The 23 questions came from one session built to test the fold, so real coverage will be lower.
 * **Recall questions** ("from our conversation, what value did you report…") still take the heavy path. The register knows the answer, but a
   register hit only withholds research tools; it does not yet use this thin window (measured: 2 requests of about 18.7k tokens each).
+* The `verify` mark is posted off the request path. In a one-shot CLI run the process can exit before it lands (seen once in six runs);
+  the local `physics.jsonl` row is written first, so the check is never lost, only its ledger mark.
+* `verify` checks that the answer states the finding, not that the answer says nothing else. It cannot catch an extra wrong claim.
 * The model still makes one call to state the finding. A zero-call answer on Anthropic needs a model-shaped responder; the door's
   `/v1/gather` redirect speaks only OpenAI-chat.
 * Wording matters. Put the finding in the system block, keep the user's message verbatim and last, and do not say "it is your own reading":

@@ -113,6 +113,8 @@ const registerOn = process.env.FOLD_REGISTER !== "0"
 // request, about a tenth of a chat request before any history (FAILURES.md, diagnosis 2026-10-23). FOLD_TOOL_GATE=0 turns it off.
 const toolGateOn = process.env.FOLD_TOOL_GATE !== "0"
 const turnGate: TurnGate = new Map()
+// the finding a mechanical turn was served, kept until the model's answer arrives so the machine can check the answer states it (mechVerify)
+const mechTurns = new Map<string, Extract<Mech.Answer, { ok: true }>>()
 // The research itself runs in the door (khora opencode-gather.mjs: the Holodeck's research and its summary selected by the asker's
 // stance, in a worker thread, no model). By default the door also ANSWERS: one model call is pointed at the door's local endpoint, which
 // replies with the text it assembled, so no model runs and no token is spent. FOLD_GATHER_MODEL=1 has a real model write the answer from
@@ -1980,6 +1982,7 @@ export const Plugin = define({
           // the context hook can run more than once for one step (a retry, a title call): the pending prompt stays until the next one replaces it
           const longformResume = realAsk && (longformPending.has(event.sessionID) || longformJobs.has(event.sessionID)) && ask.startsWith(LONGFORM_MARK)
           // THE MACHINE FIRST: a lookup the file itself settles never reaches the door's route, the register or a gather, and never a tool loop
+          if (realAsk && !longformResume) mechTurns.delete(event.sessionID)
           const mechWorkspace = mechOn && realAsk && !longformResume ? yield* workspaceOf(event.sessionID) : undefined
           const mech = mechWorkspace
             ? Mech.resolve(ask, mechWorkspace, event.messages.slice(0, -1).filter((m) => m.role === "user").map((m) => m.content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n")))
@@ -1991,12 +1994,13 @@ export const Plugin = define({
           // THE REGISTER FIRST: a question the conversation itself answers is answered from the session's own stated facts and is never
           // web research. The door ingests this ask's statements on the same call, so a fact stated now is registered for the next turn.
           // Fails open: no door, no hit, the route decides as before.
-          const regTask = registerOn && realAsk && !mechHit && !longformResume && event.messages.length > 1 ? yield* taskOf(event.sessionID) : undefined
-          const regWorkspace = registerOn && realAsk && !mechHit && !longformResume && event.messages.length > 1 ? yield* workspaceOf(event.sessionID) : undefined
-          const registered = registerOn && realAsk && !mechHit && !longformResume && event.messages.length > 1
+          const regTask = registerOn && realAsk && !longformResume && event.messages.length > 1 ? yield* taskOf(event.sessionID) : undefined
+          const regWorkspace = registerOn && realAsk && !longformResume && event.messages.length > 1 ? yield* workspaceOf(event.sessionID) : undefined
+          const registered = registerOn && realAsk && !longformResume && event.messages.length > 1
             ? yield* post({ event: "register", op: "answer", sessionID: event.sessionID, task: regTask, workspace: regWorkspace, ask, turns: priorTurns(event.messages) }, 4000, true)
             : undefined
-          const fromRegister = registerHit(registered)
+          // on a mechanical turn the register still HEARS the ask (a fact stated beside the lookup is registered) but never answers it: the file did
+          const fromRegister = registerHit(registered) && !mechHit
           answeredFromRegister = fromRegister
           if (fromRegister) physicsRecord({ sessionID: event.sessionID, served: false, reason: "register: the conversation itself answers this ask", ask, competency: registered.answer.competency })
           // an ask that names the workspace's own things is never gathered from the web, whatever the router said: the tool path searches the workspace
@@ -2099,6 +2103,11 @@ export const Plugin = define({
             event.messages.splice(0, event.messages.length, Message.make({ id: last!.id, role: last!.role, content: [{ type: "text", text: ask }], metadata: last!.metadata, providerMetadata: last!.providerMetadata, native: last!.native }))
             gatheredMaterial.set(event.sessionID, [{ name: mechHit.at, text: mechHit.text }])
             gatheredTurn.add(event.sessionID)
+            // THE LEDGER: the finding is a fact mark from the organ (agent `mech`, as the swarm writes as `swarm`), with the address and the file's
+            // sha256 as its witness; other sessions and later turns read it from the task's notes. Off the request path: nothing waits on it.
+            const markTask = Mech.taskKey(mechWorkspace!)
+            if (markTask) void postRaw({ event: "mark", task: markTask, agent: "mech", kind: "fact", text: Mech.markText(mechHit) }, askTimeout).catch(() => undefined)
+            mechTurns.set(event.sessionID, mechHit)
             physicsRecord({ sessionID: event.sessionID, served: true, kind: `mech-${mechHit.kind}`, ask, at: mechHit.at, modelCalls: 1, withheldToolChars: withheld })
           }
           else if (searching) {
@@ -2916,6 +2925,25 @@ export const Plugin = define({
     // FACING (level 1): type the finished answer at the door and render the spread. Rides BESIDE
     // the record, never instead; failure-silent (the door's ground answers a gap, never throws past
     // post()'s catch). It only renders — the model's text is untouched.
+    // THE VERIFY STAGE for a mechanical turn: the machine checks that the model's answer states the machine's finding (a constant's value, every
+    // exported name), including short answers the sentence-level ground check does not grade. The result is a mark in the same ledger: a `fact`
+    // when the answer is faithful, a `block` when it is not. The finding stands either way; it is the answer that is judged.
+    const mechVerify = (event: Observed) =>
+      Effect.gen(function* () {
+        if (event.type !== "session.text.ended") return
+        const sessionID = event.data.sessionID
+        const hit = mechTurns.get(sessionID)
+        if (!hit) return
+        mechTurns.delete(sessionID)
+        const said = typeof event.data.text === "string" ? event.data.text : ""
+        const v = Mech.verify(hit, said)
+        physicsRecord({ sessionID, served: true, kind: "mech-verify", at: hit.at, verified: v.ok, ...(v.ok ? {} : { missing: v.missing }) })
+        const task = Mech.taskKey(yield* workspaceOf(sessionID))
+        if (!task) return
+        const text = v.ok ? `verified: the answer states ${hit.fact} [${hit.at}]` : `the answer does not state ${hit.fact}; missing ${v.missing.join(", ")} [${hit.at}]`
+        yield* post({ event: "mark", task, agent: "mech", kind: v.ok ? "fact" : "block", text }, askTimeout).pipe(Effect.asVoid)
+      })
+
     const facing = (event: Observed) =>
       Effect.gen(function* () {
         if (event.type !== "session.text.ended") return
@@ -3140,6 +3168,7 @@ export const Plugin = define({
         // renders the typing on the answer. Each is opt-in and neither can delay the other.
         const side: Array<Effect.Effect<void, never, never>> = [record]
         if (facingOn && event.type === "session.text.ended") side.push(facing(event))
+        if (event.type === "session.text.ended") side.push(mechVerify(event))
         if (derivedApply) side.push(derivedApply)
         if (longformOn && event.type === "session.text.ended") side.push(longformAdvance(event))
         if (shadowOn) {

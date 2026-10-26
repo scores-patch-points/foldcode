@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, test } from "bun:test"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { fileOf, literal, resolve, roots } from "../src/plugin/physics-mech.js"
+import { fileOf, literal, markText, resolve, roots, taskKey, verify } from "../src/plugin/physics-mech.js"
 
 let root: string
 beforeAll(() => {
@@ -99,4 +99,44 @@ test("no repository: only the workspace itself is searched", () => {
   } finally {
     fs.rmSync(lone, { recursive: true, force: true })
   }
+})
+
+const hit = (ask: string) => {
+  const r = resolve(ask, root)
+  if (!r.ok) throw new Error(`expected a hit, got ${r.gap}`)
+  return r
+}
+
+test("a finding carries its witness: one fact line and the sha256 of the bytes it was read from", () => {
+  const r = hit("In src/a.ts, what is DEFAULT_TIMEOUT_MS?")
+  expect(r.fact).toBe("DEFAULT_TIMEOUT_MS = 300000")
+  expect(r.sha).toBe(require("node:crypto").createHash("sha256").update(fs.readFileSync(path.join(root, "src/a.ts"), "utf8")).digest("hex"))
+  expect(markText(r)).toBe(`DEFAULT_TIMEOUT_MS = 300000 [mech-const · src/a.ts#L1 · sha256:${r.sha.slice(0, 16)}]`)
+  expect(markText(r)).not.toContain("\n")
+  const e = hit("List the exported functions and classes of src/a.ts")
+  expect(e.fact).toBe("src/a.ts exported functions and classes: alpha, beta, Gamma")
+  expect(markText(e)).not.toContain("\n")
+})
+
+test("verify: a constant's value must be stated, whatever the digit grouping", () => {
+  const r = hit("In src/a.ts, what is DEFAULT_TIMEOUT_MS?")
+  for (const ok of ["300000", "It is 300000.", "300,000 ms", "300_000", "300 000 milliseconds"]) expect(verify(r, ok)).toEqual({ ok: true })
+  for (const bad of ["30000", "3000000", "300000.5", "I could not find it", "about three hundred thousand"]) expect(verify(r, bad)).toEqual({ ok: false, missing: ["300000"] })
+})
+
+test("verify: every exported name must be stated as a whole word", () => {
+  const e = hit("List the exported functions and classes of src/a.ts")
+  expect(verify(e, "alpha, beta and Gamma")).toEqual({ ok: true })
+  expect(verify(e, "alpha and beta")).toEqual({ ok: false, missing: ["Gamma"] })
+  expect(verify(e, "alphabet betamax GammaRay")).toEqual({ ok: false, missing: ["alpha", "beta", "Gamma"] })
+})
+
+test("taskKey mirrors the door's projectKey", async () => {
+  expect(taskKey("relative/path")).toBeUndefined()
+  expect(taskKey(os.homedir())).toBeUndefined() // a home directory is not a project
+  expect(taskKey(root)).toMatch(/^proj-mech-[\w.-]+-[0-9a-f]{6}$/)
+  const door = path.join(os.homedir(), ".khora/opencode-worknotes.mjs")
+  if (!fs.existsSync(door)) return // the door's checkout is not on this machine: nothing to compare against
+  const { projectKey } = (await import(door)) as { projectKey: (w: string) => string | null }
+  for (const w of [root, path.join(root, "src"), path.join(root, "pkg/deep"), process.cwd(), os.tmpdir(), os.homedir()]) expect(taskKey(w) ?? null).toBe(projectKey(w))
 })

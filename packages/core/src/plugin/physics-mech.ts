@@ -4,10 +4,14 @@
 // turn takes the normal path. A hit carries its address (`file#Lnn`), so the finding is checkable and the model is only asked to state it.
 //
 // Pure except for reading the one file the ask names, which must sit inside the workspace.
+import crypto from "node:crypto"
 import fs from "node:fs"
+import os from "node:os"
 import path from "node:path"
 
-export type Answer = { ok: true; kind: "const" | "exports"; text: string; at: string }
+/** `fact` is the finding on one line (what a ledger mark carries); `sha` is the sha256 of the file's bytes it was read from, the finding's
+ *  witness; `value` (a constant) or `names` (exports) is what an answer must state to be faithful to it (see `verify`). */
+export type Answer = { ok: true; kind: "const" | "exports"; text: string; at: string; fact: string; sha: string; value?: string; names?: string[] }
 export type Gap = { ok: false; gap: string; detail?: string }
 
 const FILE = /((?:[\w@.\-]+\/)+[\w.\-]+\.[A-Za-z0-9]{1,5})/
@@ -50,7 +54,7 @@ const definitions = (lines: string[], name: string) =>
     return m ? [{ line: i + 1, rhs: m[1] }] : []
   })
 
-const constantAsk = (ask: string, lines: string[], rel: string): Answer | Gap => {
+const constantAsk = (ask: string, lines: string[], rel: string, sha: string): Answer | Gap => {
   const symbols = [...ask.matchAll(SYMBOL)].map((m) => m[1])
   if (symbols.length) {
     const name = symbols[symbols.length - 1]
@@ -59,7 +63,7 @@ const constantAsk = (ask: string, lines: string[], rel: string): Answer | Gap =>
     if (defs.length > 1) return { ok: false, gap: "ambiguous", detail: `${name} is defined ${defs.length} times` }
     const v = literal(defs[0].rhs)
     if (!v) return { ok: false, gap: "not-a-literal", detail: `${name} = ${defs[0].rhs}` }
-    return { ok: true, kind: "const", text: `${name} = ${v}`, at: `${rel}#L${defs[0].line}` }
+    return { ok: true, kind: "const", text: `${name} = ${v}`, at: `${rel}#L${defs[0].line}`, fact: `${name} = ${v}`, sha, value: v }
   }
   // no symbol named ("the default timeout in shell.ts"): the file's only constant whose name carries the asked word
   const hint = /timeout/i.test(ask) ? /TIMEOUT/ : /\b(max|limit|bytes)\b/i.test(ask) ? /MAX|LIMIT|BYTES/ : undefined
@@ -70,7 +74,7 @@ const constantAsk = (ask: string, lines: string[], rel: string): Answer | Gap =>
   })
   if (found.length !== 1) return { ok: false, gap: found.length ? "several-candidates" : "no-candidate", detail: found.map((f) => f.name).join(", ") }
   const v = literal(found[0].rhs)
-  return v ? { ok: true, kind: "const", text: `${found[0].name} = ${v}`, at: `${rel}#L${found[0].line}` } : { ok: false, gap: "not-a-literal", detail: `${found[0].name} = ${found[0].rhs}` }
+  return v ? { ok: true, kind: "const", text: `${found[0].name} = ${v}`, at: `${rel}#L${found[0].line}`, fact: `${found[0].name} = ${v}`, sha, value: v } : { ok: false, gap: "not-a-literal", detail: `${found[0].name} = ${found[0].rhs}` }
 }
 
 /** A `const` whose value is a function: an arrow (`(a) =>`, `<T>(a) =>`, `x =>`, a parameter list that continues on the next line),
@@ -99,7 +103,7 @@ const exportsOf = (lines: string[]): Item[] =>
     return m ? m[1].split(",").map((s) => s.trim().split(/\s+as\s+/).pop()!.trim()).filter(Boolean).map((name) => ({ name, what: "re-export", line: i + 1 })) : []
   })
 
-const exportsAsk = (ask: string, lines: string[], rel: string): Answer | Gap => {
+const exportsAsk = (ask: string, lines: string[], rel: string, sha: string): Answer | Gap => {
   const all = exportsOf(lines)
   if (all.length === 0) return { ok: false, gap: "no-exports" }
   const wantFn = /\bfunctions?\b/i.test(ask), wantCls = /\bclass(?:es)?\b/i.test(ask)
@@ -107,7 +111,7 @@ const exportsAsk = (ask: string, lines: string[], rel: string): Answer | Gap => 
   const label = wantFn && wantCls ? "exported functions and classes" : wantFn ? "exported functions" : wantCls ? "exported classes" : "exports"
   const body = keep.map((e) => `- ${e.name}${wantFn || wantCls ? "" : ` (${e.what})`} · L${e.line}`).join("\n")
   // the list is complete for what was asked; a note about the exports left out reads as "partial" and sends the reader off to ask for the file
-  return { ok: true, kind: "exports", text: `${rel} — ${label}, all of them:\n${body || "(none)"}`, at: rel }
+  return { ok: true, kind: "exports", text: `${rel} — ${label}, all of them:\n${body || "(none)"}`, at: rel, fact: `${rel} ${label}: ${keep.map((e) => e.name).join(", ") || "(none)"}`, sha, names: keep.map((e) => e.name) }
 }
 
 /** The workspace and its parents up to the repository root (the first directory holding `.git`): a session opened in a subdirectory still
@@ -140,7 +144,51 @@ export const resolve = (ask: string, root: string, prior: readonly string[] = []
   }
   if (text.includes("\0")) return { ok: false, gap: "binary" }
   const lines = text.split("\n")
-  if (EXPORTS.test(ask) && LISTISH.test(ask)) return exportsAsk(ask, lines, rel)
-  if (/\bwhat('s| is| was)\b|\bvalue\b/i.test(ask) || ask.match(SYMBOL)) return constantAsk(ask, lines, rel)
+  const sha = crypto.createHash("sha256").update(text).digest("hex")
+  if (EXPORTS.test(ask) && LISTISH.test(ask)) return exportsAsk(ask, lines, rel, sha)
+  if (/\bwhat('s| is| was)\b|\bvalue\b/i.test(ask) || ask.match(SYMBOL)) return constantAsk(ask, lines, rel, sha)
   return { ok: false, gap: "not-a-lookup" }
+}
+
+/** The ledger mark for a finding: one line, the finding first, then its witness (the address and the file's sha256). The agent that writes it is
+ *  `mech`, as the swarm writes as `swarm`: the organ is the author, the model is not. */
+export const markText = (a: Answer): string => `${a.fact} [mech-${a.kind} · ${a.at} · sha256:${a.sha.slice(0, 16)}]`
+
+/** Did the answer state the finding? A constant's value (digits may carry `,` `_` or spaces: 300,000), or every exported name as a whole word. This
+ *  is the pipeline's verify stage for a mechanical turn: a check on the model's words by the machine's own finding, never the other way round,
+ *  and it covers short answers ("300000") that the sentence-level ground check does not grade. */
+export const verify = (a: Answer, said: string): { ok: true } | { ok: false; missing: string[] } => {
+  if (a.kind === "const") {
+    const digits = said.replace(/(?<=\d)[,_\s](?=\d)/g, "")
+    return a.value && new RegExp(`(?<![\\d.])${a.value.replace(/\./g, "\\.")}(?!\\d|\\.\\d)`).test(digits) ? { ok: true } : { ok: false, missing: [a.value ?? "?"] }
+  }
+  const missing = (a.names ?? []).filter((n) => !new RegExp(`(?<![\\w$])${n.replace(/\$/g, "\\$")}(?![\\w$])`).test(said))
+  return missing.length ? { ok: false, missing } : { ok: true }
+}
+
+/** The task a workspace belongs to in the door's medium: a mirror of khora's `projectKey` (opencode-worknotes.mjs): its git root's basename plus a
+ *  short hash of the root's path, so every session in one repository shares one ledger. No key for a home directory or anything above it. The
+ *  test cross-checks this against the door's own function, so the two cannot drift without a failing test. */
+export const taskKey = (workspace: string): string | undefined => {
+  if (!path.isAbsolute(workspace)) return undefined
+  try {
+    let at = fs.realpathSync(workspace)
+    if (!fs.statSync(at).isDirectory()) at = path.dirname(at)
+    let root = at
+    for (let i = 0; i < 40; i++) {
+      if (fs.existsSync(path.join(at, ".git"))) {
+        root = at
+        break
+      }
+      const up = path.dirname(at)
+      if (up === at) break
+      at = up
+    }
+    const home = fs.realpathSync(os.homedir())
+    if (root === home || home.startsWith(root + path.sep) || root === path.parse(root).root) return undefined
+    const base = path.basename(root).replace(/[^\w.-]+/g, "-").replace(/^\.+/, "") || "root"
+    return `proj-${base.slice(0, 40)}-${crypto.createHash("sha1").update(root).digest("hex").slice(0, 6)}`
+  } catch {
+    return undefined
+  }
 }
