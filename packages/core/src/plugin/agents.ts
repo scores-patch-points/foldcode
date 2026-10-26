@@ -36,8 +36,10 @@ import { ToolFailure } from "@opencode/ai"
 import { define, type Context } from "@opencode/plugin/effect/plugin"
 import { Session } from "@opencode/schema/session"
 import { Effect, Schema, Stream } from "effect"
+import { spawnSync } from "node:child_process"
 import { createHash } from "node:crypto"
 import { mkdirSync } from "node:fs"
+import { readFile, writeFile } from "node:fs/promises"
 import { dirname, isAbsolute, resolve, sep } from "node:path"
 
 const off = process.env.OPENCODE_AGENTS === "0"
@@ -152,8 +154,8 @@ export const provenanceHeader = (p: Permeation) =>
 
 const runGit = (directory: string, args: ReadonlyArray<string>) => {
   try {
-    const proc = Bun.spawnSync({ cmd: ["git", "-C", directory, ...args], stdout: "pipe", stderr: "pipe" })
-    return proc.exitCode === 0 ? proc.stdout.toString().trim() : ""
+    const proc = spawnSync("git", ["-C", directory, ...args], { encoding: "utf8" })
+    return proc.status === 0 ? proc.stdout.trim() : ""
   } catch {
     return ""
   }
@@ -194,12 +196,12 @@ export const Plugin = define({
       ctx.session
         .get({ sessionID })
         .pipe(Effect.map((info) => info.projectID))
-        .pipe(Effect.catch(() => Effect.succeed(undefined)))
+        .pipe(Effect.orElseSucceed(() => undefined))
     const infoOf = (sessionID: Session.ID) =>
       ctx.session
         .get({ sessionID })
         .pipe(Effect.map((info) => ({ title: info.title ?? "", directory: info.location.directory })))
-        .pipe(Effect.catch(() => Effect.succeed(undefined)))
+        .pipe(Effect.orElseSucceed(() => undefined))
     const peersFor = (self: string, project: string | undefined) =>
       sameProjectPeers(peers.values(), self, project)
     // Resolve an address to a target id: same-project peer by id/prefix/title,
@@ -220,7 +222,7 @@ export const Plugin = define({
     }
     const readBytes = (abs: string) =>
       Effect.tryPromise({
-        try: () => Bun.file(abs).arrayBuffer().then((buffer) => new Uint8Array(buffer)),
+        try: () => readFile(abs).then((buffer) => new Uint8Array(buffer)),
         catch: () => new ToolFailure({ message: `permeation: cannot read ${abs}` }),
       })
 
@@ -367,7 +369,7 @@ export const Plugin = define({
                   return yield* Effect.fail(new ToolFailure({ message: `reach: destination "${destRel}" escapes your worktree` }))
                 mkdirSync(dirname(destination), { recursive: true })
                 yield* Effect.tryPromise({
-                  try: () => Bun.write(destination, bytes),
+                  try: () => writeFile(destination, bytes),
                   catch: () => new ToolFailure({ message: `reach: cannot write ${destRel}` }),
                 })
                 const sidecar = {
@@ -384,7 +386,7 @@ export const Plugin = define({
                   at,
                 }
                 yield* Effect.tryPromise({
-                  try: () => Bun.write(`${destination}.provenance.json`, JSON.stringify(sidecar, null, 2)),
+                  try: () => writeFile(`${destination}.provenance.json`, JSON.stringify(sidecar, null, 2)),
                   catch: () => new ToolFailure({ message: `reach: cannot write the provenance sidecar` }),
                 })
                 grafted = destRel

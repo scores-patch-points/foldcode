@@ -484,7 +484,11 @@ describe("LocationServiceMap", () => {
           const blockedState = yield* update(blocked.path, blockedID)
           expect(blockedState.providers.some((provider) => provider.id === blockedID)).toBe(true)
           expect(blockedState.providers.some((provider) => provider.id === allowedID)).toBe(false)
-          const blockedTools = blockedState.tools.map((tool) => tool.name)
+          // The fold registers its own tools (plugin/agents.ts, plugin/fold.ts, each behind an env switch). The lists
+          // below are upstream's built-ins; the fold's tools are held to the same isolation by comparing them directly.
+          const fold = new Set(["agents", "cube", "lend", "perceive", "reach", "snip", "swarm", "tell", "transcribe"])
+          const blockedFold = blockedState.tools.map((tool) => tool.name).filter((name) => fold.has(name))
+          const blockedTools = blockedState.tools.map((tool) => tool.name).filter((name) => !fold.has(name))
           expect(blockedTools.filter((name) => name !== "execute").sort()).toEqual([
             "edit",
             "glob",
@@ -502,7 +506,8 @@ describe("LocationServiceMap", () => {
           const allowedState = yield* update(allowed.path, allowedID)
           expect(allowedState.providers.some((provider) => provider.id === allowedID)).toBe(true)
           expect(allowedState.providers.some((provider) => provider.id === blockedID)).toBe(false)
-          const allowedTools = allowedState.tools.map((tool) => tool.name)
+          const allowedTools = allowedState.tools.map((tool) => tool.name).filter((name) => !fold.has(name))
+          expect(allowedState.tools.map((tool) => tool.name).filter((name) => fold.has(name)).sort()).toEqual(blockedFold.sort())
           expect(blockedTools.includes("execute")).toBe(allowedTools.includes("execute"))
           expect(allowedTools.filter((name) => name !== "execute").sort()).toEqual([
             "edit",
