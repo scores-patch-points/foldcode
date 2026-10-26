@@ -92,6 +92,10 @@ answering() { curl -s -m "${FOLD_DOOR_PROBE_S:-10}" "$door/v1/hooks/opencode" 2>
 # EADDRINUSE (294 times in one log) while the first keeps stalling. Only a holder that stays silent for FOLD_DOOR_HANG_MISSES
 # probes in a row is treated as hung and terminated, so a genuinely wedged door is still replaced.
 holder() { lsof -nP -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null | head -1; }
+# A door that exists but has not bound the port yet is WARMING (it loads its models before it listens: ~12 s on a quiet
+# machine, many minutes at a load average of 38). It is not absent: starting a second one only adds load and a crash on
+# the held port. It is given FOLD_DOOR_WARM_MISSES probes (default 40, ten minutes) before it is read as never listening.
+warming() { pgrep -f "opencode-doorway.mjs --serve $port" 2>/dev/null | head -1; }
 
 # Provision the stack on a fresh machine: the app's door is khora, and khora is public. Only the
 # safe locations are provisioned — a stack under ~/Downloads is the developer's own checkout, and
@@ -208,12 +212,27 @@ status() {
 run() {
   fails=0
   busy=0
+  warmed=0
   say "supervisor up (door $door, stack $stack)"
   while :; do
     if answering; then
-      fails=0; busy=0
+      fails=0; busy=0; warmed=0
     else
       pid="$(holder)"
+      warm="$(warming)"
+      if [ -z "$pid" ] && [ -n "$warm" ]; then
+        warmed=$((warmed + 1))
+        if [ "$warmed" -lt "${FOLD_DOOR_WARM_MISSES:-40}" ]; then
+          say "door warming (pid $warm, no listener on :$port yet, probe $warmed); not starting a second"
+          sleep 15
+          continue
+        fi
+        say "door never listened (pid $warm, $warmed probes); terminating it"
+        kill "$warm" 2>/dev/null || true
+        sleep 2
+        kill -9 "$warm" 2>/dev/null || true
+        warmed=0
+      fi
       if [ -n "$pid" ]; then
         busy=$((busy + 1))
         if [ "$busy" -lt "${FOLD_DOOR_HANG_MISSES:-8}" ]; then

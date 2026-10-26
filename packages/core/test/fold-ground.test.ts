@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { gatherPassages, groundHead, groundPayload, revisedIn } from "../src/plugin/fold-ground"
+import { DOOR_SILENT, gatherPassages, groundHead, groundPayload, revisedIn } from "../src/plugin/fold-ground"
 
 const answer = {
   sentences: [{ text: "Curie discovered radium." }],
@@ -35,7 +35,13 @@ describe("fold ground payload", () => {
       gap: "no step this turn",
     })
     expect(groundPayload({}, "full")).toBeUndefined()
-    expect(groundPayload(undefined, "full")?.gap).toBe("no step this turn")
+  })
+  test("a door that never answered is named as silent, not as a turn it saw no step for", async () => {
+    const { isGroundNotice } = await import("../src/plugin/fold")
+    const p = groundPayload(undefined, "full")!
+    expect(p).toEqual({ v: 1, step: null, gap: DOOR_SILENT })
+    expect(groundHead(p)).toBe(`fold facing · the ground · ${DOOR_SILENT}`)
+    expect(isGroundNotice(groundHead(p))).toBe(true)
   })
   test("passages keep the newest within budget, labelled; a read's header names the passage", () => {
     expect(

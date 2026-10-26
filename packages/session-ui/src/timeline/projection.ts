@@ -356,8 +356,10 @@ export namespace Timeline {
       turns.findLast((turn) => !pendingInputIDs?.has(turn.id) || turn.entries.some((entry) => entry.type === "idle"))
         ?.id ?? turns.at(-1)?.id
 
+    // the research progress is drawn in place of "Working" (message-timeline.tsx), never as a notice row
     const visibleNotice = (message: Notice) =>
-      !detail || detail.notices.placement !== "hidden" || timelineNoticeRequired(message)
+      !(message.type === "synthetic" && message.metadata?.notice === "fold-research") &&
+      (!detail || detail.notices.placement !== "hidden" || timelineNoticeRequired(message))
 
     const visibleTurns = detail
       ? turns.filter((turn) => {
@@ -444,7 +446,7 @@ export namespace Timeline {
                 message.type === "compaction" ||
                 message.type === "model-switched" ||
                 message.type === "location-switched" ||
-                (message.type === "synthetic" && message.metadata?.notice === "fold-ground")
+                (message.type === "synthetic" && (message.metadata?.notice === "fold-ground" || message.metadata?.notice === "fold-research"))
                   ? [message.id]
                   : [],
               ),
