@@ -16,6 +16,7 @@ import { ServiceConfig } from "./services/service-config"
 import { RetainedImage } from "./services/retained-image"
 import { ServiceRegistration } from "./services/service-registration"
 import { RemoteTunnel } from "./services/remote-tunnel"
+import { RelayTunnel } from "./services/relay-tunnel"
 import { WebUi } from "./services/web-ui"
 import { databasePath } from "./database-path"
 
@@ -90,7 +91,14 @@ const processEffect = Effect.fnUntraced(function* (options: Options) {
       if (!password) return yield* Effect.fail(new Error("Missing server password"))
       const instanceID = randomUUID()
       const transform = yield* WebUi.handler()
-      const remote = { urls: [] as ReadonlyArray<string> }
+      // The addresses the server advertises, from its OpenTunnel route and its relay, each kept up to date by its own connection.
+      const remote = {
+        tunnel: [] as ReadonlyArray<string>,
+        relay: [] as ReadonlyArray<string>,
+        get urls() {
+          return [...this.tunnel, ...this.relay]
+        },
+      }
       const launch = start(
         {
           app: {
@@ -102,6 +110,7 @@ const processEffect = Effect.fnUntraced(function* (options: Options) {
           port,
           cors: options.cors ?? config.cors,
           password,
+          openLink: options.mode === "service" ? config.link : undefined,
           pty: { handoff },
           simulation: truthy(process.env.OPENCODE_SIMULATE),
           database: {
@@ -186,7 +195,29 @@ const processEffect = Effect.fnUntraced(function* (options: Options) {
             route: config.remote.route,
             target,
             onURL: (url) => {
-              remote.urls = url === undefined ? [] : [url]
+              remote.tunnel = url === undefined ? [] : [url]
+            },
+          }),
+        )
+      }
+      // The relay is up only while the open link is on, so turning the link off also closes the way in.
+      if (
+        serviceOptions !== undefined &&
+        config.relay !== undefined &&
+        config.link !== undefined &&
+        NetAddress.isInetAddress(server.address)
+      ) {
+        const bound = NetAddress.formatIp(server.address.address)
+        const target =
+          bound === "0.0.0.0" || bound === "::"
+            ? `127.0.0.1:${server.address.port}`
+            : NetAddress.formatInet(server.address)
+        yield* Effect.forkScoped(
+          RelayTunnel.run({
+            relay: config.relay,
+            target,
+            onURL: (url) => {
+              remote.relay = url === undefined ? [] : [url]
             },
           }),
         )

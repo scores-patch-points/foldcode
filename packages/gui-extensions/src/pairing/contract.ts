@@ -16,6 +16,15 @@ export const Pairing = Ipc.define({
      * the tunnel, which can take a minute.
      */
     setRemote: { input: Schema.Boolean },
+    /** Whether the open link is on: one reusable link that signs in any browser that opens it. */
+    link: { output: Schema.Boolean },
+    /**
+     * Turns the open link on or off, then starts the background service again. Turning it on also turns remote access
+     * on, which the first time creates the tunnel and can take a minute.
+     */
+    setLink: { input: Schema.Boolean },
+    /** The open link, once the tunnel serves it. Only meaningful while the link is on. */
+    linkURL: { output: Schema.String },
     /** Whether main holds the display sleep blocker. */
     screenActive: { output: Schema.Boolean },
     /** Holds or releases the display sleep blocker, and remembers the choice. */

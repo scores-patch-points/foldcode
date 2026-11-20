@@ -33,11 +33,14 @@ export const ServerHandler = HttpApiBuilder.group(Api, "server.server", (handler
           const request = yield* HttpServerRequest.HttpServerRequest
           // Browser navigations ask for HTML; everything else is an API client that wants the token.
           const browser = request.headers.accept?.includes("text/html") === true
-          const token = (yield* pairing.consume(ctx.params.code)) ? ServerAuth.issueSession(auth) : undefined
+          // The open link never expires, so checking it first keeps it out of the one-time code cache.
+          const viaLink = ServerAuth.openLinkAuthorized(ctx.params.code, auth)
+          const granted = viaLink || (yield* pairing.consume(ctx.params.code))
+          const token = granted ? ServerAuth.issueSession(auth, Date.now(), viaLink ? "link" : undefined) : undefined
           if (token === undefined) {
             if (!browser) return yield* new UnauthorizedError({ message: "Pairing link expired or already used" })
             return HttpServerResponse.text(
-              "This pairing link expired or was already used. Run `opencode pair` to get a new one.",
+              "This link expired, was already used, or has been turned off. Run `opencode link` or `opencode pair` to get a new one.",
               { status: 401 },
             )
           }

@@ -395,6 +395,36 @@ View all subcommands and flags.
 $ opencode pair --help
 ```
 
+## link
+
+Prints one reusable link, plus a QR code, that opens this machine's coding
+session in any browser, with no sign-in. It turns on remote access if needed, so
+the first time it explains that and asks you to accept. Anyone who has the link
+has full control of the machine, so share it only with people you trust.
+
+```bash
+$ opencode link
+```
+
+Print only the link, for a script.
+
+```bash
+$ opencode link --plain --yes
+```
+
+Turn it off. The link stops working at once and every browser that came in
+through it is signed out. Turning it on again makes a new link.
+
+```bash
+$ opencode link --off
+```
+
+View all subcommands and flags.
+
+```bash
+$ opencode link --help
+```
+
 ## service
 
 Manages the background server. See [Web](/cli/web).
