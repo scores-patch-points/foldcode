@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - dev
+      - fold
   pull_request:
   workflow_dispatch:
 
@@ -20,10 +21,12 @@ permissions:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
+# Runners are GitHub-hosted: this repository has no Blacksmith runners (the upstream fork's), so every job asking for one sat
+# queued until cancelled and pull requests merged without unit tests (2026-10-25).
 jobs:
   affected:
     name: affected packages
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     outputs:
       app: ${{ steps.packages.outputs.app }}
     steps:
@@ -58,9 +61,9 @@ jobs:
       matrix:
         settings:
           - name: linux
-            host: blacksmith-4vcpu-ubuntu-2404
+            host: ubuntu-latest
           - name: windows
-            host: blacksmith-4vcpu-windows-2025
+            host: windows-latest
     runs-on: ${{ matrix.settings.host }}
     defaults:
       run:
@@ -93,6 +96,37 @@ jobs:
           git config --global user.email "bot@opencode.ai"
           git config --global user.name "opencode"
 
+      # Upstream's Blacksmith images carry ripgrep on PATH; GitHub's hosted images do not, and the ripgrep tests may not
+      # download it (the test harness refuses network), so it comes from the OS package manager.
+      - name: Install ripgrep
+        run: |
+          if [ "${{ runner.os }}" = "Windows" ]; then choco install ripgrep -y --no-progress
+          else sudo apt-get update -qq && sudo apt-get install -y -qq ripgrep; fi
+          rg --version | head -1
+
+      # GitHub's Ubuntu image carries pwsh, so the PowerShell shell tests run there. The core tests give every run a fresh
+      # HOME and cache home (packages/core/script/test.ts), so the first pwsh of a run rebuilds its module analysis cache
+      # and the first two PowerShell tests time out at 5 s. A pinned cache path, warmed here, carries into the tests.
+      # Windows keeps that cache under LOCALAPPDATA, which the tests do not move.
+      - name: Warm PowerShell
+        if: runner.os == 'Linux'
+        run: |
+          cache="$RUNNER_TEMP/powershell/ModuleAnalysisCache"
+          echo "PSModuleAnalysisCachePath=$cache" >> "$GITHUB_ENV"
+          export PSModuleAnalysisCachePath="$cache"
+          time pwsh -NoLogo -NoProfile -NonInteractive -Command 'Write-Output warm'
+          fresh=$(mktemp -d)
+          time HOME="$fresh" XDG_CACHE_HOME="$fresh/.cache" pwsh -NoLogo -NoProfile -NonInteractive -Command 'Write-Output fresh-home'
+
+      # GitHub's Windows runners keep the workspace on D:, the VM's local disk, and TEMP on C:, the OS disk. The core
+      # tests run real git and package installs in temp directories, and on C: a different few of them pass Bun's 5 s
+      # test timeout each run. Their temp directories go to D: with the workspace.
+      - name: Put temp on the workspace disk
+        if: runner.os == 'Windows'
+        run: |
+          echo "TMP=$RUNNER_TEMP" >> "$GITHUB_ENV"
+          echo "TEMP=$RUNNER_TEMP" >> "$GITHUB_ENV"
+
       - name: Cache Turbo
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
@@ -106,11 +140,12 @@ jobs:
         timeout-minutes: 20
         run: |
           # The runners have four vCPUs, and each Bun test process performs its own concurrent work.
+          # --continue: one package's failure does not cancel the others, so a run reports every failing package at once.
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            GITHUB_ACTIONS=false bun turbo test --concurrency=3
+            GITHUB_ACTIONS=false bun turbo test --concurrency=3 --continue
             exit 0
           fi
-          GITHUB_ACTIONS=false bun turbo test --affected --concurrency=3
+          GITHUB_ACTIONS=false bun turbo test --affected --concurrency=3 --continue
         env:
           OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER: ${{ runner.os == 'Windows' && 'true' || 'false' }}
           TURBO_SCM_BASE: ${{ github.event_name == 'pull_request' && format('{0}^1', github.sha) || github.event.before }}
@@ -178,9 +213,9 @@ jobs:
       matrix:
         settings:
           - name: linux
-            host: blacksmith-4vcpu-ubuntu-2404
+            host: ubuntu-latest
           - name: windows
-            host: blacksmith-4vcpu-windows-2025
+            host: windows-latest
     runs-on: ${{ matrix.settings.host }}
     env:
       E2E_ENABLED: ${{ needs.affected.outputs.app == 'true' && github.ref_name != 'dev' && github.head_ref != 'dev' }}

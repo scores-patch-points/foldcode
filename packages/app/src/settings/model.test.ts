@@ -91,7 +91,7 @@ describe("settings schema", () => {
     expect(decode({})).toEqual({
       general: {
         showFileTree: false,
-        timelineDetail: timelinePresets[2].value,
+        timelineDetail: { ...timelinePresets[2].value, thinking: { placement: "separate", details: "expanded" } }, // fold default: reasoning in the feed
         showCustomAgents: false,
         showTurnDiffs: false,
         mobileTitlebarPosition: "top",
@@ -140,7 +140,7 @@ describe("settings schema", () => {
     expect(settings.general).toMatchObject({
       showTerminal: true,
       autoSave: false,
-      timelineDetail: timelinePresets[2].value,
+      timelineDetail: { ...timelinePresets[2].value, thinking: { placement: "separate", details: "expanded" } }, // fold default: reasoning in the feed
       followUpBehavior: "steer",
     })
     expect(settings.appearance).toEqual({

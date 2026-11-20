@@ -13,10 +13,21 @@ import { createHash } from "node:crypto"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
+import { fileURLToPath } from "node:url"
 
 type Usage = { prompt: number; cacheRead: number; cacheWrite: number; output: number; reasoning: number; total: number | null }
 type Win = { before: number; after: number; tools: number; withheld?: number }
 type Line = { v: number; ts: number; sid: string; seq: number; kind: string; status: number; requestChars?: number; window?: Win | null; protocol: string; complete: boolean; consistent: boolean | null; usage: Usage | null; prev: string; hash: string }
+
+// Run as a script (`bun fold-tokens.ts`), not imported. Not import.meta.main: core's package build (target node) lowers
+// it to a createRequire(import.meta.url) helper in the chunk every module shares, and the workerd SDK bundle cannot start.
+const main = (() => {
+  try {
+    return fs.realpathSync(process.argv[1] ?? "") === fs.realpathSync(fileURLToPath(import.meta.url))
+  } catch {
+    return false
+  }
+})()
 
 const args = process.argv.slice(2)
 const flag = (name: string) => {
@@ -191,7 +202,7 @@ const showLedger = (rows: Ledger[], r: number) => {
   )
 }
 
-if (import.meta.main && ledgerMode) {
+if (main && ledgerMode) {
   if (!fs.existsSync(file)) {
     console.log(`UNVERIFIED — no usage log at ${file}.`)
     process.exit(2)
@@ -202,7 +213,7 @@ if (import.meta.main && ledgerMode) {
   process.exit(0)
 }
 
-if (import.meta.main) {
+if (main) {
   // No log means no tap ran: the service is a build without usage-tap, or FOLD_USAGE_FILE points elsewhere.
   // That is not a pass — nothing the app claims has been checked.
   if (!fs.existsSync(file)) {

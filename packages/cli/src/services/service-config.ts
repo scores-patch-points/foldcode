@@ -125,7 +125,7 @@ const paths = Effect.gen(function* () {
     process.platform === "darwin" && process.env.HOME
       ? path.join(process.env.HOME, "Library", "Application Support", "ai.opencode.desktop", "opencode", name)
       : undefined
-  const exists = (target: string) => fs.exists(target).pipe(Effect.catch(() => Effect.succeed(false)))
+  const exists = (target: string) => fs.exists(target).pipe(Effect.orElseSucceed(() => false))
   const file = desktop !== undefined && !(yield* exists(own)) && (yield* exists(desktop)) ? desktop : own
   return {
     fs,

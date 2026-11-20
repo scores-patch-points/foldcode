@@ -218,7 +218,8 @@ describe("Npm.add", () => {
 
     expect(await fs.stat(path.join(entries.added.directory, "package.json"))).toBeTruthy()
     expect(entries.cached).toEqual(entries.added)
-  })
+    // A real reify, like the Git installs below, exceeds Bun's default timeout on GitHub's hosted Windows runners.
+  }, 30_000)
 
   test.each(["unnamed", "named"])("installs and locates %s Git packages with dependencies", async (kind) => {
     await using tmp = await tmpdir()
@@ -246,7 +247,8 @@ describe("Npm.add", () => {
     ).toBeTruthy()
     expect(entries.added.directory).toContain(path.join("npm", await Npm.cacheKey(spec)))
     expect(entries.added.directory).toContain("node_modules")
-  })
+    // Real Git installs exceed Bun's default timeout on GitHub's hosted Windows runners.
+  }, 30_000)
 
   test.each(["commit", "branch"])("installs a Git package from an npm ::path: subdirectory at a %s", async (ref) => {
     await using tmp = await tmpdir()

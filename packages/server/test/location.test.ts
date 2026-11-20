@@ -9,7 +9,9 @@ import { startServer } from "./fixture/server"
 // macOS Files-and-Folders answers EPERM for a protected directory (~/Downloads after a rebuild
 // invalidates the app's grant); a mode bit answers EACCES. Both must arrive as the typed
 // ServiceUnavailableError — the cause (the path) disclosed — never a bare 500 that swallows it.
-it.live("an unreadable workspace answers a typed 503 with its cause, never a bare 500", () =>
+// Windows ignores POSIX mode bits (chmod 0o000 leaves the directory readable), so there is nothing to lock there.
+const posix = process.platform === "win32" ? it.live.skip : it.live
+posix("an unreadable workspace answers a typed 503 with its cause, never a bare 500", () =>
   Effect.gen(function* () {
     const tmp = yield* tmpdirScoped()
     const locked = path.join(tmp.path, "locked")
