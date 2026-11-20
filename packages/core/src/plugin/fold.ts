@@ -31,6 +31,7 @@ import { GROUND_LEGEND, GROUND_STEER_HEAD, contradictedIn, gatherPassages, groun
 import { REGISTER_LEGEND, dropTrailingNotices, gateTools, gateTurn, markRegistered, type TurnGate, registerBlock, registerHit } from "./fold-register.js"
 import * as Physics from "./physics.js"
 import * as Mech from "./physics-mech.js"
+import { perceivableMime, tooLargeToPerceive } from "./fold-perceive.js"
 import * as Learn from "./physics-learn.js"
 import fs from "node:fs"
 
@@ -1778,11 +1779,6 @@ export const Plugin = define({
     type Perceived = { text: string; replace: boolean } | null
     const perceived = new Map<string, Perceived>()
 
-    const perceivableMime = (mime: string) => {
-      const m = mime.toLowerCase()
-      return m.startsWith("image/") || m.startsWith("audio/") || m === "application/pdf"
-    }
-
     const inlineB64 = (source: { type?: string; data?: unknown } | undefined): string | undefined => {
       if (!source) return undefined
       if (source.type === "base64" && typeof source.data === "string") return source.data
@@ -1806,6 +1802,11 @@ export const Plugin = define({
       Effect.gen(function* () {
         const hit = perceived.get(key)
         if (hit !== undefined) return hit
+        if (tooLargeToPerceive(dataBase64)) {
+          // the door would refuse it after receiving every byte: leave the media untouched, as a passthrough does
+          perceived.set(key, null)
+          return null
+        }
         const answer = yield* post({ event: "perceive", sessionID, mime, name, dataBase64 }, foldTimeout)
         const out = (answer ?? {}) as {
           passthrough?: boolean
